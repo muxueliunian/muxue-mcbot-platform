@@ -1,0 +1,311 @@
+{
+  "date": "2026-10-03",
+  "checkpointCommit": "0c82d7e",
+  "clientRuntime": {
+    "tests": 157,
+    "pass": 157,
+    "fail": 0
+  },
+  "baseline": {
+    "checks": 24,
+    "passed": 24,
+    "realServer": true,
+    "realAgent": false
+  },
+  "mixedShort": {
+    "result": "passed",
+    "rounds": 3,
+    "checks": 108,
+    "passed": 108,
+    "durationMs": 87539,
+    "leaseOperations": [
+      25,
+      26,
+      26,
+      1
+    ],
+    "processes": [
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "peer",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "cleanup"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": null,
+        "signal": "SIGKILL",
+        "reason": "process-kill"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "cleanup"
+      }
+    ]
+  },
+  "remaining": [
+    "Real Mod codec post-write faults",
+    "Long-running single-lease exhaustion",
+    "R5-R8",
+    "Historical exit root causes unresolved"
+  ],
+  "mixedSoak": {
+    "result": "passed",
+    "rounds": 10,
+    "checks": 349,
+    "passed": 349,
+    "durationMs": 314643,
+    "mixedDurationMs": 313268,
+    "leaseOperations": [
+      25,
+      26,
+      26,
+      26,
+      26,
+      26,
+      26,
+      26,
+      26,
+      26,
+      1
+    ],
+    "processes": [
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "peer",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "cleanup"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": null,
+        "signal": "SIGKILL",
+        "reason": "process-kill"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": null,
+        "signal": "SIGKILL",
+        "reason": "process-kill"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": null,
+        "signal": "SIGKILL",
+        "reason": "process-kill"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": null,
+        "signal": "SIGKILL",
+        "reason": "process-kill"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "stdio-close"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": null,
+        "signal": "SIGKILL",
+        "reason": "process-kill"
+      },
+      {
+        "kind": "mcp",
+        "exited": true,
+        "exitCode": 0,
+        "signal": null,
+        "reason": "cleanup"
+      }
+    ]
+  },
+  "realAgent": {
+    "agent": "claude",
+    "model": "claude-sonnet-5-5",
+    "effort": "low",
+    "result": "passed",
+    "phaseCount": 10,
+    "totalMs": 80568,
+    "startupMs": 11189,
+    "cleanupComplete": true,
+    "phases": [
+      {
+        "name": "query-before-actions",
+        "result": "passed",
+        "firstReplyMs": 4408,
+        "elapsedMs": 5943,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "follow-authorized-pickup-and-chat",
+        "result": "passed",
+        "firstReplyMs": 3142,
+        "elapsedMs": 6156,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "ordinary-chat-keeps-follow",
+        "result": "passed",
+        "firstReplyMs": 2540,
+        "elapsedMs": 5340,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "wait-before-container-task",
+        "result": "passed",
+        "firstReplyMs": 2415,
+        "elapsedMs": 6304,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "container-fetch-return",
+        "result": "passed",
+        "firstReplyMs": 4442,
+        "elapsedMs": 7306,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": 5238,
+        "agentExitReason": null
+      },
+      {
+        "name": "stop-during-container-task",
+        "result": "passed",
+        "firstReplyMs": 4498,
+        "elapsedMs": 7425,
+        "stopConfirmedMs": 163,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "first-new-task-after-stop",
+        "result": "passed",
+        "firstReplyMs": 5266,
+        "elapsedMs": 7324,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "new-follow-before-agent-crash",
+        "result": "passed",
+        "firstReplyMs": 2710,
+        "elapsedMs": 5312,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      },
+      {
+        "name": "force-own-agent-crash-and-revoke",
+        "result": "passed",
+        "firstReplyMs": null,
+        "elapsedMs": null,
+        "stopConfirmedMs": 1327,
+        "terminalReceiptMs": null,
+        "agentExitReason": "code 1"
+      },
+      {
+        "name": "explicit-new-task-takes-over-after-crash",
+        "result": "passed",
+        "firstReplyMs": 5254,
+        "elapsedMs": 9844,
+        "stopConfirmedMs": null,
+        "terminalReceiptMs": null,
+        "agentExitReason": null
+      }
+    ],
+    "untested": [
+      "Real Mod codec/write-after-exception injection (R2 offline evidence only)",
+      "MCP-only crash",
+      "Network/server loss",
+      "OS sandbox isolation"
+    ]
+  },
+  "cleanup": {
+    "javaExitCode": 0,
+    "javaSignal": null,
+    "portsStopped": [
+      25568,
+      25578,
+      8766
+    ],
+    "configuration": [
+      {
+        "file": "server.properties",
+        "byteIdentical": true
+      },
+      {
+        "file": "ops.json",
+        "byteIdentical": true
+      },
+      {
+        "file": "whitelist.json",
+        "byteIdentical": true
+      }
+    ],
+    "originalSourceFilesByteIdentical": 148,
+    "formalServerUnchanged": true
+  }
+}

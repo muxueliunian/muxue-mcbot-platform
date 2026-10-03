@@ -171,8 +171,23 @@ try {
 
   phase = 'movement-stop'; await arena(); await fixture('tp C2Tester 2432.5 201 2422.5'); const motionStart = await position(); await follow();
   await until(position, value => distance(value, motionStart) > 0.4, '身体未开始跟随运动'); await tool('stop-action');
-  const stopAt = await position(); await drop('minecraft:snowball', 16, stopAt.x, stopAt.z + 3); await wait(1200);
-  check('运动叫停没有迟到追物或旧意图', (await mode()).state === 'stopped' && !(await mode()).pickup && distance(stopAt, await position()) < 0.15 && await amount('minecraft:snowball') === 0);
+  const stopAt = await position(), coast = [], coastStarted = Date.now();
+  for (let sample = 0; sample < 12; sample++) {
+    const raw = await command('data get entity ServerBot Motion');
+    const motion = raw.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
+    assert(motion?.length === 3 && motion.every(Number.isFinite), '无法独立读取停止后速度');
+    coast.push({ ms: Date.now() - coastStarted, position: await position(), horizontalSpeed: Math.hypot(motion[0], motion[2]) });
+    await wait(50);
+  }
+  const settledStop = await position();
+  // stop cancels control input; ordinary inertia/gravity are not new actions.
+  // On this flat stone fixture, require deceleration, a bounded coast and then a stationary body.
+  check('停止后原版惯性有界衰减至零', distance(stopAt, settledStop) < 0.5 && coast.at(-1).horizontalSpeed < 0.0001
+    && coast.every((sample, index) => index === 0 || sample.horizontalSpeed <= coast[index - 1].horizontalSpeed + 0.000001), { stopAt, settledStop, coast });
+  await drop('minecraft:snowball', 16, settledStop.x, settledStop.z + 3); await wait(1200);
+  const stopEnd = await position(), stoppedMode = await mode(), stoppedCount = await amount('minecraft:snowball');
+  check('运动叫停没有迟到追物或旧意图', stoppedMode.state === 'stopped' && !stoppedMode.pickup && distance(settledStop, stopEnd) < 0.15 && stoppedCount === 0,
+    { stopAt, settledStop, stopEnd, movedAfterSettling: distance(settledStop, stopEnd), finalMotion: await command('data get entity ServerBot Motion'), stoppedMode, stoppedCount });
   const next = await terminal('collect-items', { item: 'minecraft:snowball', count: 16, radius: 4 });
   check('叫停后第一新collect任务成功', next.status === 'succeeded' && next.result.pickedUpCount === 16 && await amount('minecraft:snowball') === 16, next);
 

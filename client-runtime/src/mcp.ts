@@ -63,7 +63,13 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   register('get-block', 'Observe one block; unloaded is not air. Use its exact ID for guarded interactions.', blockXyz, async args => (await body.observe(args)).block);
   if (!serverObserved || body.hello.capabilities.includes('open-container')) register('get-container', `Observe the current menu, slots and carried cursor item.${prediction} Use details=true to obtain full guards for atomic debugging.`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => { const container = (await body.observe()).container; return serverObserved && !details ? summarizeContainer(container) : container; });
   register('get-operation', 'Check an operation created by this controller. running is not success; unknown must be checked against the world, never blindly retried.', { operationId: z.string().uuid(), ...(serverObserved ? { details: z.boolean().default(false) } : {}) }, async ({ operationId, details }) => { const op = gather.operation(operationId) ?? tasks.operation(operationId) ?? await body.operation(operationId); events.deliverOperation(op); const visible = publicOperation(op); return serverObserved && !details ? summarizeOperation(visible) : visible; });
-  register('stop-action', 'Immediately cancel current body actions and discard companion intent while keeping the character online. Does not wait for a model.', {}, async () => { tasks.cancel(); gather.cancel(); const result = await (companion ? companion.stop() : body.stop()); gather.stopped(); return result; });
+  register('stop-action', 'Immediately cancel current body actions and discard companion intent while keeping the character online. Does not wait for a model.', {}, async () => {
+    const stopping = tasks.cancel(); gather.cancel();
+    const result = await (companion ? companion.stop() : body.stop());
+    if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '身体停止未确认；旧任务写锁保留，不能继续新任务');
+    if (tasks.stopped(stopping)) gather.stopped();
+    return result;
+  });
   if (companion) {
     register('companion-mode', 'Start persistent follow of an explicitly named visible player on loaded safe level ground, or wait in place. Optional pickup actively pursues only the listed items near the same player while following is waiting; it never digs. Native collision pickup remains Minecraft behavior. Chat remains available. wait owns the task lock and clears pickup; pause stops/releases while retaining intent; resume explicitly rechecks session/identity and preserves pickup. Failures do not retry. stop-action discards intent and pickup. Only follow accepts player/distance/pickup.', {
       action: z.enum(['follow', 'wait', 'pause', 'resume']), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(),

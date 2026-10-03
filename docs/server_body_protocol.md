@@ -159,6 +159,8 @@ ServerBody 取得租约后，将本机 `runtimeDir/server-control-<username>.jso
 
 普通 MCP stop 更新本地 generation，已发出的旧请求不能因迟到回执变成新动作；并发 stop 不等待 act 返回才能发送。宿主收到新的叫停事件后使用 revoke，让旧 MCP 进入终止态，并取消／结束旧 Agent 轮次；后续新任务明确重新接管。只取消模型推理不算停止身体。宿主 watch 从控制文件 chatCursor 起跳，跳过接管前历史与自己消息；watch 的非停止聊天仍由现有事件通道正常处理，避免重复唤醒。
 
+R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。cancel先废弃旧步骤并保留写锁，只有最新匹配停止句柄的`stopped:true`确认才能收尾；停止失败不准新任务写入。停止确认后首新任务不等待旧HTTP回执，旧finally／旧停止确认不释放新任务锁。迟到可靠部分回执仍保留确认数量，迟到unknown不降级为确定失败或无副作用。`stopped:true`确认的是控制输入与任务被停止；正常重力／惯性不被冻结，最后实际物理位移另测，见[混合回归](server_mixed_validation.md)。
+
 明确的动作参数／BUSY 拒绝不废弃当前租约。心跳只核对 controlGeneration，不静默同步外部改变。停止请求未确认时，Node 终止旧控制并尽力 release，防止本地取消记录掩盖远端仍执行的动作；stop 的明确可恢复拒绝转为 STOP_UNCONFIRMED，其余保留原失联／失租约错误码。不自动重试 stop／act 或 claim。
 
 停止导致 MCP 退出后，宿主可缓存刚撤销的只读 watch 能力，等新的人工任务再启动 Agent／MCP 并明确 claim；不得因退出自动恢复旧任务。新任务须只投递一次。只有最近一份失效租约可继续 watch；服务端另保留最多 64 份历史用于幂等撤销回执，不保留无界历史。新租约接管后旧能力不能观察或撤销新控制。

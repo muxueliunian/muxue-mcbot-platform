@@ -15,6 +15,7 @@ MCBOT的独立整理版：让不同Agent通过统一工具与任务接口，在M
 - [ServerBody协议](docs/server_body_protocol.md)
 - [整理版复验](docs/export_validation.md)
 - [网页评审后的边界修复与待办](docs/boundary_review_fixes.md)
+- [最新混合故障回归与真实 Claude 结果](docs/server_mixed_validation.md)
 
 ## 当前范围
 

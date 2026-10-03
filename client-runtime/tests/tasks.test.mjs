@@ -14,6 +14,14 @@ import { EventJournal } from '../dist/events.js';
 const clone = value => structuredClone(value);
 const empty = (slot, extra = {}) => ({ slot, id: 'minecraft:air', count: 0, components: {}, ...extra });
 const components = { 'minecraft:custom_data': { type: 'compound', value: { amount: { type: 'long', value: '9007199254740993' } } } };
+function deferred() { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
+async function mcpClient(t, body) {
+  const server = createMcpServer(body, new EventJournal());
+  const [left, right] = InMemoryTransport.createLinkedPair(), client = new Client({ name: 'container-stop-test', version: '1' });
+  await server.connect(left); await client.connect(right);
+  t.after(async () => { await client.close(); await server.close(); });
+  return { client, call: async (name, args = {}) => { const reply = await client.callTool({ name, arguments: args }); return { reply, result: JSON.parse(reply.content[0].text) }; } };
+}
 function fixture({ variant = false, unknownSource = false, full = false, blocked = false, approach = false, visibility, configureMenu } = {}) {
   const calls = [];
   const identity = { instanceId: 'instance', sessionId: 'session', worldId: 'world', dimension: 'minecraft:overworld', controlGeneration: 0 };
@@ -31,6 +39,7 @@ function fixture({ variant = false, unknownSource = false, full = false, blocked
   const body = {
     hello: { ...identity, backend: 'server', capabilities: approach ? ['approach-container', 'approach-player'] : [], sessionId: 'session' }, pendingOperations: () => [],
     acquireTask: token => { if (owner) throw new BodyError('BUSY', 'busy'); owner = token; }, releaseTask: token => { if (owner === token) owner = undefined; },
+    stop: async () => { state.container = null; return { stopped: true }; },
     observe: async () => { await body.beforeObserve?.(); return clone(state); },
     nearbyBlocks: async args => ({ ...identity, center: { player: args.centerPlayer ?? 'Bot', position: clone(state.entities.find(entity => entity.name === args.centerPlayer)?.position ?? state.position) }, candidates: [{ position: { x: 1, y: 64, z: 0 }, id: 'minecraft:chest', properties: { facing: 'north', type: 'single', waterlogged: 'false' }, ...(approach ? { targetToken: '1cb1a1cf-95e8-4c1f-a631-ac46176acff2' } : {}), distance: 1, visibility: visibility ?? (blocked ? 'occluded' : 'visible') }] }),
     act: async (name, args, token) => {
@@ -76,6 +85,138 @@ function fixture({ variant = false, unknownSource = false, full = false, blocked
   const tasks = new ContainerTasks(body);
   return { body, tasks, calls, state, async ref() { return (await tasks.discover({ radius: 4, maxResults: 8, centerPlayer: 'Alex' })).candidates[0].containerRef; } };
 }
+
+test('container tasks require both shared write-lock hooks before observing or writing', async () => {
+  for (const missing of ['acquireTask', 'releaseTask']) {
+    const f = fixture(); delete f.body[missing]; let reads = 0;
+    f.body.beforeObserve = () => { reads++; };
+    await assert.rejects(f.tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' }), { code: 'UNSUPPORTED' });
+    assert.equal(reads, 0); assert.deepEqual(f.calls, []);
+  }
+});
+
+test('real MCP and ServerBody HTTP stop permits the first new container task before the old observe reply', async t => {
+  const mock = await mockServerControl(); t.after(() => mock.close());
+  const hello = mock.handlers.hello, observe = mock.handlers.observe, act = mock.handlers.act;
+  const capabilities = ['nearby-blocks', 'look-at', 'select-slot', 'drop-item'];
+  mock.handlers.hello = () => ({ ...hello(), capabilities });
+  const inventory = [{ slot: 0, id: 'minecraft:diamond', count: 8, components: {}, maxStackSize: 64 }];
+  mock.setState({ inventory, entities: [{ id: 'alex-instance', type: 'minecraft:player', name: 'Alex', position: { x: 1, y: 64, z: 0 } }] });
+  mock.handlers['nearby-blocks'] = params => {
+    const state = observe(params);
+    return { instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration,
+      center: { player: 'Alex', position: { x: 1, y: 64, z: 0 } }, candidates: [] };
+  };
+  const gate = deferred(), entered = deferred(); let reads = 0, delayOld = false;
+  mock.handlers.observe = async params => { const snapshot = clone(observe(params)); if (delayOld && ++reads === 1) { entered.resolve(); await gate.promise; } return snapshot; };
+  mock.handlers.act = params => {
+    const operation = act(params);
+    if (params.name === 'drop-item') { inventory[0].count -= params.args.count; mock.setState({ inventory }); operation.result = { droppedCount: params.args.count, removedCount: params.args.count }; }
+    return operation;
+  };
+  const body = await ServerBody.connect({ connection: mock.connection, username: 'ServerBot', worldId: 'test-world', heartbeatIntervalMs: 60000 }); t.after(() => body.close());
+  delayOld = true;
+  const { call } = await mcpClient(t, body);
+  const request = { item: 'minecraft:diamond', count: 1, player: 'Alex' };
+  const old = call('give-item', request); await entered.promise;
+  try {
+    assert.equal((await call('stop-action')).result.stopped, true);
+    const next = await call('give-item', request);
+    assert.equal(next.reply.isError, undefined, `new task was blocked after confirmed HTTP stop: ${JSON.stringify(next.result)}`);
+    assert.equal(next.result.status, 'succeeded'); assert.equal(next.result.result.droppedCount, 1);
+  } finally { gate.resolve(); }
+  assert.equal((await old).result.status, 'cancelled');
+  assert.deepEqual(mock.calls.filter(call => call.method === 'act').map(call => call.params.name), ['look-at', 'select-slot', 'drop-item']);
+});
+
+test('confirmed stop retires only its owner: late partial or unknown act receipts cannot release the new task', async () => {
+  for (const status of ['succeeded', 'unknown']) {
+    const f = fixture(), act = f.body.act, oldGate = deferred(), oldEntered = deferred(), newGate = deferred(), newEntered = deferred();
+    f.body.act = async (...args) => { const op = await act(...args); if (args[0] === 'drop-item' && !f.oldDropSeen) { f.oldDropSeen = true; oldEntered.resolve(); await oldGate.promise; return { ...op, status }; } return op; };
+    const old = f.tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' }); await oldEntered.promise;
+    const stopping = f.tasks.cancel(); await f.body.stop(); assert.equal(f.tasks.stopped(stopping), true);
+    f.body.beforeObserve = async () => { newEntered.resolve(); await newGate.promise; };
+    const next = f.tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' }); await newEntered.promise;
+    oldGate.resolve(); const result = await old;
+    assert.equal(result.status, status === 'unknown' ? 'unknown' : 'cancelled');
+    assert.equal(result.result.droppedCount, 1); assert.equal(result.result.lastConfirmedHeldCount, 7); assert.equal(result.result.heldCount, undefined);
+    assert.equal(f.tasks.stopped(stopping), false);
+    assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+    await assert.rejects(f.tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' }), { code: 'BUSY' });
+    assert.deepEqual(f.calls.map(call => call.name), ['look-at', 'select-slot', 'drop-item']);
+    f.body.beforeObserve = undefined; newGate.resolve(); assert.equal((await next).status, 'succeeded');
+    assert.equal(f.calls.filter(call => call.name === 'drop-item').length, 2);
+  }
+});
+
+test('cancel keeps a settled old task locked until matching stop confirmation, and failed stop never releases it', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred();
+  f.body.hello.capabilities = ['nearby-blocks', 'look-at', 'select-slot', 'drop-item'];
+  f.body.beforeObserve = async () => { entered.resolve(); await gate.promise; };
+  f.body.stop = async () => { throw new BodyError('STOP_UNCONFIRMED', 'Injected stop failure'); };
+  const { call } = await mcpClient(t, f.body), args = { item: 'minecraft:diamond', count: 1, player: 'Alex' };
+  const old = call('give-item', args); await entered.promise;
+  const failed = await call('stop-action'); assert.equal(failed.reply.isError, true); assert.equal(failed.result.code, 'STOP_UNCONFIRMED');
+  gate.resolve(); assert.equal((await old).result.status, 'cancelled');
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  const refused = await call('give-item', args); assert.equal(refused.result.code, 'BUSY'); assert.deepEqual(f.calls, []);
+  f.body.beforeObserve = undefined; f.body.stop = async () => ({ stopped: true });
+  assert.equal((await call('stop-action')).result.stopped, true);
+  assert.equal((await call('give-item', args)).result.status, 'succeeded');
+});
+
+test('real MCP concurrent stop confirmations in either order cannot release an unrelated new task', async t => {
+  for (const first of [0, 1]) {
+    const f = fixture(), reads = [deferred(), deferred()], seen = [deferred(), deferred()], stops = [deferred(), deferred()], stopSeen = [deferred(), deferred()]; let readCount = 0, stopCount = 0;
+    f.body.hello.capabilities = ['nearby-blocks', 'look-at', 'select-slot', 'drop-item'];
+    f.body.beforeObserve = async () => { const index = readCount++; if (index < 2) { seen[index].resolve(); await reads[index].promise; } };
+    f.body.stop = async () => { const index = stopCount++; stopSeen[index].resolve(); return stops[index].promise; };
+    const { call } = await mcpClient(t, f.body), args = { item: 'minecraft:diamond', count: 1, player: 'Alex' };
+    const old = call('give-item', args); await seen[0].promise;
+    const a = call('stop-action'); await stopSeen[0].promise; const b = call('stop-action'); await stopSeen[1].promise;
+    stops[first].resolve({ stopped: true }); assert.equal((await (first === 0 ? a : b)).result.stopped, true);
+    if (first === 0) {
+      assert.equal((await call('give-item', args)).result.code, 'BUSY');
+      stops[1].resolve({ stopped: true }); await b;
+    }
+    const next = call('give-item', args); await seen[1].promise;
+    if (first === 1) { stops[0].resolve({ stopped: true }); await a; }
+    reads[0].resolve(); assert.equal((await old).result.status, 'cancelled');
+    assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+    assert.equal((await call('give-item', args)).result.code, 'BUSY'); assert.deepEqual(f.calls, []);
+    reads[1].resolve(); assert.equal((await next).result.status, 'succeeded');
+  }
+});
+
+test('an older successful stop cannot release the lock retained by a newer failed stop', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred(), stopA = deferred(), stopEntered = deferred(); let stops = 0;
+  f.body.hello.capabilities = ['nearby-blocks', 'look-at', 'select-slot', 'drop-item'];
+  f.body.beforeObserve = async () => { entered.resolve(); await gate.promise; };
+  f.body.stop = async () => { if (++stops === 1) { stopEntered.resolve(); return stopA.promise; } if (stops === 2) throw new BodyError('STOP_UNCONFIRMED', 'Newer stop failed'); return { stopped: true }; };
+  const { call } = await mcpClient(t, f.body), args = { item: 'minecraft:diamond', count: 1, player: 'Alex' };
+  const old = call('give-item', args); await entered.promise;
+  const a = call('stop-action'); await stopEntered.promise;
+  assert.equal((await call('stop-action')).result.code, 'STOP_UNCONFIRMED');
+  stopA.resolve({ stopped: true }); await a; gate.resolve(); assert.equal((await old).result.status, 'cancelled');
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' }); assert.equal((await call('give-item', args)).result.code, 'BUSY'); assert.deepEqual(f.calls, []);
+  f.body.beforeObserve = undefined; await call('stop-action'); assert.equal((await call('give-item', args)).result.status, 'succeeded');
+});
+
+test('task timeout with an unconfirmed Body stop keeps its lock until a later explicit stop succeeds', async () => {
+  const f = fixture(), act = f.body.act; let clock = 0;
+  const tasks = new ContainerTasks(f.body, () => clock += 20000);
+  f.body.act = async (...args) => ({ ...await act(...args), status: 'running' });
+  f.body.stop = async () => { throw new BodyError('STOP_UNCONFIRMED', 'Injected timeout stop failure'); };
+  const ref = (await tasks.discover({ radius: 4, maxResults: 8 })).candidates[0].containerRef;
+  const result = await tasks.run('container-list', { containerRef: ref });
+  assert.equal(result.status, 'unknown'); assert.equal(result.result.code, 'STOP_UNCONFIRMED');
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  await assert.rejects(tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' }), { code: 'BUSY' });
+  assert.deepEqual(f.calls.map(call => call.name), ['open-container']);
+  const stopping = tasks.cancel(); f.body.act = act; f.state.container = null; f.body.stop = async () => ({ stopped: true });
+  await f.body.stop(); tasks.stopped(stopping);
+  assert.equal((await tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' })).status, 'succeeded');
+});
 
 test('one task opens, withdraws exact count with typed components, returns remainder, closes and drops once', async () => {
   const f = fixture(); const ref = await f.ref();
@@ -144,13 +285,13 @@ test('partial native drop preserves withdrawn, held and dropped evidence and nev
 });
 
 test('stop after confirmed withdrawal fences close/look/select/drop and old refs', async () => {
-  const f = fixture(); let count = 0;
-  f.body.beforeObserve = () => { if (f.state.inventory[0].count === 1 && ++count === 1) f.tasks.cancel(); };
+  const f = fixture(); let count = 0, stopping;
+  f.body.beforeObserve = () => { if (f.state.inventory[0].count === 1 && ++count === 1) stopping = f.tasks.cancel(); };
   const ref = await f.ref(), op = await f.tasks.run('fetch-and-give', { containerRef: ref, item: 'minecraft:oak_log', count: 3, player: 'Alex' });
   assert.equal(op.status, 'cancelled'); assert.equal(op.result.withdrawnCount, 1);
   assert.equal(op.result.heldCount, undefined); assert.equal(op.result.carriedCount, undefined); assert.equal(op.result.lastConfirmedHeldCount, 1);
   assert.equal(f.calls.filter(call => call.name === 'click-slot').length, 2); assert.equal(f.calls.some(call => call.name === 'drop-item'), false);
-  f.body.beforeObserve = undefined; f.state.container = null;
+  f.body.beforeObserve = undefined; await f.body.stop(); f.tasks.stopped(stopping);
   const after = await f.tasks.run('container-list', { containerRef: ref }); assert.equal(after.result.code, 'STALE_REFERENCE');
 });
 
@@ -277,7 +418,7 @@ test('stop during container movement fences a late success so no open follows', 
   f.body.beforeAct = name => name === 'approach-container' ? new Promise(resolve => { release = resolve; started(); }) : undefined;
   const pending = f.tasks.run('container-list', { containerRef: await f.ref() }); await entered;
   await assert.rejects(f.body.act('look-at', { x: 0, y: 64, z: 0 }), { code: 'BUSY' });
-  f.tasks.cancel(); release();
+  const stopping = f.tasks.cancel(); await f.body.stop(); f.tasks.stopped(stopping); release();
   assert.equal((await pending).status, 'cancelled'); assert.deepEqual(f.calls.map(call => call.name), ['approach-container']);
   f.body.beforeAct = undefined;
   assert.equal((await f.tasks.run('container-list', { containerRef: await f.ref() })).status, 'succeeded');

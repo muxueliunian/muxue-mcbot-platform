@@ -42,4 +42,8 @@ Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；应�
 
 ## 进度与证据
 
+2026-10-03 网页评审后的 R1／R2／R3 修复见[边界修复记录](boundary_review_fixes.md)。ServerBody Claude 游戏模式现移除全部内置宿主工具，仅使用 Minecraft MCP；人设由宿主固定只读注入，不依赖 Agent 的 Read／Write。要求支持 `--restricted` 的 Claude CLI（本机核对 2.1.287，最低 2.1.248）；参数不支持时不能降级宽权限。
+
+近期先做现有功能的混合故障回归及一个扩展样本，再安排持续陪挖／建筑。不要把新离线测试误记为真实服务器或真实账号验收；R4–R8 仍是明确待办。
+
 进度见`delivery_plan.md`；架构评审从`review_guide.md`开始。整理前最近一次为143项Node检查、387项Java检查、23项真实程序检查，Claude和Codex各5个实际阶段。真实报告是历史执行记录，原始日志／存档仍留本地，不代表网页评审者已复现。整理版自己的离线复验另见`export_validation.md`。

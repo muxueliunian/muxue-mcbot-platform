@@ -13,6 +13,7 @@ import { EventJournal } from '../dist/events.js';
 import { mockServerControl } from './mock-server-control.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 async function until(check) { for (let i = 0; i < 400; i++) { if (check()) return; await delay(5); } assert.fail('condition did not become observable'); }
 async function fixture(t) {
   const playerId = randomUUID();
@@ -256,6 +257,75 @@ test('stop during initial observation sends no late follow and release waits for
   assert.equal(f.mock.calls.filter(call => call.method === 'act').length, 0);
   await f.follow();
 });
+test('cancelled initial request cannot finish a replacement transition or admit a third request', async t => {
+  const f = await fixture(t), observe = f.body.observe.bind(f.body);
+  const gates = [deferred(), deferred()], seen = [deferred(), deferred()]; let reads = 0;
+  f.body.observe = async (...args) => {
+    const state = await observe(...args), index = reads++;
+    if (index < gates.length) { seen[index].resolve(); await gates[index].promise; }
+    return state;
+  };
+  const settled = promise => promise.then(value => ({ value }), error => ({ error }));
+  const a = settled(f.mode.request({ action: 'follow', player: 'Alex', distance: 2 }));
+  await seen[0].promise; await f.mode.stop();
+  const b = settled(f.mode.request({ action: 'follow', player: 'Alex', distance: 4 }));
+  await seen[1].promise;
+  const before = f.mode.snapshot(), notifications = f.events.since(0).length;
+  gates[0].resolve(); const old = await a;
+  const observedEpoch = f.mode.observationEpoch();
+  const after = f.mode.snapshot(), afterNotifications = f.events.since(0).length;
+  const c = await settled(f.mode.request({ action: 'wait' }));
+  gates[1].resolve(); const replacement = await b;
+  assert.equal(old.error?.code, 'CANCELLED');
+  assert.equal(c.error?.code, 'BUSY', 'old request cleanup must not admit C and cancel B');
+  assert.equal(observedEpoch, null, 'B still has no stable observation epoch');
+  assert.deepEqual(after, before); assert.equal(afterNotifications, notifications);
+  assert.equal(replacement.error, undefined); assert.equal(replacement.value.distance, 4);
+  await until(() => f.mode.snapshot().stage === 'active');
+  assert.equal(f.mode.snapshot().distance, 4);
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  assert.equal(f.mock.calls.filter(call => call.method === 'act' && call.params.name === 'follow-companion').length, 1);
+});
+
+test('request cancelled at the empty chat await cannot publish over a replacement or release its token', async t => {
+  for (const action of ['follow', 'pause']) {
+    const f = await fixture(t); if (action === 'pause') await f.follow();
+    const gate = deferred(), seen = deferred(), say = f.mode.say.bind(f.mode); let first = true;
+    // Keep the real no-message helper, but expose its await boundary deterministically.
+    f.mode.say = async (...args) => { await say(...args); if (first) { first = false; seen.resolve(); await gate.promise; } };
+    const old = f.mode.request({ action, ...(action === 'follow' ? { player: 'Alex', distance: 2 } : {}) }).then(value => ({ value }), error => ({ error }));
+    await seen.promise; await f.mode.stop(); await f.mode.request({ action: 'wait' });
+    const before = f.mode.snapshot(), epoch = f.mode.observationEpoch();
+    gate.resolve(); const result = await old;
+    assert.equal(result.error?.code, 'CANCELLED'); assert.deepEqual(f.mode.snapshot(), before);
+    assert.equal(f.mode.observationEpoch(), epoch);
+    assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  }
+});
+
+test('request failures that advance the cancellation epoch release their own transition', async t => {
+  const f = await fixture(t);
+  await assert.rejects(f.mode.request({ action: 'follow', player: 'Missing' }), { code: 'PLAYER_NOT_VISIBLE' });
+  assert.equal(f.mode.snapshot().state, 'blocked'); assert.notEqual(f.mode.observationEpoch(), null);
+  f.body.acquireTask('finite'); f.body.releaseTask('finite');
+  await f.follow(); assert.equal(f.mode.snapshot().player, 'Alex');
+});
+
+test('stop holds transition and task ownership until its delayed confirmation completes', async t => {
+  const f = await fixture(t); await f.follow();
+  const stop = f.body.stop.bind(f.body), gate = deferred(), seen = deferred();
+  f.body.stop = async () => { const result = await stop(); seen.resolve(); await gate.promise; return result; };
+  const stopping = f.mode.stop(); await seen.promise;
+  const sameStop = f.mode.stop();
+  const epoch = f.mode.observationEpoch();
+  const refused = await f.mode.request({ action: 'wait' }).then(() => undefined, error => error.code);
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  gate.resolve(); await stopping;
+  assert.equal(sameStop, stopping); assert.equal(epoch, null); assert.equal(refused, 'BUSY');
+  f.body.stop = stop;
+  await f.follow(); assert.equal(f.mode.snapshot().stage, 'active');
+});
+
 test('HTTP follow guard requires UUID and distance bounds and forbids timeout-based fallback', async t => {
   const f = await fixture(t);
   for (const args of [{ player: 'Alex' }, { player: 'Alex', expectedEntityId: 'wrong' }, { player: 'Alex', expectedEntityId: f.playerId, distance: 1 }, { player: 'Alex', expectedEntityId: f.playerId, distance: 7 }, { player: 'Alex', expectedEntityId: f.playerId, timeoutMs: 60000 }]) {

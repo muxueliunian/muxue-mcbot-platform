@@ -1,0 +1,12 @@
+{"assertion":"真实CLI完成本机模拟会话","passed":true}
+{"assertion":"临时哨兵实际字节未改变","passed":true}
+{"tools":{"init":["mcp__minecraft__get-status"],"api":[["mcp__minecraft__get-status"],["mcp__minecraft__get-status"]]}}
+{"assertion":"实际init只包含minecraft工具及可保留的EndConversation","passed":true,"tools":["mcp__minecraft__get-status"]}
+{"assertion":"所有模型API工具schema只包含minecraft及EndConversation","passed":true,"tools":["mcp__minecraft__get-status","mcp__minecraft__get-status"]}
+{"assertion":"模拟模型强行调用Write被真实CLI拒绝","passed":true}
+{"assertion":"模拟模型强行调用Edit被真实CLI拒绝","passed":true}
+{"assertion":"模拟模型强行调用Bash被真实CLI拒绝","passed":true}
+{"assertion":"模拟模型强行调用PowerShell被真实CLI拒绝","passed":true}
+{"assertion":"正常minecraft/get-status实际经MCP执行","passed":true}
+{"assertion":"拒绝后哨兵仍逐字节一致","passed":true}
+{"assertion":"自身临时MCP夹具已退出且临时目录已清理","passed":true}

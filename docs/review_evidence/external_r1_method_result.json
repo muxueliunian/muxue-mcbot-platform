@@ -1,0 +1,7 @@
+{
+  "verification": "method-level extraction; deferred fake Body; not repository suite or live game",
+  "staleFinallyClearedNewTransition": true,
+  "thirdRequestEnteredInsteadOfBusy": true,
+  "legitimateNewRequestCancelled": true,
+  "gameWorldMutationTested": false
+}

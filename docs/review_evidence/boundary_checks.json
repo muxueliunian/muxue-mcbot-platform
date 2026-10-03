@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-03",
+  "runtime": {
+    "tests": 150,
+    "pass": 150,
+    "fail": 0,
+    "skipped": 0
+  },
+  "legacy": {
+    "tests": 317,
+    "pass": 316,
+    "fail": 0,
+    "skipped": 1
+  },
+  "java": {
+    "build": "success",
+    "checks": 524,
+    "suites": {
+      "ControlSessionTest": 57,
+      "LocalHttpBridgeTest": 14,
+      "ExactNbtTest": 14,
+      "InteractionObservationTest": 19,
+      "ApproachSafetyTest": 59,
+      "IronFurnaceAdapterTest": 25,
+      "FollowCompanionTest": 64,
+      "ResourcePickupTest": 78,
+      "CompanionPickupTest": 57,
+      "NativeActionBoundaryTest": 137
+    }
+  },
+  "scope": {
+    "repository": "muxue-mcbot-platform",
+    "realGame": false,
+    "realModelAccount": false,
+    "externalR1ScriptAvailable": false,
+    "r1RepositoryReproducedBeforeFix": true,
+    "r2ProductionExceptionBoundaryInjected": true,
+    "liveMinecraftNativeFaultInjected": false
+  },
+  "claudeCliProbe": {
+    "version": "2.1.287",
+    "assertions": 11,
+    "passed": 11,
+    "realCli": true,
+    "mockModelApi": true,
+    "userAccountUsed": false,
+    "ownFixturesStopped": true
+  }
+}

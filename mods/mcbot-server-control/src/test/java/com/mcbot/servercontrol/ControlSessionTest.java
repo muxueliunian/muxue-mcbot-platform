@@ -166,5 +166,6 @@ public final class ControlSessionTest {
         FollowCompanionTest.run();
         ResourcePickupTest.run();
         CompanionPickupTest.run();
+        NativeActionBoundaryTest.run();
     }
 }

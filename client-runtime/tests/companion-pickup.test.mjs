@@ -14,6 +14,7 @@ import { mockServerControl } from './mock-server-control.mjs';
 
 const clone = value => structuredClone(value);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 async function until(check) { for (let i = 0; i < 800; i++) { if (await check()) return; await delay(5); } assert.fail('condition did not become observable'); }
 async function fixture(t, { cap = true, full = false } = {}) {
   const mock = await mockServerControl(); t.after(() => mock.close());
@@ -219,6 +220,65 @@ test('a pickup receipt history gap stops native follow and only reports a last-c
   assert.equal(f.mode.snapshot().state, 'blocked'); assert.equal(f.mode.snapshot().code, 'PICKUP_GAP'); assert.equal(f.mode.snapshot().pickup.pickedUpCount, undefined); assert.equal(f.mode.snapshot().pickup.lastConfirmedPickedUpCount, 0);
   assert.equal(f.mock.operations.get(id).status, 'cancelled'); assert.equal(f.events.since(0, ['companion']).length, 1);
 });
+test('obsolete blocked cleanup cannot clear a replacement transition or invalidate its stable observation epoch', async t => {
+  for (const pending of [true, false]) {
+    const f = await fixture(t); await f.follow();
+    f.state.pickupCursor = 1; f.state.pickupOldestCursor = 1;
+    const state = await f.body.observe(), observe = f.body.observe.bind(f.body);
+    const gates = [deferred(), deferred()], seen = [deferred(), deferred()]; let reads = 0;
+    f.body.observe = async (...args) => {
+      const state = await observe(...args), index = reads++;
+      if (index < gates.length) { seen[index].resolve(); await gates[index].promise; }
+      return state;
+    };
+    const blocked = f.mode.update(state, f.mode.observationEpoch()); await seen[0].promise;
+    await f.mode.stop();
+    const replacement = f.mode.request({ action: 'wait' }).then(value => ({ value }), error => ({ error }));
+    await seen[1].promise;
+    if (!pending) { gates[1].resolve(); await replacement; }
+    const before = f.mode.snapshot(), epoch = f.mode.observationEpoch(), notifications = f.events.since(0).length;
+    gates[0].resolve(); await blocked;
+    const after = f.mode.snapshot(), afterEpoch = f.mode.observationEpoch(), afterNotifications = f.events.since(0).length;
+    const third = pending ? await f.mode.request({ action: 'follow', player: 'Alex' }).then(value => ({ value }), error => ({ error })) : undefined;
+    gates[1].resolve(); const accepted = await replacement;
+    if (pending) assert.equal(third.error?.code, 'BUSY', 'obsolete block must not admit C and cancel B');
+    assert.deepEqual(after, before); assert.equal(afterEpoch, epoch, 'only the current transition can change observation revision');
+    assert.equal(afterNotifications, notifications); assert.equal(accepted.error, undefined); assert.equal(accepted.value.state, 'waiting');
+    assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  }
+});
+
+test('obsolete internal stop cleanup cannot invalidate a replacement observation epoch', async t => {
+  const f = await fixture(t); await f.follow(); f.add();
+  const observe = f.body.observe.bind(f.body), gate = deferred(), seen = deferred(), completed = deferred();
+  let first = true;
+  f.body.observe = async (...args) => {
+    const state = await observe(...args);
+    if (first) { first = false; seen.resolve(); await gate.promise; }
+    return state;
+  };
+  // Observe completion of the real internal transaction triggered by the pickup scheduler.
+  const internalStop = f.mode.internalStop.bind(f.mode);
+  f.mode.internalStop = async (...args) => { try { return await internalStop(...args); } finally { completed.resolve(); } };
+  const state = await observe();
+  await f.mode.update(state, f.mode.observationEpoch()); await seen.promise;
+  await f.mode.stop(); await f.mode.request({ action: 'wait' });
+  const before = f.mode.snapshot(), epoch = f.mode.observationEpoch();
+  gate.resolve(); await completed.promise;
+  assert.deepEqual(f.mode.snapshot(), before); assert.equal(f.mode.observationEpoch(), epoch);
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  assert.equal(f.native('pickup-item').length, 0); assert.equal(f.native('follow-companion').length, 1);
+});
+
+test('blocked cleanup failure advances cancellation epoch without keeping the transition busy', async t => {
+  const f = await fixture(t); await f.follow();
+  f.state.pickupCursor = 1; f.state.pickupOldestCursor = 1;
+  await f.monitor.tick();
+  assert.equal(f.mode.snapshot().state, 'blocked'); assert.notEqual(f.mode.observationEpoch(), null);
+  f.body.acquireTask('finite'); f.body.releaseTask('finite');
+  await f.follow(null); assert.equal(f.mode.snapshot().stage, 'active');
+});
+
 test('MCP publishes the optional pickup contract without adding tools and ordinary chat remains usable during the child', async t => {
   const f = await fixture(t); f.holdPickup = true;
   const server = createMcpServer(f.body, f.events, { companion: f.mode, gather: f.gather });

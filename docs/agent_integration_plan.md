@@ -8,6 +8,8 @@
 
 ## 1. 用户要求与现状
 
+2026-10-03 评审后的 ServerBody Claude 启动策略已收窄为仅游戏 MCP 工具，禁止通用宿主读写／执行，并使旧宽权限会话失效；旧身体策略尚未迁移。详细验证范围见[边界修复记录](boundary_review_fixes.md)。此修复不等于 R7 的统一 Agent 会话及公共工具执行入口已经交付。
+
 用户要求支持不同 Agent，并提供原生 API Key 接入通道。明确举例：
 
 1. [DeepSeek 官方 deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，用户已确认具体项目。

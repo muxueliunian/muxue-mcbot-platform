@@ -51,7 +51,7 @@ function finish(text) {
     emit({type:'result',is_error:false});
   } else emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'completed',items:[],error:null}}});
 }
-record({kind:'start',argv:process.argv.slice(2)});
+record({kind:'start',argv:process.argv.slice(2),toolSearch:process.env.ENABLE_TOOL_SEARCH});
 if(kind==='claude') {
   const file=arg(process.argv,'--mcp-config');
   await connect(JSON.parse(fs.readFileSync(file,'utf8')).mcpServers.minecraft);

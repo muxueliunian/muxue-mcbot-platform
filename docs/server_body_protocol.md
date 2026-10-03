@@ -38,6 +38,8 @@ act 通过身份与操作去重核验后，动作级失败可返回 `ok:true` �
 
 错误码包括 FORBIDDEN、INVALID_ARGUMENT、WRONG_INSTANCE、WRONG_WORLD、WRONG_PLAYER、WORLD_CHANGED、DEAD_BODY、LEASE_BUSY、LEASE_LOST、STALE_CONTROL、BUSY、UNSUPPORTED、UNKNOWN_OPERATION、OPERATION_CONFLICT。生存动作还可能在 result.code 返回 STALE_ITEM、STALE_BLOCK、STALE_CONTAINER、UNLOADED、NO_LINE_OF_SIGHT、OUT_OF_REACH、NOT_DIGGABLE、TARGET_OCCUPIED、EMPTY_HAND_REQUIRED、DROP_PARTIAL、NATIVE_UNKNOWN 等。网络超时或原生调用已产生但无法完整确认的效果为 unknown，不自动重放动作；部分效果须核对实际库存、方块和掉落物。
 
+2026-10-03 R2 修复：原生调用入口前置待确认标记；调用内部或其后回执构造抛出协议错误（包括 UNSUPPORTED）／运行时异常时，尚未建立可靠结果的操作保留 unknown。写前拒绝、已证实无变化的拒绝仍是 failed；drop 的已确认 droppedCount 与独立已知 removedCount 保留，即使后续单件结果未知。重复 operationId 继续返回原回执。详见[边界修复与故障注入范围](boundary_review_fixes.md)，不把该离线验证称为真实 Mod 故障验收。
+
 ## B 的快照与动作核验
 
 服务端 Observation 增加 `selectedSlot`（快捷栏 0–8）。B历史栈结构为`{slot,id,count,components}`，有限采集增量已为所有非空inventory／container.slots／carried／groundItems.stack及拾取收据栈增加`maxStackSize`，直接读取实际`ItemStack.getMaxStackSize()`；空栈为`id:"minecraft:air",count:0,components:{}`，省略该上限字段。上限与当前count、槽位容量分开，可为1／16／64／99或其它实际值，不从物品ID猜64。任务仅接受已核验的正整数上限，并保留完整components。container为null或`{id,type,revision,slots,carried:{id,count,components,maxStackSize?}}`。id包含角色会话、菜单代次与原生窗口ID；revision是非负安全整数，槽位、carried（包括实际maxStackSize）或原生窗口状态变化时递增，重开窗口产生新id。不要用旧id或旧revision进行下一次点击。

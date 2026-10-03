@@ -10,18 +10,33 @@ export function claudeContextTokens(usage) {
     + (usage.cache_creation_input_tokens || 0) + (usage.output_tokens || 0);
 }
 
+// With no built-in tools, load Minecraft's schemas directly instead of requiring
+// ToolSearch. Account selection stays with the host; this does not change auth.
+export function claudeGameEnvironment(env) {
+  return { ...env, ENABLE_TOOL_SEARCH: 'false' };
+}
+
 const claude = Object.freeze({
   provider: 'claude-code',
   tracksContextTokens: true,
-  command({ hostedConfigFile, model, effort, conversationId }) {
+  command({ hostedConfigFile, model, effort, conversationId, body, gameInstructions }) {
+    const gameOnly = body === 'server';
     const a = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--mcp-config', hostedConfigFile, '--strict-mcp-config',
-      '--permission-mode', 'acceptEdits', '--permission-prompts', 'none'];
+      '--permission-mode', gameOnly ? 'dontAsk' : 'acceptEdits', '--permission-prompts', 'none'];
+    if (gameOnly) {
+      // allowedTools only controls automatic approval. --tools removes the
+      // built-ins themselves, including Read/Edit/Write, shells and subagents.
+      // Restricted mode also excludes inherited local settings/code tools.
+      a.push('--tools', '', '--restricted', '--disable-slash-commands',
+        '--settings', JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false }));
+      if (gameInstructions) a.push('--append-system-prompt', gameInstructions);
+    }
     if (effort) a.push('--effort', effort);
     if (model) a.push('--model', model);
     if (conversationId) a.push('--resume', conversationId);
     // 可变长度参数保持在最后，避免吞掉后续选项。
-    a.push('--allowedTools', 'mcp__minecraft', 'Read', 'Edit', 'Write', 'Glob', 'Grep');
+    a.push('--allowedTools', 'mcp__minecraft', ...(gameOnly ? [] : ['Read', 'Edit', 'Write', 'Glob', 'Grep']));
     return { cmd: 'claude', a };
   },
   encodeTurn(text) {

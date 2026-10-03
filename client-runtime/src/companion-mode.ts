@@ -26,7 +26,7 @@ export class CompanionMode {
   private token?: string;
   private epoch = 0;
   private observationRevision = 0;
-  private changing = false;
+  private changing?: symbol;
   private stopping?: Promise<{ stopped: true }>;
   private terminal?: Operation;
   private pickup?: PickupTracker;
@@ -41,6 +41,14 @@ export class CompanionMode {
   }
   read(): CompanionState { if (this.terminal) this.events.deliverOperation(this.terminal); return this.snapshot(); }
   observationEpoch(): number | null { return this.changing || this.stopping ? null : this.observationRevision; }
+  private beginChange(): symbol {
+    const owner = Symbol(); this.changing = owner; this.observationRevision++; return owner;
+  }
+  private finishChange(owner: symbol): void {
+    // fail() advances the cancellation epoch too; cleanup belongs to the transition, not that epoch.
+    if (this.changing !== owner) return;
+    this.changing = undefined; this.observationRevision++;
+  }
   private publish(value: CompanionState, notify = true): void {
     this.value = value;
     if (!['blocked', 'stopped'].includes(value.state)) this.terminal = undefined;
@@ -96,7 +104,7 @@ export class CompanionMode {
   }
   /** The token stays owned throughout this short stop/change-generation transaction. */
   private async internalStop(epoch: number): Promise<Observation> {
-    this.check(epoch); this.changing = true; this.observationRevision++;
+    this.check(epoch); const owner = this.beginChange();
     this.publish({ ...this.value, activity: 'switching', operationId: undefined }, false);
     try {
       await this.body.stop(); this.check(epoch);
@@ -106,7 +114,7 @@ export class CompanionMode {
       this.intent!.context = next;
       if (this.pickup) { this.pickup.generations.add(next.controlGeneration!); this.ingestPickup(state); }
       return state;
-    } finally { this.observationRevision++; if (epoch === this.epoch) this.changing = false; }
+    } finally { this.finishChange(owner); }
   }
   private async say(epoch: number, message?: string): Promise<void> {
     if (!message) return;
@@ -126,9 +134,8 @@ export class CompanionMode {
     if ((request.action === 'resume' || request.action === 'pause') && !this.intent) throw new BodyError('NO_COMPANION_INTENT', '没有可暂停或恢复的陪伴意图；需要新的明确指令');
     if (request.action === 'resume' && !['paused', 'blocked'].includes(this.value.state)) throw new BodyError('INVALID_STATE', '只有暂停或受阻的陪伴可显式恢复');
     if (request.action === 'pause' && this.value.state === 'paused') { await this.say(this.epoch, request.say); return this.snapshot(); }
-    this.changing = true;
     const epoch = ++this.epoch;
-    this.observationRevision++;
+    const owner = this.beginChange();
     let acquired = false;
     try {
       // Acquire before any awaits; this serializes with finite task and atomic action starts.
@@ -143,7 +150,7 @@ export class CompanionMode {
       if (request.action === 'pause') {
         this.intent!.context = contextOf(initial);
         if (this.pickup) { this.pickup.generations.add(initial.controlGeneration!); this.ingestPickup(initial); }
-        await this.say(epoch, request.say); this.release();
+        await this.say(epoch, request.say); this.check(epoch); this.release();
         this.publish(this.base('paused')); return this.snapshot();
       }
       if (request.action === 'follow') {
@@ -156,6 +163,7 @@ export class CompanionMode {
       }
       if (initial.container) throw new BodyError('BUSY', '请先关闭当前菜单，再开始陪伴');
       await this.say(epoch, request.say);
+      this.check(epoch);
       const intent = this.intent!, token = this.token!;
       if (intent.action === 'wait') { this.publish(this.base('waiting', 'active')); return this.snapshot(); }
       this.publish(this.base('following', 'starting'));
@@ -164,7 +172,7 @@ export class CompanionMode {
     } catch (error) {
       if (acquired && epoch === this.epoch) this.fail(error as Error);
       throw error;
-    } finally { this.changing = false; }
+    } finally { this.finishChange(owner); }
   }
   private async start(epoch: number, token: string, intent: Intent): Promise<void> {
     try {
@@ -243,7 +251,7 @@ export class CompanionMode {
   private async block(error: Error, epoch: number, operation?: Operation): Promise<void> {
     if (epoch !== this.epoch) return;
     this.childActive = false; this.gather.cancel();
-    const blockedEpoch = ++this.epoch; this.changing = true; this.observationRevision++;
+    const blockedEpoch = ++this.epoch, owner = this.beginChange();
     try {
       await this.body.stop(); this.check(blockedEpoch); this.gather.stopped();
       const state = await this.observe(blockedEpoch);
@@ -255,7 +263,7 @@ export class CompanionMode {
       if (this.pickup) { this.pickup.generations.add(state.controlGeneration!); try { this.ingestPickup(state); } catch { this.pickup.state.countStatus = 'partial-or-unknown'; } }
       this.fail(error, operation);
     } catch (stopError) { if (blockedEpoch === this.epoch) this.fail(stopError as Error, undefined, true); }
-    finally { this.observationRevision++; this.changing = false; }
+    finally { this.finishChange(owner); }
   }
   /** Lease/process loss is terminal; no persisted or automatic resume. */
   fail(error: Error, operation?: Operation, controlLost = false): void {
@@ -282,15 +290,16 @@ export class CompanionMode {
   stop(): Promise<{ stopped: true }> {
     if (this.stopping) return this.stopping;
     ++this.epoch; this.intent = undefined;
-    this.observationRevision++;
+    const owner = this.beginChange();
     if (this.childActive) { this.gather.cancel(); this.childActive = false; }
     this.terminal = undefined;
     this.pickup = undefined;
     if (this.value.state !== 'idle' && this.value.state !== 'stopped') this.publish({ state: 'stopped' });
-    this.stopping = (async () => {
+    const stopping = (async () => {
       try { const result = await this.body.stop(); this.gather.stopped(); return result; }
       finally { this.release(); }
-    })().finally(() => { this.stopping = undefined; this.changing = false; this.observationRevision++; });
-    return this.stopping;
+    })().finally(() => { if (this.stopping === stopping) this.stopping = undefined; this.finishChange(owner); });
+    this.stopping = stopping;
+    return stopping;
   }
 }

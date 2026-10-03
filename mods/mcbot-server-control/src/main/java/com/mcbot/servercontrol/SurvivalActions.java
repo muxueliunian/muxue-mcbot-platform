@@ -42,7 +42,7 @@ final class SurvivalActions {
     private AbstractContainerMenu knownMenu;
     private JsonObject knownMenuState;
     private long menuGeneration,revision;
-    private boolean nativeSent;
+    private final NativeActionBoundary nativeEffects=new NativeActionBoundary();
     SurvivalActions(ServerPlayer player,ControlSession session,TargetTokens targets,ResourceTargets resources) { this.player=player;this.session=session;this.targets=targets;this.resources=resources; }
     boolean handles(String name) { return CAPABILITIES.contains(name); }
     private ServerPlayerGameModeAccessor mining() { return (ServerPlayerGameModeAccessor)player.gameMode; }
@@ -171,8 +171,10 @@ final class SurvivalActions {
         targets.requireMenu(player,guardedTarget,guardedMenu);
     }
     void begin(ControlSession.Operation operation) {
-        guard(operation);nativeSent=false;
+        nativeEffects.reset();
         try {
+            nativeEffects.begin(operation,()-> {
+            guard(operation);
             switch(operation.name) {
                 case "dig-block" -> beginDig(operation);
                 case "place-block" -> place(operation);
@@ -183,17 +185,9 @@ final class SurvivalActions {
                 case "drop-item" -> drop(operation);
                 default -> throw error("UNSUPPORTED","Unknown survival action");
             }
-        } catch(Protocol.Error error) {
-            if(digging==operation) abortDig();
-            if(nativeSent&&error.code.equals("STALE_TARGET")) {
-                operation.finish("unknown","Native interaction ran before target changed; do not replay",obj("code","STALE_TARGET"));
-                stop();return;
-            }
-            throw error;
-        } catch(RuntimeException error) {
-            if(digging==operation) abortDig();
-            if(nativeSent) operation.finish("unknown","Native interaction threw; observe current state, never blindly replay",obj("code","NATIVE_UNKNOWN"));
-            else throw error;
+            },()->abort(operation));
+            // Retain target-replacement cleanup: an old guarded menu must not remain usable.
+            if(operation.status.equals("unknown")&&operation.result instanceof JsonObject result&&result.has("code")&&result.get("code").getAsString().equals("STALE_TARGET")) stop();
         } finally { session.expire(); }
     }
     private void beginDig(ControlSession.Operation operation) {
@@ -207,15 +201,17 @@ final class SurvivalActions {
         BlockHitResult hit=hit(position,null);look(hit.getLocation());guard(operation);
         digging=operation;digPosition=position;digFace=hit.getDirection();digState=state;digSlot=player.getInventory().selected;
         deadline=now()+(long)bounded(args,"timeoutMs",15_000,500,120_000);lastDigTick=Integer.MIN_VALUE;
-        nativeSent=true;action(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK,position,digFace);
+        nativeEffects.sent();action(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK,position,digFace);
         digHand=hand();
         if(!player.serverLevel().getBlockState(position).equals(state)) { completeDig();return; }
-        if(!mining().mcbot$isDestroyingBlock()) { abortDig();throw error("FORBIDDEN","Native mining start was refused"); }
+        if(!mining().mcbot$isDestroyingBlock()) { nativeEffects.confirmed();abortDig();throw error("FORBIDDEN","Native mining start was refused"); }
+        nativeEffects.confirmed(); // START was accepted, but the authoritative block is still unchanged.
     }
     void tick() {
         if(digging==null||lastDigTick==player.getServer().getTickCount()) return;
         lastDigTick=player.getServer().getTickCount();ControlSession.Operation operation=digging;
         try {
+            nativeEffects.tick(operation,()-> {
             guard(operation);
             if(operation.args.has("targetToken"))resources.require(player,string(operation.args,"targetToken"));
             if(now()>=deadline) throw error("TIMEOUT","Mining time limit reached");
@@ -228,14 +224,11 @@ final class SurvivalActions {
             // vanilla would schedule delayed destruction, which ABORT alone does not clear.
             float value=digState.getDestroyProgress(player,player.serverLevel(),digPosition)*(progress.mcbot$gameTicks()-progress.mcbot$destroyProgressStart()+1);
             if(value>=1.0f) {
-                guard(operation);action(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK,digPosition,digFace);
-                if(player.serverLevel().getBlockState(digPosition).equals(digState)) throw error("FORBIDDEN","Native break was refused; block unchanged");
+                guard(operation);nativeEffects.sent();action(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK,digPosition,digFace);
+                if(player.serverLevel().getBlockState(digPosition).equals(digState)) { nativeEffects.confirmed();throw error("FORBIDDEN","Native break was refused; block unchanged"); }
                 completeDig();
             } else player.swing(InteractionHand.MAIN_HAND,true);
-        } catch(Protocol.Error error) {
-            operation.finish("failed",error.code+": "+error.getMessage(),obj("code",error.code));abortDig();
-        } catch(RuntimeException error) {
-            operation.finish("unknown","Mining state uncertain; observe before another operation",obj("code","NATIVE_UNKNOWN"));abortDig();
+            },this::abortDig);
         } finally { session.expire(); }
     }
     private void completeDig() {
@@ -264,8 +257,8 @@ final class SurvivalActions {
         int slot=hotbar(args);ItemStack stack=player.getInventory().getItem(slot);expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
         if(!(stack.getItem() instanceof BlockItem item)) throw error("UNSUPPORTED","Only ordinary block items can be placed");
         if(item.getBlock() instanceof DoorBlock||item.getBlock() instanceof BedBlock||item.getBlock() instanceof DoublePlantBlock) throw error("UNSUPPORTED","Multi-block placement requires a separate action contract");
-        BlockHitResult hit=hit(support,face);int before=stack.getCount();select(slot);look(hit.getLocation());guard(operation);
-        nativeSent=true;player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence));
+        BlockHitResult hit=hit(support,face);int before=stack.getCount();nativeEffects.sent();select(slot);look(hit.getLocation());guard(operation);
+        nativeEffects.sent();player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence));
         ItemStack after=player.getInventory().getItem(slot);BlockState actual=player.serverLevel().getBlockState(target);
         JsonObject result=obj("block",blockSnapshot(target),"inventory",inventory(),"consumedCount",before-after.getCount());
         boolean remainingMatches=after.isEmpty()?before==1:itemId(after).equals(string(args,"expectedItem"))&&components(after).equals(object(args,"expectedComponents"));
@@ -285,7 +278,7 @@ final class SurvivalActions {
         if(empty<0) throw error("EMPTY_HAND_REQUIRED","An empty hotbar slot is needed to avoid item-use fallback");
         BlockHitResult hit=hit(position,null);int previous=player.getInventory().selected;look(hit.getLocation());guard(operation);
         if(token!=null) targets.require(player,token);
-        select(empty);nativeSent=true;
+        nativeEffects.sent();select(empty);
         try { player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence)); }
         finally { select(previous); }
         if(player.containerMenu==player.inventoryMenu) operation.finish("failed","FORBIDDEN: Native menu interaction refused",obj("code","FORBIDDEN"));
@@ -305,8 +298,9 @@ final class SurvivalActions {
         if(!slotClickAllowed(clicked.isActive(),clicked.mayPickup(player),clicked.getItem().isEmpty())) throw error("UNSUPPORTED","Inactive slot or protected nonempty slot cannot be clicked by this adapter");
         expectedItem(args,"expectedItem","expectedCount","expectedComponents",menu.getSlot(slot).getItem());
         expectedItem(args,"expectedCarriedItem","expectedCarriedCount","expectedCarriedComponents",menu.getCarried());
-        JsonElement before=container().deepCopy();guard(operation);nativeSent=true;
+        JsonElement before=container().deepCopy();guard(operation);
         verifyGuardedMenu();
+        nativeEffects.sent();
         player.connection.handleContainerClick(new ServerboundContainerClickPacket(menu.containerId,menu.getStateId(),slot,button,ClickType.PICKUP,menu.getCarried().copy(),new Int2ObjectOpenHashMap<>()));
         JsonElement after=container();
         if(after.isJsonNull()||player.containerMenu!=menu) operation.finish("unknown","Menu changed while clicking; inspect current state",obj("container",after));
@@ -319,12 +313,12 @@ final class SurvivalActions {
         return active&&(empty||mayPickup);
     }
     private void close(ControlSession.Operation operation) {
-        AbstractContainerMenu menu=menu(operation.args);guard(operation);verifyGuardedMenu();nativeSent=true;player.connection.handleContainerClose(new ServerboundContainerClosePacket(menu.containerId));
+        AbstractContainerMenu menu=menu(operation.args);guard(operation);verifyGuardedMenu();nativeEffects.sent();player.connection.handleContainerClose(new ServerboundContainerClosePacket(menu.containerId));
         operation.finish(player.containerMenu==player.inventoryMenu?"succeeded":"unknown","Native container close observed",obj("container",container(),"inventory",inventory()));
     }
     private void selectSlot(ControlSession.Operation operation) {
         worldAction();JsonObject args=operation.args;int slot=hotbar(args);expectedItem(args,"expectedItem","expectedCount","expectedComponents",player.getInventory().getItem(slot));guard(operation);
-        nativeSent=true;select(slot);operation.finish(player.getInventory().selected==slot?"succeeded":"unknown","Native selected hotbar slot observed",obj("selectedSlot",player.getInventory().selected,"stack",hand()));
+        nativeEffects.sent();select(slot);operation.finish(player.getInventory().selected==slot?"succeeded":"unknown","Native selected hotbar slot observed",obj("selectedSlot",player.getInventory().selected,"stack",hand()));
     }
     private Set<Integer> droppedEntities() {
         Set<Integer> ids=new HashSet<>();for(ItemEntity entity:player.serverLevel().getEntitiesOfClass(ItemEntity.class,player.getBoundingBox().inflate(8))) ids.add(entity.getId());return ids;
@@ -341,20 +335,18 @@ final class SurvivalActions {
                 recipient(args);
                 if(player.getInventory().selected!=slot||!itemId(current).equals(itemId)||current.getCount()!=original-removed||!components(current).equals(expected)) throw error("STALE_ITEM","Remaining selected stack changed during drop");
                 if(args.has("expectedMaxStackSize")&&integer(args,"expectedMaxStackSize")!=current.getMaxStackSize())throw error("STALE_ITEM","Effective stack maximum changed during native drop");
-                Set<Integer> previous=droppedEntities();int before=current.getCount();nativeSent=true;
+                Set<Integer> previous=droppedEntities();int before=current.getCount();nativeEffects.sent();
                 action(ServerboundPlayerActionPacket.Action.DROP_ITEM,BlockPos.ZERO,Direction.DOWN);
                 ItemStack after=player.getInventory().getItem(slot);int delta=before-after.getCount();removed+=delta;
                 int delivered=0;for(ItemEntity entity:player.serverLevel().getEntitiesOfClass(ItemEntity.class,player.getBoundingBox().inflate(8))) if(!previous.contains(entity.getId())&&itemId(entity.getItem()).equals(itemId)&&components(entity.getItem()).equals(expected)) delivered+=entity.getItem().getCount();
                 dropped+=delivered;
+                nativeEffects.confirmed(); // This unit's inventory delta and matching entities are both known.
                 if(delta!=1||delivered!=1) { operation.finish(delta==0&&delivered==0?"failed":"unknown","Native drop refused or produced unexpected effects",obj("code","DROP_PARTIAL","droppedCount",dropped,"removedCount",removed,"requestedCount",count));return; }
             }
             operation.finish("succeeded","Native dropped item entities and inventory consumption confirmed",obj("droppedCount",dropped,"removedCount",removed,"requestedCount",count));
-        } catch(Protocol.Error error) {
-            operation.finish("failed",error.code+": "+error.getMessage(),obj("code",error.code,"droppedCount",dropped,"removedCount",removed,"requestedCount",count));
         } finally {
             // Preserve known partial effects even if lease expiry already cancelled this operation.
-            JsonObject result=operation.result!=null&&operation.result.isJsonObject()?operation.result.getAsJsonObject():new JsonObject();
-            result.addProperty("droppedCount",dropped);result.addProperty("removedCount",removed);result.addProperty("requestedCount",count);operation.result=result;
+            NativeActionBoundary.recordDropProgress(operation,dropped,removed,count);
         }
     }
     private void recipient(JsonObject args) {

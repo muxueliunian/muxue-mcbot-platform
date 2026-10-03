@@ -84,7 +84,7 @@ test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲�
 for(const agent of ['claude','codex'])test(`ServerBody 真驱动+${agent}：journal卡住仍叫停，缓存能力重接且无旧TCP/RCON`,async()=>{
   const dir=temp(),api=await mock();const runtime=path.join(dir,'runtime');fs.mkdirSync(runtime);
   const connectionFile=path.join(dir,'connection.json');fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:'world-a',username:'ServerTest'}));
-  const configFile=path.join(dir,'mcp.json');const original=Buffer.from(JSON.stringify({mcpServers:{minecraft:{command:process.execPath,args:['not-executed.mjs','--body','server','--connection-file',connectionFile,'--world-id','world-a','--username','ServerTest']}}}));fs.writeFileSync(configFile,original);
+  const configFile=path.join(dir,'mcp.json');const original=Buffer.from(JSON.stringify({mcpServers:{minecraft:{command:process.execPath,args:['not-executed.mjs','--body','server','--connection-file',connectionFile,'--world-id','world-a','--username','ServerTest']},unrelatedFiles:{command:'not-started-filesystem-server'}}}));fs.writeFileSync(configFile,original);
   const F=runtimeFiles(runtime,'ServerTest'),agentLog=path.join(dir,'agent.jsonl');
   let tcp=0;const canary=net.createServer(s=>{tcp++;s.destroy();});await new Promise(r=>canary.listen(0,'127.0.0.1',r));
   fs.writeFileSync(path.join(dir,'server.properties'),`rcon.port=${canary.address().port}\nrcon.password=unused-test-password\n`);
@@ -93,6 +93,17 @@ for(const agent of ['claude','codex'])test(`ServerBody 真驱动+${agent}：jour
     driver=spawn(process.execPath,[path.join(ROOT,'scripts/companion.mjs'),'--agent',agent,'--body','server','--name','ServerTest','--nickname','小克','--mcp-config',configFile,'--headless','--mc-port',String(canary.address().port),'--server-check-seconds','0.05'],{windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,MC_SERVER_DIR:dir,COMPANION_RUNTIME_DIR:runtime,COMPANION_MEMORY_DIR:path.join(dir,'memory'),COMPANION_AGENT_CMD:JSON.stringify([process.execPath,path.join(HERE,'fixtures/fake-server-agent.mjs')]),FAKE_SERVER_AGENT:agent,FAKE_AGENT_LOG:agentLog,FAKE_AGENT_CLOSE_DELAY_MS:'1200',FAKE_AGENT_LEAVE_FILES:agent==='codex'?'1':''}});
     driver.stdout.on('data',d=>output+=d);driver.stderr.on('data',d=>output+=d);exit=new Promise(r=>driver.once('exit',r));
     await waitFor(()=>api.state.claims===1&&records(agentLog).some(r=>r.kind==='turn'),'startup');
+    const hostedConfig=JSON.parse(fs.readFileSync(path.join(runtime,'mcp-hosted-ServerTest.json'),'utf8'));
+    assert.deepEqual(Object.keys(hostedConfig.mcpServers),['minecraft'],'other MCP servers cannot enter game mode');
+    if(agent==='claude'){
+      const start=records(agentLog).find(r=>r.kind==='start'),argv=start.argv;
+      assert.equal(argv[argv.indexOf('--permission-mode')+1],'dontAsk');
+      assert.equal(argv[argv.indexOf('--tools')+1],'');
+      assert.equal(argv[argv.indexOf('--permission-prompts')+1],'none');
+      assert.ok(argv.includes('--restricted'));
+      assert.equal(start.toolSearch,'false');
+      assert.match(argv[argv.indexOf('--append-system-prompt')+1],/宿主只读加载/);
+    }
     await waitFor(()=>api.state.calls.some(c=>c.method==='watch'),'independent watch');
     assert.equal(api.state.revokeCount,0,'claim之前历史stop跳过');
     const startupTurns=records(agentLog).filter(r=>r.kind==='turn').length;
@@ -130,6 +141,10 @@ for(const agent of ['claude','codex'])test(`ServerBody 真驱动+${agent}：jour
     await sleep(400);assert.equal(api.state.claims,2,'崩溃后不自动claim/恢复旧任务');
     api.add('tester','小克，重新查询状态');
     await waitFor(()=>api.state.claims===3,'crash后明确新任务');
+    if(agent==='claude')for(const start of records(agentLog).filter(r=>r.kind==='start')){
+      assert.equal(start.argv[start.argv.indexOf('--tools')+1],'','restarted Agent retains empty built-in tool set');
+      assert.equal(start.argv[start.argv.indexOf('--permission-mode')+1],'dontAsk');
+    }
     assert.equal(tcp,0);assert.deepEqual(fs.readFileSync(configFile),original);
     assert.doesNotMatch(output,/test-only-token|stop-1|stop-2|stop-3|RCON 发送失败/);
     fs.writeFileSync(F.stop,'');let exitTimer;try{assert.equal(await Promise.race([exit,new Promise(r=>{exitTimer=setTimeout(()=>r(-1),10000);})]),0,output);}finally{clearTimeout(exitTimer);}

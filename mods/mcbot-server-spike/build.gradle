@@ -1,0 +1,23 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.147'
+}
+version = mod_version
+group = 'com.mcbot.spike'
+base { archivesName = 'mcbot-server-spike' }
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+repositories { mavenCentral() }
+neoForge {
+    version = project.neo_version
+    parchment { mappingsVersion = '2024.11.17'; minecraftVersion = '1.21.1' }
+    mods { mcbot_server_spike { sourceSet(sourceSets.main) } }
+}
+var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    inputs.property 'mod_version', mod_version
+    expand mod_version: mod_version
+    from 'src/main/templates'
+    into 'build/generated/sources/modMetadata'
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }

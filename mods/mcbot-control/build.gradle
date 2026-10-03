@@ -1,0 +1,40 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.147'
+}
+version = mod_version
+group = mod_group_id
+base { archivesName = 'mcbot-control' }
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+repositories { mavenCentral() }
+dependencies { testImplementation 'com.google.code.gson:gson:2.10.1' }
+neoForge {
+    version = project.neo_version
+    parchment { mappingsVersion = '2024.11.17'; minecraftVersion = '1.21.1' }
+    runs {
+        client {
+            client()
+            if (project.hasProperty('botUsername')) programArguments.addAll '--username', project.property('botUsername')
+            if (project.hasProperty('botServer')) programArguments.addAll '--quickPlayMultiplayer', project.property('botServer')
+        }
+    }
+    mods { "${mod_id}" { sourceSet(sourceSets.main) } }
+}
+var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    inputs.property 'mod_version', mod_version
+    expand mod_version: mod_version
+    from 'src/main/templates'
+    into 'build/generated/sources/modMetadata'
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+tasks.register('controlTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.mcbot.control.ControlSessionTest'
+    jvmArgs '-ea'
+}
+tasks.named('check') { dependsOn 'controlTest' }
+// The safety harness is a plain Java entry point and needs no game launch or test framework.
+tasks.named('test') { enabled = false }

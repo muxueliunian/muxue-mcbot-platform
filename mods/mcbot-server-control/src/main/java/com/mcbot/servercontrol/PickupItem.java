@@ -1,0 +1,151 @@
+package com.mcbot.servercontrol;
+
+import com.google.gson.*;
+import java.util.*;
+import java.util.function.LongSupplier;
+import java.util.function.Predicate;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.phys.*;
+import static com.mcbot.servercontrol.Protocol.*;
+
+/** Bounded approach to one real dropped entity. Vanilla collision does the pickup, the Post event confirms it. */
+final class PickupItem {
+    interface View {
+        boolean mayDrive();void refresh();Vec3 feet();float health();
+        Object identity();JsonObject stack();Vec3 target();boolean available();boolean eligible();
+        boolean safe(Vec3 from,Vec3 to);boolean inReach(Vec3 feet);List<Vec3> plan();
+        void move(Vec3 delta);void stop();
+        default void validateCompanion() {}
+        default boolean routeAllowed(Vec3 feet) {return true;}
+    }
+    private final ControlSession.Operation operation;
+    private final View view;
+    private final LongSupplier clock;
+    private final Object identity;
+    private final String entityId;
+    private final JsonObject expected;
+    private final long deadline;
+    private final float health;
+    private final Vec3 initialTarget;
+    private long progressTime;
+    private Vec3 progressPosition;
+    private List<Vec3> route;
+    private int index,picked;
+    private boolean stolen,stopped;
+    private JsonObject pickedStack;
+    PickupItem(ControlSession.Operation operation,View view,LongSupplier clock) {
+        this.operation=operation;this.view=view;this.clock=clock;entityId=string(operation.args,"entityId");
+        try {if(!UUID.fromString(entityId).toString().equalsIgnoreCase(entityId))throw new IllegalArgumentException();}
+        catch(IllegalArgumentException invalid){throw error("INVALID_ARGUMENT","entityId must be a complete UUID");}
+        int count=SurvivalActions.integer(operation.args,"expectedCount");if(count<1)throw error("INVALID_ARGUMENT","expectedCount must be positive");
+        expected=obj("id",string(operation.args,"expectedItem"),"count",count,"components",object(operation.args,"expectedComponents"));
+        if(operation.args.has("expectedMaxStackSize")){
+            int maximum=SurvivalActions.integer(operation.args,"expectedMaxStackSize");if(maximum<1)throw error("INVALID_ARGUMENT","expectedMaxStackSize must be positive");expected.addProperty("maxStackSize",maximum);
+        }
+        deadline=clock.getAsLong()+(long)bounded(operation.args,"timeoutMs",15_000,500,30_000);
+        identity=view.identity();health=view.health();initialTarget=view.target();progressPosition=view.feet();progressTime=clock.getAsLong();
+    }
+    void picked(Object actualIdentity,boolean byBody,JsonObject stack,int count) {
+        if(stopped||actualIdentity!=identity||!operation.status.equals("running"))return;
+        if(!byBody){stolen=true;return;}
+        if(!sameVariant(expected,stack)||count<=0||picked+count>expected.get("count").getAsInt()) {fail("PICKUP_UNKNOWN","Native pickup changed the bound item stack");return;}
+        picked+=count;pickedStack=stack.deepCopy();pickedStack.addProperty("count",picked);
+    }
+    boolean targets(Object actualIdentity){return !stopped&&actualIdentity==identity;}
+    static boolean sameVariant(JsonObject expected,JsonObject actual) {
+        return Objects.equals(expected.get("id"),actual.get("id"))&&Objects.equals(expected.get("components"),actual.get("components"))&&
+            (!expected.has("maxStackSize")||Objects.equals(expected.get("maxStackSize"),actual.get("maxStackSize")));
+    }
+    static boolean arrivalStand(Vec3 feet,Predicate<Vec3> inReach) {
+        return FlatApproach.arrivalStand(feet,inReach);
+    }
+    void tick() {
+        if(stopped||!operation.status.equals("running")){stop();return;}
+        if(!view.mayDrive()){stop();return;}
+        try {
+            view.validateCompanion();
+            if(stolen)throw error("PICKUP_TAKEN","Another player picked up the bound drop");
+            if(picked>0){operation.finish("succeeded","Native pickup attributed to this body",result(null));stop();return;}
+            view.refresh();
+            if(identity==null||!view.available()||view.identity()!=identity) throw error("PICKUP_UNKNOWN","Bound dropped entity disappeared or changed; no native pickup evidence");
+            JsonObject actual=view.stack();
+            if(!sameVariant(expected,actual)||!Objects.equals(expected.get("count"),actual.get("count")))throw error("STALE_ITEM","Bound dropped stack changed before pickup");
+            if(!view.eligible())throw error("FORBIDDEN","Drop is reserved for another player");
+            if(view.health()<health)throw error("BLOCKED","Body took damage while approaching drop");
+            if(view.target().distanceTo(view.feet())>8)throw error("OUT_OF_REACH","Drop must stay within eight blocks");
+            if(view.target().distanceTo(initialTarget)>0.75)throw error("TARGET_MOVED","Bound drop moved; no unbounded chase");
+            if(!view.safe(view.feet(),view.feet()))throw error("BLOCKED","Body is not on safe loaded flat ground");
+            long now=clock.getAsLong();if(now>=deadline)throw error("TIMEOUT","Native pickup was not confirmed within its time limit");
+            if(view.inReach(view.feet())){view.stop();return;}
+            if(route==null){route=view.plan();if(!view.mayDrive()){stop();return;}}
+            Vec3 feet=view.feet();while(index<route.size()&&feet.subtract(route.get(index)).horizontalDistance()<0.15)index++;
+            if(index>=route.size())throw error("BLOCKED","Drop moved outside the planned pickup stand");
+            Vec3 from=feet;for(int i=index;i<route.size();i++){
+                if(!view.routeAllowed(from)||!view.routeAllowed(route.get(i)))throw error("COMPANION_OUT_OF_RANGE","Pickup route left the live companion radius");
+                if(!view.safe(from,route.get(i)))throw error("BLOCKED","Pickup route became unsafe");from=route.get(i);
+            }
+            if(feet.distanceToSqr(progressPosition)>0.04){progressPosition=feet;progressTime=now;}
+            if(now-progressTime>2500)throw error("BLOCKED","Pickup approach made no progress");
+            Vec3 delta=route.get(index).subtract(feet),step=new Vec3(delta.x,0,delta.z).normalize().scale(Math.min(0.6,delta.horizontalDistance()));
+            if(!view.safe(feet,feet.add(step)))throw error("BLOCKED","Next pickup step is unsafe");
+            view.validateCompanion();
+            if(!view.routeAllowed(feet.add(step)))throw error("COMPANION_OUT_OF_RANGE","Next pickup step left the live companion radius");
+            if(!view.mayDrive()){stop();return;}view.move(delta);
+        }catch(Protocol.Error failure){fail(failure.code,failure.getMessage());}
+        catch(RuntimeException failure){fail("INTERNAL","Pickup approach failed: "+failure.getClass().getSimpleName());}
+    }
+    private JsonObject result(String code) {
+        JsonObject result=obj("entityId",entityId,"pickedUpCount",picked,"pickup",picked>0?"confirmed":"unconfirmed","requestedCount",expected.get("count").getAsInt());
+        if(code==null&&!stolen)result.addProperty("remainingCount",expected.get("count").getAsInt()-picked);
+        if(pickedStack!=null)result.add("stack",pickedStack.deepCopy());if(code!=null)result.addProperty("code",code);return result;
+    }
+    void fail(String code,String message){operation.finish("failed",code+": "+message,result(code));stop();}
+    void stop(){stopped=true;route=null;view.stop();}
+    static PickupItem create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,SurvivalActions survival) {
+        UUID uuid;
+        try {uuid=UUID.fromString(string(operation.args,"entityId"));}catch(IllegalArgumentException invalid){throw error("INVALID_ARGUMENT","entityId must be a UUID");}
+        ItemEntity item=body.serverLevel().getEntity(uuid) instanceof ItemEntity drop?drop:null;
+        CompanionPickupGuard companion=operation.args.has("companionGuard")?new CompanionPickupGuard(object(operation.args,"companionGuard"),new CompanionPickupGuard.View(){
+            public Object dimension(){return body.serverLevel();}
+            public Vec3 bodyPosition(){return body.position();}
+            public Vec3 itemPosition(){return item==null?body.position():item.position();}
+            public CompanionPickupGuard.Player companion(String name){
+                ServerPlayer player=body.getServer().getPlayerList().getPlayerByName(name);
+                return player==null?null:new CompanionPickupGuard.Player(player,player.getUUID(),player.serverLevel(),player.position(),
+                    player!=body&&player.isAlive()&&!player.isRemoved()&&player.connection!=null&&player.connection.isAcceptingMessages());
+            }
+        }):null;
+        View view=new View(){
+            FlatApproach geometry;
+            public boolean mayDrive(){return session.mayDrive(operation);}
+            public void refresh(){
+                if(body.containerMenu!=body.inventoryMenu||!body.onGround()||body.isInWater()||body.isInLava()||body.isPassenger()||body.isFallFlying()||body.isSleeping()||body.getPose()!=Pose.STANDING||body.isOnFire()||body.getTicksFrozen()>0)
+                    throw error("BLOCKED","Body cannot safely walk to a dropped item");
+                geometry=new FlatApproach(body);
+            }
+            public Vec3 feet(){return body.position();}public float health(){return body.getHealth();}
+            public Object identity(){return item==null?null:body.serverLevel().getEntity(uuid);}
+            public boolean available(){return item!=null&&item.isAlive()&&!item.isRemoved()&&item.level()==body.serverLevel();}
+            public boolean eligible(){return item.getTarget()==null||item.getTarget().equals(body.getUUID());}
+            public JsonObject stack(){return survival.stackValue(item.getItem());}
+            public Vec3 target(){return item==null?body.position():item.position();}
+            public boolean safe(Vec3 from,Vec3 to){return geometry.safe(from,to);}
+            public void validateCompanion(){if(companion!=null)companion.validate();}
+            public boolean routeAllowed(Vec3 feet){return companion==null||companion.allows(feet);}
+            public boolean inReach(Vec3 feet){return geometry.itemReach(feet,item.getBoundingBox());}
+            public List<Vec3> plan(){
+                FlatRoute.Cell origin=new FlatRoute.Cell(body.blockPosition().getX(),body.blockPosition().getZ());
+                if(!routeAllowed(geometry.point(origin)))throw error("NO_PATH","Cannot enter pickup grid inside companion radius");
+                if(!geometry.safe(body.position(),geometry.point(origin)))throw error("BLOCKED","Cannot safely enter pickup grid");
+                return FlatRoute.plan(origin,new FlatRoute.View(){
+                    public boolean edge(FlatRoute.Cell from,FlatRoute.Cell to){return routeAllowed(geometry.point(from))&&routeAllowed(geometry.point(to))&&geometry.safe(geometry.point(from),geometry.point(to));}
+                    public boolean goal(FlatRoute.Cell cell){return arrivalStand(geometry.point(cell),feet->routeAllowed(feet)&&inReach(feet));}
+                }).stream().map(geometry::point).toList();
+            }
+            public void move(Vec3 delta){body.moveInput(delta.x,delta.z);}public void stop(){body.stopInput();}
+        };
+        return new PickupItem(operation,view,()->System.nanoTime()/1_000_000);
+    }
+}

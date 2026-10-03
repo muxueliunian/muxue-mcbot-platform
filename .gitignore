@@ -1,0 +1,33 @@
+# Dependencies, compiled output and local build caches
+node_modules/
+dist/
+build/
+.gradle/
+run/
+logs/
+*.log
+*.log.gz
+__pycache__/
+
+# Local game instances, fixtures, evidence and credentials
+server/
+server-ysm-test/
+runtime/
+output/
+backups/
+memory/
+data/
+skins/
+shaderpacks/
+.claude/
+.mcp.json
+.env
+.env.*
+!.env.example
+**/connection.json
+*.pem
+*.key
+
+# Editor and OS files
+.DS_Store
+Thumbs.db

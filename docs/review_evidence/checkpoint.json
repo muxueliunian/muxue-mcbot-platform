@@ -1,0 +1,238 @@
+{
+  "date": "2026-10-03",
+  "scope": "Historical source-workspace validation, not a rerun in this export; raw logs and private runtime files not distributed.",
+  "platform": {
+    "minecraft": "1.21.1",
+    "loader": "NeoForge",
+    "loaderVersion": "21.1.217",
+    "body": "ServerBody",
+    "deployment": "single bot, local loopback, dedicated server"
+  },
+  "offline": {
+    "node": {
+      "passed": 143,
+      "failed": 0
+    },
+    "javaChecks": 387,
+    "hostFocused": {
+      "passed": 12,
+      "failed": 0
+    },
+    "legacyPreviousFull": {
+      "passed": 312,
+      "skipped": 1,
+      "failed": 0
+    }
+  },
+  "program": {
+    "result": "passed",
+    "checks": [
+      {
+        "name": "陪伴与有限收取工具可用，底层拾取不作为模型工具",
+        "passed": true
+      },
+      {
+        "name": "普通跟随不主动追掉落",
+        "passed": true
+      },
+      {
+        "name": "拾取白名单与半径按明确指令保留",
+        "passed": true
+      },
+      {
+        "name": "首个掉落实收并自动回跟随",
+        "passed": true
+      },
+      {
+        "name": "独立服务端库存确认三个雪球",
+        "passed": true
+      },
+      {
+        "name": "后续新增掉落被收取且累计准确",
+        "passed": true
+      },
+      {
+        "name": "每个成功掉落均不触发task或companion唤醒",
+        "passed": true
+      },
+      {
+        "name": "拾取后仍跟随真实玩家行走",
+        "passed": true
+      },
+      {
+        "name": "聊天和观察保留拾取意图",
+        "passed": true
+      },
+      {
+        "name": "持续拾取与有限任务共享写锁",
+        "passed": true
+      },
+      {
+        "name": "非白名单掉落不主动追逐",
+        "passed": true
+      },
+      {
+        "name": "玩家半径外的允许物也不主动追逐",
+        "passed": true
+      },
+      {
+        "name": "暂停保留拾取配置且不追物",
+        "passed": true
+      },
+      {
+        "name": "显式恢复重查后原生收取",
+        "passed": true
+      },
+      {
+        "name": "明确wait清除旧拾取配置",
+        "passed": true
+      },
+      {
+        "name": "stop清除意图且resume不能重播",
+        "passed": true
+      },
+      {
+        "name": "满包受阻不收取也不反复追逐",
+        "passed": true
+      },
+      {
+        "name": "满包只发一次必要阻断通知",
+        "passed": true
+      },
+      {
+        "name": "玩家出拾取半径先收住子动作再跟随",
+        "passed": true
+      },
+      {
+        "name": "运动叫停没有迟到追物或旧意图",
+        "passed": true
+      },
+      {
+        "name": "叫停后第一新collect任务成功",
+        "passed": true
+      },
+      {
+        "name": "目标离线受阻并保持静止",
+        "passed": true
+      },
+      {
+        "name": "专用平台未被拾取或跟随破坏",
+        "passed": true
+      }
+    ]
+  },
+  "agents": [
+    {
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "result": "passed",
+      "stopMs": 163,
+      "phases": [
+        {
+          "scenario": "finite-group-pickup",
+          "firstReplyMs": 4284,
+          "status": "succeeded",
+          "confirmed": {
+            "item": "minecraft:snowball",
+            "requestedStacks": 1,
+            "targetCount": 16,
+            "pickedUpCount": 16,
+            "minedBlocks": 0,
+            "maxStackSize": 16,
+            "pickup": "native-confirmed",
+            "quantity": "newly-picked"
+          }
+        },
+        {
+          "scenario": "follow-with-authorized-pickup",
+          "firstReplyMs": 3018,
+          "noPerItemWake": true
+        },
+        {
+          "scenario": "chat-keeps-mode",
+          "firstReplyMs": 2334
+        },
+        {
+          "scenario": "independent-stop",
+          "stayedStopped": true
+        },
+        {
+          "scenario": "first-new-task-gathers-two",
+          "firstReplyMs": 10322,
+          "status": "succeeded",
+          "confirmed": {
+            "item": "minecraft:cobblestone",
+            "targetCount": 2,
+            "pickedUpCount": 2,
+            "minedBlocks": 2,
+            "maxStackSize": 64,
+            "pickup": "native-confirmed",
+            "quantity": "newly-picked"
+          }
+        }
+      ]
+    },
+    {
+      "agent": "codex",
+      "model": "host default",
+      "effort": "low",
+      "result": "passed",
+      "stopMs": 483,
+      "phases": [
+        {
+          "scenario": "finite-group-pickup",
+          "firstReplyMs": 13259,
+          "status": "succeeded",
+          "confirmed": {
+            "item": "minecraft:snowball",
+            "requestedStacks": 1,
+            "targetCount": 16,
+            "pickedUpCount": 16,
+            "minedBlocks": 0,
+            "maxStackSize": 16,
+            "pickup": "native-confirmed",
+            "quantity": "newly-picked"
+          }
+        },
+        {
+          "scenario": "follow-with-authorized-pickup",
+          "firstReplyMs": 7070,
+          "noPerItemWake": true
+        },
+        {
+          "scenario": "chat-keeps-mode",
+          "firstReplyMs": 5414
+        },
+        {
+          "scenario": "independent-stop",
+          "stayedStopped": true
+        },
+        {
+          "scenario": "first-new-task-gathers-two",
+          "firstReplyMs": 15244,
+          "status": "succeeded",
+          "confirmed": {
+            "item": "minecraft:cobblestone",
+            "targetCount": 2,
+            "pickedUpCount": 2,
+            "minedBlocks": 2,
+            "maxStackSize": 64,
+            "pickup": "native-confirmed",
+            "quantity": "newly-picked"
+          }
+        }
+      ]
+    }
+  ],
+  "unresolved": [
+    "An idle validation-server process exited without a recorded cause.",
+    "An initial Codex test/host/player process group exited without final report; cause not established. A full retry passed."
+  ],
+  "cleanup": {
+    "serverSavedAndStopped": true,
+    "configRestoredByActualBytes": true,
+    "retainedFixtureWorldChanges": true,
+    "credentialsAndWorldNotExported": true
+  }
+}

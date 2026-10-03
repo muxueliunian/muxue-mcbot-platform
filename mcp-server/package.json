@@ -1,0 +1,36 @@
+{
+  "name": "mcbot-mcp-server",
+  "version": "2.0.4-mcbot.1",
+  "private": true,
+  "description": "mcbot 自用的 Minecraft MCP 服务端，基于 yuniko-software/minecraft-mcp-server（Apache-2.0）扩展",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "test": "npm run build && node --test --test-timeout=90000 \"tests/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "minecraft-data": "^3.105.0",
+    "minecraft-protocol": "^1.68.0",
+    "mineflayer": "^4.35.0",
+    "mineflayer-pathfinder": "^2.4.2",
+    "pngjs": "^7.0.0",
+    "prismarine-nbt": "^2.8.0",
+    "prismarine-viewer": "^1.33.0",
+    "puppeteer-core": "^25.11.0",
+    "vec3": "^0.1.8",
+    "yargs": "^18.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/pngjs": "^6.0.5",
+    "@types/yargs": "^17.0.35",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  }
+}

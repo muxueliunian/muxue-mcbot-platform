@@ -1,0 +1,170 @@
+package com.mcbot.servercontrol;
+
+import com.google.gson.JsonObject;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+import static com.mcbot.servercontrol.Protocol.*;
+
+/** Plain JVM regression against control boundary behavior, no Minecraft launch. */
+public final class ControlSessionTest {
+    private static int checks;
+    private static final class FakeGame implements ControlSession.Game {
+        boolean exists,dead,savedDead;
+        int creations,starts,stops,respawns;
+        boolean immediate=true;
+        boolean crashChat,crashStop,nearby;
+        int discoveries;
+        ControlSession.Operation active;
+        @Override public boolean connected() { return exists&&!dead; }
+        @Override public void ensureBody() { if(dead)throw error("DEAD_BODY","Explicit respawn required");if(!exists) {exists=true;creations++;} }
+        @Override public void respawn() {
+            if((!exists||!dead)&&!savedDead)throw error("INVALID_ARGUMENT","No dead body");
+            exists=true;dead=false;savedDead=false;respawns++;
+        }
+        @Override public JsonObject hello() { return obj("capabilities",nearby?List.of("send-chat","nearby-blocks"):List.of("send-chat")); }
+        @Override public JsonObject observe(JsonObject p) { return obj("source","server-observed","container",null); }
+        @Override public JsonObject nearbyBlocks(JsonObject p) {discoveries++;return obj("dimension","minecraft:overworld","candidates",List.of());}
+        @Override public JsonObject watch() { return obj("chat",List.of(),"chatCursor",7); }
+        @Override public long chatCursor() { return 7; }
+        @Override public void begin(ControlSession.Operation o) {
+            starts++;
+            if(crashChat&&o.name.equals("send-chat"))throw new IllegalStateException();
+            if(immediate)o.finish("succeeded","Done",null);else active=o;
+        }
+        @Override public void abort(ControlSession.Operation o) {if(active==o)stop();}
+        @Override public void stop() {stops++;if(crashStop)throw new IllegalStateException("Injected native cleanup failure");active=null;}
+    }
+    private static final class Fixture {
+        final FakeGame game=new FakeGame();
+        final AtomicLong time=new AtomicLong();
+        final ControlSession session=new ControlSession(game,time::get,"world","ServerBot");
+        JsonObject claim(String controller) { return session.call("claim",obj("instanceId",session.instanceId,"worldId","world","username","ServerBot","controllerId",controller)); }
+        JsonObject auth(JsonObject claim) {return obj("instanceId",session.instanceId,"sessionId",claim.get("sessionId").getAsString(),"leaseId",claim.get("leaseId").getAsString());}
+        JsonObject host(JsonObject claim) {JsonObject p=auth(claim);p.add("stopToken",claim.get("stopToken"));return p;}
+        JsonObject act(JsonObject claim,String id) {
+            JsonObject p=auth(claim);p.add("controlGeneration",claim.get("controlGeneration"));p.addProperty("operationId",id);p.addProperty("name","send-chat");p.add("args",obj("message","hello"));return p;
+        }
+    }
+    private static void check(boolean condition,String message) {checks++;if(!condition)throw new AssertionError(message);}
+    private static void errorCode(String code,Runnable runnable) {
+        checks++;
+        try {runnable.run();throw new AssertionError("Expected "+code);}
+        catch(Protocol.Error e) {if(!e.code.equals(code))throw new AssertionError("Expected "+code+", got "+e.code);}
+    }
+    public static void main(String[] ignored) throws Exception {
+        Fixture f=new Fixture();
+        JsonObject hello=f.session.call("hello",obj());
+        check(!hello.get("connected").getAsBoolean()&&hello.get("sessionId").isJsonNull(),"hello does not create body");
+        check(f.game.creations==0&&hello.get("username").getAsString().equals("ServerBot"),"configured identity before claim");
+        JsonObject claim=f.claim("a"), auth=f.auth(claim);
+        check(f.game.creations==1&&claim.get("chatCursor").getAsLong()==7,"claim creates one body and cursor");
+        errorCode("UNSUPPORTED",()->f.session.call("nearby-blocks",auth));
+        f.game.nearby=true;
+        JsonObject nearby=f.session.call("nearby-blocks",auth);
+        check(nearby.get("instanceId").getAsString().equals(f.session.instanceId)&&nearby.get("sessionId").equals(claim.get("sessionId"))&&nearby.get("worldId").getAsString().equals("world")&&nearby.get("controlGeneration").equals(claim.get("controlGeneration")),"nearby discovery binds full control context");
+        check(f.game.discoveries==1&&f.game.starts==0,"discovery is a read and creates no operation");
+        JsonObject wrongNearby=auth.deepCopy();wrongNearby.addProperty("leaseId","wrong");
+        errorCode("LEASE_LOST",()->f.session.call("nearby-blocks",wrongNearby));
+        check(f.game.discoveries==1,"unauthorized discovery never enters game code");
+        errorCode("LEASE_BUSY",()->f.claim("b"));
+        check(f.claim("a").get("leaseId").equals(claim.get("leaseId")),"same controller retry is idempotent");
+        String id=UUID.randomUUID().toString();JsonObject action=f.act(claim,id);
+        JsonObject first=f.session.call("act",action),again=f.session.call("act",action.deepCopy());
+        check(first.equals(again)&&f.game.starts==1,"duplicate ID does not repeat action");
+        JsonObject changed=action.deepCopy();changed.add("args",obj("message","different"));
+        errorCode("OPERATION_CONFLICT",()->f.session.call("act",changed));
+        JsonObject observation=f.session.call("observe",auth);
+        check(observation.get("container").isJsonNull()&&observation.get("instanceId").getAsString().equals(f.session.instanceId),"observation carries epoch and null");
+        JsonObject wrong=auth.deepCopy();wrong.addProperty("instanceId","other");errorCode("WRONG_INSTANCE",()->f.session.call("heartbeat",wrong));
+        JsonObject stopped=f.session.call("stop",auth);
+        check(stopped.get("controlGeneration").getAsLong()>claim.get("controlGeneration").getAsLong()&&f.game.exists,"stop advances generation and retains body");
+        errorCode("STALE_CONTROL",()->f.session.call("act",f.act(claim,UUID.randomUUID().toString())));
+        JsonObject fresh=f.act(claim,UUID.randomUUID().toString());fresh.add("controlGeneration",stopped.get("controlGeneration"));
+        check(f.session.call("act",fresh).get("status").getAsString().equals("succeeded"),"first new-generation action works");
+        f.session.call("revoke",f.host(claim));check(f.game.exists,"host revoke retains body");
+        errorCode("LEASE_LOST",()->f.session.call("heartbeat",auth));
+        check(f.session.call("watch",f.host(claim)).get("chatCursor").getAsLong()==7,"retired host can watch without lease");
+        JsonObject next=f.claim("b");check(f.game.creations==1,"reclaim attaches retained body");
+        int stops=f.game.stops;f.session.call("revoke",f.host(claim));
+        check(f.game.stops==stops,"old host revoke never stops new lease");
+        errorCode("LEASE_LOST",()->f.session.call("watch",f.host(claim)));
+        f.session.call("heartbeat",f.auth(next));
+        Fixture expiry=new Fixture();JsonObject expiring=expiry.claim("a");expiry.time.set(9000);
+        check(expiry.claim("a").get("ttlMs").getAsLong()==1000,"retransmitted claim exposes remaining TTL");expiry.time.set(10000);
+        errorCode("LEASE_LOST",()->expiry.session.call("heartbeat",expiry.auth(expiring)));
+        check(expiry.game.exists,"expiry does not remove body");
+        Fixture physics=new Fixture();physics.game.immediate=false;JsonObject runningClaim=physics.claim("a");
+        physics.session.call("act",physics.act(runningClaim,UUID.randomUUID().toString()));
+        ControlSession.Operation probe=new ControlSession.Operation("probe",runningClaim.get("sessionId").getAsString(),runningClaim.get("controlGeneration").getAsLong(),"move-to-position",obj());
+        check(physics.session.mayDrive(probe),"valid lease before physical tick");physics.time.set(10000);
+        check(!physics.session.mayDrive(probe)&&physics.game.stops>0,"expired lease rejected before physical tick");
+        Fixture epoch=new Fixture();JsonObject old=epoch.claim("a");epoch.session.bodyChanged();
+        errorCode("WORLD_CHANGED",()->epoch.session.call("observe",epoch.auth(old)));
+        errorCode("LEASE_LOST",()->epoch.session.call("watch",epoch.host(old)));
+        Fixture cache=new Fixture();JsonObject c=cache.claim("a");String firstId=UUID.randomUUID().toString();cache.session.call("act",cache.act(c,firstId));
+        for(int i=0;i<ControlSession.HISTORY_LIMIT;i++) cache.session.call("act",cache.act(c,UUID.randomUUID().toString()));
+        int starts=cache.game.starts;errorCode("UNKNOWN_OPERATION",()->cache.session.call("act",cache.act(c,firstId)));
+        check(cache.game.starts==starts,"evicted ID is never replayed");
+        for(int i=ControlSession.HISTORY_LIMIT+1;i<ControlSession.ID_LIMIT;i++) cache.session.call("act",cache.act(c,UUID.randomUUID().toString()));
+        errorCode("BUSY",()->cache.session.call("act",cache.act(c,UUID.randomUUID().toString())));
+        cache.session.call("release",cache.auth(c));JsonObject reset=cache.claim("b");cache.session.call("act",cache.act(reset,UUID.randomUUID().toString()));
+        check(cache.game.starts==ControlSession.ID_LIMIT+1,"new lease resets bounded ID budget");
+        Fixture concurrent=new Fixture();concurrent.game.immediate=false;JsonObject cc=concurrent.claim("a");
+        JsonObject movement=concurrent.act(cc,UUID.randomUUID().toString());movement.addProperty("name","move-to-position");
+        concurrent.session.call("act",movement);ControlSession.Operation existing=concurrent.game.active;
+        concurrent.game.crashChat=true;JsonObject failure=concurrent.session.call("act",concurrent.act(cc,UUID.randomUUID().toString()));
+        check(failure.get("status").getAsString().equals("failed")&&failure.getAsJsonObject("result").get("code").getAsString().equals("INTERNAL"),"unexpected action failure carries structured code");
+        check(concurrent.game.active==existing&&existing.status.equals("running"),"failing concurrent chat does not abort valid movement");
+        Fixture death=new Fixture();JsonObject deathClaim=death.claim("a");
+        JsonObject liveRespawn=obj("instanceId",death.session.instanceId,"worldId","world","username","ServerBot","sessionId",death.session.sessionId());
+        errorCode("INVALID_ARGUMENT",()->death.session.call("respawn",liveRespawn));
+        death.session.call("heartbeat",death.auth(deathClaim));
+        check(death.game.respawns==0,"live respawn rejection preserves current lease");
+        death.game.dead=true;death.session.bodyChanged();
+        errorCode("DEAD_BODY",()->death.claim("a"));
+        JsonObject request=obj("instanceId",death.session.instanceId,"worldId","world","username","ServerBot","sessionId",death.session.sessionId());
+        JsonObject stale=request.deepCopy();stale.add("sessionId",deathClaim.get("sessionId"));
+        errorCode("WORLD_CHANGED",()->death.session.call("respawn",stale));
+        JsonObject wrongPlayer=request.deepCopy();wrongPlayer.addProperty("username","OtherBot");
+        errorCode("WRONG_PLAYER",()->death.session.call("respawn",wrongPlayer));
+        JsonObject wrongWorld=request.deepCopy();wrongWorld.addProperty("worldId","other-world");
+        errorCode("WRONG_WORLD",()->death.session.call("respawn",wrongWorld));
+        JsonObject missingSession=request.deepCopy();missingSession.remove("sessionId");
+        errorCode("INVALID_ARGUMENT",()->death.session.call("respawn",missingSession));
+        check(death.game.respawns==0,"respawn preconditions never mutate body");
+        JsonObject reborn=death.session.call("respawn",request);
+        check(reborn.get("respawned").getAsBoolean()&&reborn.get("connected").getAsBoolean()&&death.game.respawns==1,"explicit death respawn succeeds once");
+        check(!reborn.get("sessionId").equals(request.get("sessionId"))&&!reborn.has("leaseId"),"respawn creates new epoch but grants no lease");
+        errorCode("WORLD_CHANGED",()->death.session.call("observe",death.auth(deathClaim)));
+        errorCode("WORLD_CHANGED",()->death.session.call("respawn",request));
+        JsonObject rebound=death.claim("b");
+        check(death.game.creations==1&&death.game.respawns==1,"explicit new claim attaches respawned body without duplication");
+        death.session.call("heartbeat",death.auth(rebound));
+        Fixture savedDeath=new Fixture();savedDeath.game.savedDead=true;
+        JsonObject savedRespawn=savedDeath.session.call("respawn",obj("instanceId",savedDeath.session.instanceId,"worldId","world","username","ServerBot","sessionId",null));
+        check(savedRespawn.get("connected").getAsBoolean()&&savedDeath.game.respawns==1&&savedDeath.game.creations==0,"explicit null epoch can load a death save without implicit claim");
+        Fixture cleanupFailure=new Fixture();JsonObject cleanupLease=cleanupFailure.claim("a");cleanupFailure.game.immediate=false;
+        JsonObject pendingAction=cleanupFailure.session.call("act",cleanupFailure.act(cleanupLease,UUID.randomUUID().toString()));
+        cleanupFailure.game.crashStop=true;
+        JsonObject cancelled=cleanupFailure.session.call("stop",cleanupFailure.auth(cleanupLease));
+        check(cancelled.get("controlGeneration").getAsLong()==cleanupLease.get("controlGeneration").getAsLong()+1,"throwing native stop still increments generation");
+        errorCode("STALE_CONTROL",()->cleanupFailure.session.call("act",cleanupFailure.act(cleanupLease,UUID.randomUUID().toString())));
+        JsonObject pendingQuery=cleanupFailure.auth(cleanupLease);pendingQuery.add("operationId",pendingAction.get("operationId"));
+        check(cleanupFailure.session.call("operation",pendingQuery).get("status").getAsString().equals("cancelled"),"throwing cleanup still cancels old operation");
+        cleanupFailure.session.call("release",cleanupFailure.auth(cleanupLease));
+        errorCode("LEASE_LOST",()->cleanupFailure.session.call("heartbeat",cleanupFailure.auth(cleanupLease)));
+        JsonObject afterFailure=cleanupFailure.claim("b");check(!afterFailure.get("leaseId").equals(cleanupLease.get("leaseId")),"throwing release never leaves old lease occupied");
+        cleanupFailure.time.set(ControlSession.TTL_MS);
+        errorCode("LEASE_LOST",()->cleanupFailure.session.call("heartbeat",cleanupFailure.auth(afterFailure)));
+        check(cleanupFailure.game.exists,"cleanup exception does not remove retained body");
+        System.out.println("ControlSessionTest: "+checks+" checks passed");
+        LocalHttpBridgeTest.run();
+        ExactNbtTest.run();
+        InteractionObservationTest.run();
+        ApproachSafetyTest.run();
+        IronFurnaceAdapterTest.run();
+        FollowCompanionTest.run();
+        ResourcePickupTest.run();
+        CompanionPickupTest.run();
+    }
+}

@@ -1,0 +1,293 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { GatherTasks } from '../dist/gather-tasks.js';
+import { EventJournal } from '../dist/events.js';
+import { BodyError } from '../dist/body.js';
+import { ServerBody } from '../dist/server-body.js';
+import { mockServerControl } from './mock-server-control.mjs';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createMcpServer } from '../dist/mcp.js';
+
+const clone = value => structuredClone(value);
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(check) { for (let i = 0; i < 600; i++) { if (check()) return; await delay(5); } assert.fail('condition did not become observable'); }
+const stack = (count = 1, maxStackSize = 64, components = {}) => ({ id: 'minecraft:cobblestone', count, maxStackSize, components });
+function fixture({ drops = [], blocks = 3, automatic = false, max = 64, dropCount = 1, full = false } = {}) {
+  const context = { instanceId: 'instance', sessionId: 'session', worldId: 'world', dimension: 'minecraft:overworld', controlGeneration: 0 };
+  const state = { ...context, connected: true, username: 'Bot', source: 'server-observed', health: 20, food: 20, position: { x: 0, y: 64, z: 0 }, yaw: 0, pitch: 0, chat: [], chatCursor: 0, selectedSlot: 0, entities: [], container: null,
+    inventory: Array.from({ length: 36 }, (_, slot) => ({ slot, id: full ? 'minecraft:dirt' : 'minecraft:air', count: full ? 64 : 0, components: {}, ...(full ? { maxStackSize: 64 } : {}) })),
+    groundItems: drops.map((value, index) => ({ entityId: randomUUID(), position: { x: index + 1, y: 64, z: 0 }, onGround: true, visibility: 'visible', stack: clone(value) })), groundItemsTruncated: false, pickupCursor: 0, pickupOldestCursor: 0, pickupReceipts: [] };
+  state.inventory[0] = { slot: 0, id: 'minecraft:iron_pickaxe', count: 1, components: {}, maxStackSize: 1 };
+  const candidates = Array.from({ length: blocks }, (_, i) => ({ position: { x: i + 1, y: 64, z: 1 }, id: 'minecraft:stone', properties: {}, distance: i + 1, visible: true, targetToken: randomUUID(), requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }));
+  let owner;
+  const calls = [], ops = new Map();
+  const pickup = (item, actual = item.stack) => {
+    state.pickupCursor++;
+    state.pickupReceipts.push({ seq: state.pickupCursor, entityId: item.entityId, position: clone(item.position), stack: clone(actual), pickedUpCount: actual.count, sessionId: state.sessionId, controlGeneration: state.controlGeneration, dimension: state.dimension });
+    state.groundItems = state.groundItems.filter(other => other.entityId !== item.entityId);
+    if (!full) {
+      const target = state.inventory.find(slot => slot.id === actual.id && JSON.stringify(slot.components) === JSON.stringify(actual.components)) ?? state.inventory.find(slot => slot.count === 0);
+      if (target) Object.assign(target, { ...clone(actual), count: target.count + actual.count });
+    }
+  };
+  const body = {
+    hello: { ...context, protocol: 2, backend: 'server', connected: true, username: 'Bot', platform: { minecraft: 'test', loader: 'test', loaderVersion: 'test' }, capabilities: ['send-chat', 'nearby-resources', 'approach-resource', 'pickup-item', 'dig-block', 'select-slot'] },
+    acquireTask: token => { if (owner) throw new BodyError('BUSY', 'task already running'); owner = token; }, releaseTask: token => { if (owner === token) owner = undefined; },
+    observe: async () => { await body.beforeObserve?.(); return clone(state); },
+    nearbyResources: async args => { calls.push({ name: 'discover', args }); return { ...context, controlGeneration: state.controlGeneration, center: clone(state.position), candidates: clone(candidates), truncated: false }; },
+    pendingOperations: () => [], operation: async id => ops.get(id), close: async () => {},
+    stop: async () => { calls.push({ name: 'stop' }); state.controlGeneration++; for (const [id, op] of ops) if (op.status === 'running') ops.set(id, { ...op, status: 'cancelled' }); return { stopped: true }; },
+    act: async (name, args, token) => {
+      if (name !== 'send-chat' && owner && token !== owner) throw new BodyError('BUSY', 'shared task lock');
+      calls.push({ name, args: clone(args), token });
+      const generation = state.controlGeneration;
+      await body.beforeAct?.(name, args);
+      let result = {}, status = 'succeeded';
+      if (name === 'select-slot') state.selectedSlot = args.slot;
+      if (name === 'dig-block') {
+        if (body.protected) { status = 'failed'; result = { code: 'PROTECTED' }; }
+        else {
+          const item = { entityId: randomUUID(), position: { x: args.x + 0.5, y: args.y, z: args.z + 0.5 }, onGround: true, visibility: 'visible', stack: stack(dropCount, max) };
+          state.groundItems.push(item); if (automatic) pickup(item);
+        }
+      }
+      if (name === 'pickup-item') {
+        const item = state.groundItems.find(item => item.entityId === args.entityId);
+        if (!item) { status = 'failed'; result = { code: 'STALE_TARGET' }; }
+        else if (full) { status = 'failed'; result = { code: 'INVENTORY_FULL' }; }
+        else { if (!body.noReceipt) pickup(item, body.changedStack ?? item.stack); else state.groundItems = state.groundItems.filter(next => next !== item); result = { pickedUpCount: args.expectedCount, pickup: 'confirmed' }; }
+      }
+      const op = { operationId: randomUUID(), sessionId: context.sessionId, controlGeneration: generation, name, status, summary: name, result };
+      ops.set(op.operationId, op); await body.afterAct?.(name, args, op); return op;
+    },
+  };
+  const events = new EventJournal(), tasks = new GatherTasks(body, events);
+  return { body, events, tasks, state, calls, pickup, candidates, ref: async () => (await tasks.discover({ blockIds: ['minecraft:stone'], radius: 4, maxResults: 32 })).resourceRef,
+    done: async op => { await until(() => tasks.operation(op.operationId)?.status !== 'running'); return tasks.operation(op.operationId); } };
+}
+test('collect resolves actual stack maxima 16/64/99 and counts receipts independently of existing inventory', async () => {
+  for (const max of [16, 64, 99]) {
+    const f = fixture({ drops: [stack(max, max)] });
+    f.state.inventory[2] = { slot: 2, ...stack(7, max) };
+    const accepted = await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', stacks: 1, radius: 4 });
+    assert.equal(accepted.status, 'running');
+    const result = await f.done(accepted);
+    assert.equal(result.status, 'succeeded'); assert.equal(result.result.targetCount, max); assert.equal(result.result.pickedUpCount, max); assert.equal(result.result.minedBlocks, 0);
+    assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
+  }
+});
+test('gather mines then picks through the fixed token set without rescanning, with honest mined/picked separation', async () => {
+  const f = fixture();
+  const op = await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 3, say: '我先采三个' });
+  assert.equal(op.status, 'running');
+  const result = await f.done(op); assert.equal(result.status, 'succeeded'); assert.equal(result.result.pickedUpCount, 3); assert.equal(result.result.minedBlocks, 3);
+  assert.equal(f.calls.filter(call => call.name === 'discover').length, 1); assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 3);
+  assert.ok(f.calls.filter(call => call.name === 'dig-block').every(call => f.candidates.some(candidate => candidate.targetToken === call.args.targetToken)));
+  assert.equal(f.calls[1].name, 'send-chat'); assert.equal(f.events.since(0, ['task']).length, 1);
+});
+test('first native receipt can resolve a stack while automatic dig pickup and overage remain authoritative', async () => {
+  const f = fixture({ automatic: true, max: 16, dropCount: 16 });
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', stacks: 1 }));
+  assert.equal(result.status, 'succeeded'); assert.equal(result.result.targetCount, 16); assert.equal(result.result.pickedUpCount, 16); assert.equal(result.result.minedBlocks, 1);
+  const over = fixture({ drops: [stack(10)] });
+  const extra = await over.done(await over.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+  assert.equal(extra.result.pickedUpCount, 10); assert.equal(extra.result.overage, 7);
+});
+test('confirmed dig count survives unexpected native pickup or a later observation failure', async () => {
+  for (const failure of ['variant', 'read']) {
+    const f = fixture();
+    f.body.afterAct = name => {
+      if (name !== 'dig-block') return;
+      if (failure === 'variant') f.pickup(f.state.groundItems[0], { id: 'minecraft:dirt', count: 1, maxStackSize: 64, components: {} });
+      else f.body.beforeObserve = () => { throw new BodyError('TRANSPORT_LOST', 'lost after confirmed dig'); };
+    };
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 3 }));
+    assert.equal(result.result.minedBlocks, 1); assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 1);
+    assert.equal(result.result.code, failure === 'variant' ? 'UNEXPECTED_PICKUP' : 'TRANSPORT_LOST');
+  }
+});
+test('pre-existing inventory components do not bind or reject the authorized ground variant', async () => {
+  const f = fixture({ drops: [stack(16, 16)] }); f.state.inventory[2] = { slot: 2, ...stack(3, 99, { name: 'old inventory' }) };
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', stacks: 1 }));
+  assert.equal(result.status, 'succeeded'); assert.equal(result.result.targetCount, 16); assert.equal(result.result.maxStackSize, 16); assert.deepEqual(result.result.variantComponents, {});
+});
+test('natural collision during settling or step pre-read skips the proven UUID and continues toward the remaining goal', async () => {
+  for (const window of ['settling', 'pre-step']) {
+    const f = fixture({ drops: [stack(), stack(), stack()] }); const first = f.state.groundItems[0];
+    let observed = 0, picked = false;
+    f.body.beforeObserve = () => {
+      observed++;
+      // initial read=1, first pickups read=2, four 50ms landing samples=3..6, step pre-read=7
+      if (!picked && observed === (window === 'settling' ? 3 : 7)) { picked = true; f.pickup(first); }
+    };
+    const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+    assert.equal(result.status, 'succeeded'); assert.equal(result.result.pickedUpCount, 3);
+    assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, 2);
+    assert.ok(!f.calls.some(call => call.name === 'pickup-item' && call.args.entityId === first.entityId));
+  }
+});
+test('frozen candidates exhaust with partial quantity; full inventory and missing tools refuse before digging', async () => {
+  const short = fixture({ blocks: 2 });
+  const partial = await short.done(await short.tasks.start('gather-resources', { resourceRef: await short.ref(), item: 'minecraft:cobblestone', count: 3 }));
+  assert.equal(partial.result.pickedUpCount, 2); assert.equal(partial.result.code, 'INSUFFICIENT_RESOURCES'); assert.equal(short.calls.filter(call => call.name === 'discover').length, 1);
+  for (const options of [{ full: true }, {}]) {
+    const f = fixture(options); if (!options.full) { f.candidates[0].recommendedToolSlot = undefined; f.candidates[0].suitableToolSlots = []; }
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 3 }));
+    assert.equal(result.result.code, options.full ? 'INVENTORY_FULL' : 'WRONG_TOOL'); assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
+  }
+});
+test('no count is invented, actual maxima must exist, initial variants and excessive stack goals fail without pickup', async () => {
+  for (const [request, drops, code] of [[{}, [stack()], 'INVALID_ARGUMENT'], [{ count: 1, stacks: 1 }, [stack()], 'INVALID_ARGUMENT'], [{ stacks: 1 }, [{ id: 'minecraft:cobblestone', count: 1, components: {} }], 'UNKNOWN_MAX_STACK'], [{ stacks: 3 }, [stack(1, 99)], 'UNSUPPORTED'], [{ count: 3 }, [stack(1, 64, {}), stack(1, 64, { name: 'other' })], 'VARIANT_CHANGED']]) {
+    const f = fixture({ drops }); await assert.rejects(f.tasks.start('collect-items', { item: 'minecraft:cobblestone', ...request }), { code });
+    assert.equal(f.calls.some(call => call.name === 'pickup-item'), false);
+  }
+});
+test('changed native variant/max after pickup is reported honestly as incidental partial and never retried', async () => {
+  for (const changed of [stack(1, 64, { name: 'changed' }), stack(1, 16)]) {
+    const f = fixture({ drops: [stack(1)] }); f.body.changedStack = changed;
+    const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+    assert.equal(result.status, 'failed'); assert.equal(result.result.pickedUpCount, 0); assert.equal(result.result.totalNativePickedUpCount, 1); assert.equal(result.result.unexpectedPickedUpCount, 1);
+    assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, 1); assert.equal(f.state.pickupCursor, 1);
+  }
+});
+test('exact target native receipt reaching the goal wins a failed pickup movement race with diagnostic retained', async () => {
+  const f = fixture({ drops: [stack(6)] });
+  f.body.afterAct = (name, _args, op) => { if (name === 'pickup-item') { op.status = 'failed'; op.result = { code: 'BLOCKED' }; op.summary = 'Drop moved outside planned pickup stand'; } };
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 6 }));
+  assert.equal(result.status, 'succeeded'); assert.equal(result.result.pickedUpCount, 6); assert.equal(result.result.pickupMovementRaces, 1); assert.equal(result.result.lastPickupMovementCode, 'BLOCKED'); assert.equal(result.result.lastPickupMovementSummary, 'Drop moved outside planned pickup stand');
+  assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, 1);
+});
+test('confirmed consumed UUID with target-movement failure continues the frozen set, but incomplete BLOCKED remains stopped', async () => {
+  for (const code of ['TARGET_MOVED', 'STALE_TARGET', 'BLOCKED']) {
+    const f = fixture({ drops: [stack(), stack(), stack()] });
+    f.body.afterAct = (name, _args, op) => { if (name === 'pickup-item') { op.status = 'failed'; op.result = { code }; } };
+    const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+    assert.equal(result.status, code === 'BLOCKED' ? 'failed' : 'succeeded');
+    assert.equal(result.result.pickedUpCount, code === 'BLOCKED' ? 1 : 3);
+    assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, code === 'BLOCKED' ? 1 : 3);
+  }
+});
+test('movement failure with no matching UUID receipt remains failed even when another authorized UUID reaches the goal', async () => {
+  for (const wrongUuid of [false, true]) {
+    const f = fixture({ drops: wrongUuid ? [stack(), stack(3)] : [stack(3)] }); f.body.noReceipt = true;
+    f.body.afterAct = (name, _args, op) => {
+      if (name !== 'pickup-item') return;
+      if (wrongUuid) f.pickup(f.state.groundItems[0]);
+      op.status = 'failed'; op.result = { code: 'BLOCKED' };
+    };
+    const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+    assert.equal(result.status, 'failed'); assert.equal(result.result.code, 'BLOCKED'); assert.equal(result.result.pickedUpCount, wrongUuid ? 3 : 0);
+  }
+});
+test('receipt-backed movement race cannot swallow unknown/protected outcomes, gaps, changed variants or sessions', async () => {
+  for (const failure of ['unknown', 'protected', 'gap', 'variant', 'session']) {
+    const f = fixture({ drops: [stack(3)] }); if (failure === 'variant') f.body.changedStack = stack(3, 64, { name: 'other' });
+    f.body.afterAct = (name, _args, op) => {
+      if (name !== 'pickup-item') return;
+      op.status = failure === 'unknown' ? 'unknown' : 'failed'; op.result = { code: failure === 'protected' ? 'PROTECTED' : 'BLOCKED' };
+      if (failure === 'gap') { f.state.pickupReceipts = []; f.state.pickupOldestCursor = f.state.pickupCursor; }
+      if (failure === 'session') f.state.sessionId = 'new-session';
+    };
+    const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+    assert.notEqual(result.status, 'succeeded'); assert.equal(result.result.lastPickupMovementCode, undefined);
+    assert.equal(result.result.code, { unknown: 'UNKNOWN', protected: 'PROTECTED', gap: 'PICKUP_GAP', variant: 'VARIANT_CHANGED', session: 'WORLD_CHANGED' }[failure]);
+  }
+});
+test('receipt gap and entity disappearance without native receipt stay unknown instead of net-inventory success', async () => {
+  const gap = fixture({ drops: [stack()] });
+  gap.body.afterAct = name => { if (name === 'pickup-item') { gap.state.pickupReceipts = []; gap.state.pickupOldestCursor = gap.state.pickupCursor; } };
+  const missing = await gap.done(await gap.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(missing.status, 'unknown'); assert.equal(missing.result.code, 'PICKUP_GAP'); assert.equal(missing.result.pickedUpCount, undefined);
+  const vanished = fixture({ drops: [stack()] }); vanished.body.noReceipt = true;
+  const unknown = await vanished.done(await vanished.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(unknown.status, 'unknown'); assert.equal(unknown.result.code, 'PICKUP_UNKNOWN');
+});
+test('collect freezes UUIDs and rejects ambient pickups outside its authorized set', async () => {
+  const f = fixture({ drops: [stack()] });
+  f.body.beforeAct = name => { if (name === 'pickup-item') f.pickup({ entityId: randomUUID(), position: { x: 1, y: 64, z: 0 }, stack: stack() }); };
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
+  assert.equal(result.result.code, 'OUTSIDE_AUTHORIZATION'); assert.equal(result.result.unexpectedPickedUpCount, 1);
+});
+test('task token excludes concurrent writes while chat/read remain available; stop fences delayed step and first new task', async () => {
+  const f = fixture(); let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }); const seen = new Promise(resolve => { entered = resolve; });
+  f.body.afterAct = async name => { if (name === 'dig-block') { entered(); await gate; } };
+  const accepted = await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 3 }); await seen;
+  assert.throws(() => f.body.acquireTask('finite'), { code: 'BUSY' });
+  await assert.rejects(f.body.act('dig-block', { x: 0, y: 0, z: 0 }), { code: 'BUSY' });
+  assert.equal((await f.body.act('send-chat', { message: '仍可聊天' })).status, 'succeeded'); assert.equal((await f.body.observe()).connected, true);
+  f.tasks.cancel(); await f.body.stop(); f.tasks.stopped();
+  const next = await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1 });
+  release(); const newResult = await f.done(next);
+  assert.equal(newResult.status, 'succeeded'); assert.equal(f.tasks.operation(accepted.operationId).status, 'cancelled');
+  assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 1);
+});
+test('bounded settling waits for falling drops without replaying pickup, and goal remains separate from step budget', async () => {
+  const f = fixture({ drops: [stack()] }); let reads = 0;
+  f.body.beforeObserve = () => { if (++reads < 4) f.state.groundItems[0].position.y += 0.1; };
+  const settled = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(settled.status, 'succeeded'); assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, 1);
+  const budget = fixture();
+  const partial = await budget.done(await budget.tasks.start('gather-resources', { resourceRef: await budget.ref(), item: 'minecraft:cobblestone', count: 3, maxSteps: 1 }));
+  assert.equal(partial.result.code, 'STEP_BUDGET'); assert.equal(partial.result.targetCount, 3); assert.equal(partial.result.pickedUpCount, 0);
+});
+test('airborne equal-tick/apex samples do not start pickup before authoritative landing stays stable', async () => {
+  const f = fixture({ drops: [stack()] }); let reads = 0, landedAt;
+  f.body.beforeObserve = () => {
+    const item = f.state.groundItems[0]; if (!item) return;
+    reads++;
+    if (reads < 5) { item.position.y = 65.5; item.onGround = false; }
+    else if (reads < 8) { item.position.y = 65.5 - (reads - 4) * 0.25; item.onGround = false; }
+    else { item.position.y = 64; item.onGround = true; landedAt ??= Date.now(); }
+  };
+  f.body.beforeAct = name => { if (name === 'pickup-item') { assert.equal(f.state.groundItems[0].onGround, true); assert.ok(Date.now() - landedAt >= 200); } };
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(result.status, 'succeeded'); assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, 1);
+});
+test('missing landing field uses a conservative sustained stability window rather than one equal snapshot', async () => {
+  const f = fixture({ drops: [stack()] }); delete f.state.groundItems[0].onGround;
+  let reads = 0, movedAt;
+  f.body.beforeObserve = () => {
+    const item = f.state.groundItems[0]; if (!item) return;
+    if (++reads < 5) item.position.y = 65;
+    else { item.position.y = 64; movedAt ??= Date.now(); }
+  };
+  f.body.beforeAct = name => { if (name === 'pickup-item') assert.ok(Date.now() - movedAt >= 400); };
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(result.status, 'succeeded'); assert.equal(f.calls.filter(call => call.name === 'pickup-item').length, 1);
+});
+test('landing wait remains bounded by the task deadline and never starts an airborne pickup', async () => {
+  const f = fixture({ drops: [stack()] }); f.state.groundItems[0].onGround = false;
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 1, timeoutMs: 1000 }));
+  assert.equal(result.status, 'unknown'); assert.equal(result.result.code, 'TASK_TIMEOUT'); assert.equal(f.calls.some(call => call.name === 'pickup-item'), false);
+});
+test('new MCP tools are capability gated, asynchronous terminal query suppresses already queued wakeup', async t => {
+  const f = fixture({ drops: [stack(3)] }); const server = createMcpServer(f.body, f.events);
+  const [left, right] = InMemoryTransport.createLinkedPair(), client = new Client({ name: 'gather-test', version: '1' });
+  await server.connect(left); await client.connect(right); t.after(async () => { await client.close(); await server.close(); });
+  const tools = (await client.listTools()).tools.map(tool => tool.name);
+  for (const name of ['discover-resources', 'gather-resources', 'collect-items']) assert.ok(tools.includes(name));
+  assert.ok(!tools.includes('pickup-item')); assert.ok(!tools.includes('approach-resource'));
+  const accepted = JSON.parse((await client.callTool({ name: 'collect-items', arguments: { item: 'minecraft:cobblestone', count: 3 } })).content[0].text);
+  assert.equal(accepted.status, 'running');
+  await until(() => f.events.since(0, ['task']).length === 1);
+  const result = JSON.parse((await client.callTool({ name: 'get-operation', arguments: { operationId: accepted.operationId } })).content[0].text);
+  assert.equal(result.status, 'succeeded'); assert.equal(result.result.pickedUpCount, 3); assert.equal(f.events.since(0, ['task']).length, 0);
+});
+test('real HTTP parsing preserves actual maxima and complete ground/receipt/context and forwards native guarded resource actions', async t => {
+  const f = fixture({ drops: [stack(1, 99, { name: 'actual' })] }); f.pickup(f.state.groundItems[0]);
+  f.state.groundItems.push({ entityId: randomUUID(), position: { x: 2, y: 64, z: 0 }, onGround: true, visibility: 'visible', stack: stack(1, 99, { name: 'actual' }) });
+  const mock = await mockServerControl(); t.after(() => mock.close());
+  const hello = mock.handlers.hello;
+  mock.handlers.hello = () => ({ ...hello(), capabilities: f.body.hello.capabilities });
+  mock.setState({ ...f.state, instanceId: 'instance-1', sessionId: 'server-session-1', worldId: 'test-world', username: 'ServerBot', pickupReceipts: f.state.pickupReceipts.map(item => ({ ...item, sessionId: 'server-session-1' })) });
+  mock.handlers['nearby-resources'] = () => ({ instanceId: 'instance-1', sessionId: 'server-session-1', worldId: 'test-world', controlGeneration: 0, dimension: f.state.dimension, center: f.state.position, candidates: f.candidates });
+  const body = await ServerBody.connect({ connection: mock.connection, username: 'ServerBot', worldId: 'test-world', heartbeatIntervalMs: 60000 }); t.after(() => body.close());
+  const observed = await body.observe(); assert.equal(observed.inventory[1].maxStackSize, 99); assert.deepEqual(observed.pickupReceipts[0].stack.components, { name: 'actual' }); assert.equal(observed.groundItems[0].onGround, true);
+  const scan = await body.nearbyResources({ blockIds: ['minecraft:stone'], radius: 4, maxResults: 32 }); assert.equal(scan.candidates.length, 3);
+  for (const [name, args] of [['approach-resource', { targetToken: f.candidates[0].targetToken }], ['pickup-item', { entityId: randomUUID(), expectedItem: 'minecraft:cobblestone', expectedCount: 1, expectedComponents: { name: 'actual' }, expectedMaxStackSize: 99 }], ['dig-block', { x: 1, y: 64, z: 1, expectedBlock: 'minecraft:stone', expectedProperties: {}, targetToken: f.candidates[0].targetToken }]]) {
+    await body.act(name, args); assert.deepEqual(mock.calls.filter(call => call.method === 'act').at(-1).params.args, args);
+  }
+});

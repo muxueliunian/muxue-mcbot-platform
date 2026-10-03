@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "minecraft": {
+      "command": "node",
+      "args": [
+        "client-runtime/dist/main.js",
+        "--body", "server",
+        "--connection-file", "<server>/config/mcbot-server-control/connection.json",
+        "--username", "ServerBot",
+        "--world-id", "example-world"
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "mcbot-client-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent-independent MCP runtime for the real Minecraft client Body",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --test-timeout=15000 tests/*.test.mjs",
+    "start": "node dist/main.js"
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.27.1", "zod": "^3.25.76" },
+  "devDependencies": { "@types/node": "^25.2.3", "typescript": "^5.9.3" },
+  "engines": { "node": ">=20.10.0" }
+}

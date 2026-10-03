@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mixins]]
+config="mcbot-control.mixins.json"
+[[mods]]
+modId="mcbot_control"
+version="${mod_version}"
+displayName="MCBOT Client Control"
+authors="muxue"
+description='''Local authenticated control of a real Minecraft client. Client only; no server extension required.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_control]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="CLIENT"
+[[dependencies.mcbot_control]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="CLIENT"

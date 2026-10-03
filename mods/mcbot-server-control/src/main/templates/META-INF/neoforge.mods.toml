@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mixins]]
+config="mcbot-server-control.mixins.json"
+[[mods]]
+modId="mcbot_server_control"
+version="${mod_version}"
+displayName="MCBOT Server Control"
+authors="muxue"
+description='''Authenticated local control of one server-owned survival player.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_server_control]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_server_control]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"

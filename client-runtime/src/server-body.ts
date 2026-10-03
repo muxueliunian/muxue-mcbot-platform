@@ -1,0 +1,374 @@
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+import { z } from 'zod';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources } from './body.js';
+
+const identifier = z.string().min(1);
+const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const components = z.record(z.unknown());
+const maxStackSize = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional();
+const position = z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() });
+const stack = z.object({ slot: z.number().int().nonnegative(), id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize, source: z.enum(['container', 'player', 'unknown']).optional(), playerSlot: z.number().int().nonnegative().optional(), active: z.boolean().optional(), mayPickup: z.boolean().optional() });
+const itemValue = z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize });
+const helloSchema = z.object({
+  protocol: z.literal(2), backend: z.literal('server'), instanceId: identifier, worldId: identifier, username: identifier,
+  platform: z.object({ minecraft: z.string(), loader: z.string(), loaderVersion: z.string() }),
+  capabilities: z.array(z.string()), connected: z.boolean(), sessionId: identifier.nullable(),
+});
+const observationSchema = z.object({
+  instanceId: identifier, controlGeneration: generation,
+  sessionId: identifier, worldId: identifier, connected: z.boolean(), username: identifier, dimension: z.string(),
+  health: z.number(), food: z.number(), position, yaw: z.number(), pitch: z.number(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack),
+  entities: z.array(z.object({ id: z.string(), type: z.string(), name: z.string(), position })),
+  chat: z.array(z.object({ seq: z.number().int(), time: z.number(), username: z.string().optional(), message: z.string() })),
+  chatCursor: z.number().int(), container: z.object({ id: identifier, type: z.string(), revision: generation, slots: z.array(stack), carried: z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize }) }).nullable(),
+  block: z.object({ position, state: z.enum(['loaded', 'unloaded']), id: z.string().optional(), properties: z.record(z.unknown()).optional() }).optional(),
+  source: z.literal('server-observed'),
+  groundItems: z.array(z.object({ entityId: z.string().uuid(), position, stack: itemValue, onGround: z.boolean().optional(), visible: z.boolean().nullable().optional(), visibility: z.enum(['visible', 'occluded', 'unknown']) })).max(32).optional(), groundItemsTruncated: z.boolean().optional(),
+  pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier })).max(256).optional(),
+});
+const operationSchema = z.object({
+  operationId: identifier, sessionId: identifier, name: z.string(), controlGeneration: generation,
+  status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'unknown']), summary: z.string(), result: z.unknown().optional(),
+});
+export interface ServerConnection { protocol: 2; backend: 'server'; endpoint: string; token: string; worldId: string; username: string }
+export function parseServerConnection(value: unknown): ServerConnection {
+  let parsed: ServerConnection;
+  try { parsed = z.object({ protocol: z.literal(2), backend: z.literal('server'), endpoint: identifier, token: z.string().min(16), worldId: identifier, username: z.string().regex(/^[A-Za-z0-9_]{1,16}$/) }).parse(value); }
+  catch { throw new BodyError('INVALID_CONNECTION', 'ServerBody 连接文件必须为 protocol 2 / backend server 并指定世界和角色'); }
+  let url: URL;
+  try { url = new URL(parsed.endpoint); } catch { throw new BodyError('INVALID_ENDPOINT', 'ServerBody 控制地址无效'); }
+  if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || url.username || url.password || url.pathname !== '/v2' || url.search || url.hash) {
+    throw new BodyError('INVALID_ENDPOINT', 'ServerBody 控制通道必须是本机 loopback HTTP /v2');
+  }
+  return parsed;
+}
+export async function readServerConnection(file: string): Promise<ServerConnection> {
+  let value: unknown;
+  try { value = JSON.parse(await readFile(file, 'utf8')); }
+  catch { throw new BodyError('INVALID_CONNECTION', '无法读取有效的 ServerBody 连接 JSON；未输出文件内容'); }
+  return parseServerConnection(value);
+}
+export interface ServerLease {
+  protocol: 2; backend: 'server'; worldId: string; username: string; instanceId: string; sessionId: string;
+  leaseId: string; stopToken: string; controllerId: string; chatCursor: number;
+}
+interface ServerOptions {
+  connection: ServerConnection; username: string; worldId: string;
+  requestTimeoutMs?: number; heartbeatIntervalMs?: number; claimWaitMs?: number;
+  controllerId?: string;
+  fetch?: typeof fetch; now?: () => number; onLost?: (error: BodyError) => void;
+  onLease?: (lease: ServerLease) => void | Promise<void>;
+}
+export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
+const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item'];
+const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION']);
+/** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
+export class ServerBody implements Body {
+  hello!: BodyHello;
+  private lease?: ServerLease;
+  private state: 'new' | 'active' | 'lost' | 'closed' = 'new';
+  private controlGeneration = 0;
+  private revision = 0;
+  private expiresAt = 0;
+  private timer?: ReturnType<typeof setTimeout>;
+  private heartbeatPending = false;
+  private exclusive?: string;
+  private taskOwner?: string;
+  private stopping?: Promise<{ stopped: true }>;
+  private lostReason?: BodyError;
+  private readonly operations = new Map<string, Operation>();
+  private readonly internalOperations = new Set<string>();
+  private readonly transport: typeof fetch;
+  private readonly now: () => number;
+  private readonly connection: ServerConnection;
+  constructor(private readonly options: ServerOptions) {
+    this.connection = parseServerConnection(options.connection);
+    this.transport = options.fetch ?? fetch;
+    this.now = options.now ?? (() => performance.now());
+  }
+  static async connect(options: ServerOptions): Promise<ServerBody> {
+    const body = new ServerBody(options);
+    try { await body.connect(); return body; }
+    catch (error) { await body.close(); throw body.asError(error); }
+  }
+  /** Explicit lifecycle command, separate from MCP and control acquisition. Never claims or retries. */
+  static async respawn(options: Pick<ServerOptions, 'connection' | 'username' | 'worldId' | 'fetch' | 'requestTimeoutMs'> & { expectedSessionId?: string | null }): Promise<RespawnResult> {
+    const body = new ServerBody(options);
+    try {
+      const hello = await body.readHello();
+      if (options.expectedSessionId !== undefined && hello.sessionId !== options.expectedSessionId) throw new BodyError('WORLD_CHANGED', '死亡会话代次已改变，未执行重生');
+      const result = z.object({ respawned: z.literal(true), connected: z.literal(true), instanceId: identifier, sessionId: identifier, controlGeneration: generation }).parse(await body.rpc('respawn', {
+        instanceId: hello.instanceId, worldId: options.worldId, username: options.username, sessionId: hello.sessionId,
+      }));
+      if (result.instanceId !== hello.instanceId || result.sessionId === hello.sessionId) throw new BodyError('WORLD_CHANGED', '重生回执不属于新的角色会话');
+      return result;
+    } catch (error) { throw body.asError(error); }
+  }
+  private async readHello() {
+    if (this.connection.username !== this.options.username) throw new BodyError('WRONG_PLAYER', '连接文件角色与 --username 不匹配');
+    if (this.connection.worldId !== this.options.worldId) throw new BodyError('WRONG_WORLD', '连接文件世界与 --world-id 不匹配');
+    const hello = helloSchema.parse(await this.rpc('hello', {}));
+    if (hello.username !== this.options.username) throw new BodyError('WRONG_PLAYER', '服务端允许的角色与 --username 不匹配');
+    if (hello.worldId !== this.options.worldId) throw new BodyError('WRONG_WORLD', '服务端世界与 --world-id 不匹配');
+    return hello;
+  }
+  private async connect(): Promise<void> {
+    const hello = await this.readHello();
+    this.hello = { ...hello, capabilities: hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup'].includes(name)) };
+    const controllerId = this.options.controllerId ?? randomUUID();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(controllerId)) throw new BodyError('INVALID_ARGUMENT', 'controller-id 格式无效');
+    const deadline = this.now() + (this.options.claimWaitMs ?? 12000);
+    let claim;
+    for (;;) {
+      try {
+        const requestedAt = this.now();
+        claim = z.object({ leaseId: identifier, stopToken: identifier, ttlMs: z.number().positive(), instanceId: identifier, sessionId: identifier, controlGeneration: generation, chatCursor: z.number().int().nonnegative() }).parse(await this.rpc('claim', {
+          instanceId: hello.instanceId, worldId: this.options.worldId, username: this.options.username, controllerId,
+        }));
+        this.expiresAt = requestedAt + claim.ttlMs;
+        break;
+      } catch (error) {
+        if (!(error instanceof BodyError) || error.code !== 'LEASE_BUSY' || this.now() >= deadline) throw error;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    if (claim.instanceId !== hello.instanceId) throw new BodyError('WRONG_INSTANCE', '接管回执不属于当前服务实例');
+    this.lease = { protocol: 2, backend: 'server', worldId: hello.worldId, username: hello.username, instanceId: claim.instanceId, sessionId: claim.sessionId, leaseId: claim.leaseId, stopToken: claim.stopToken, controllerId, chatCursor: claim.chatCursor };
+    this.controlGeneration = claim.controlGeneration;
+    this.hello = { ...this.hello, connected: true, sessionId: claim.sessionId };
+    this.state = 'active';
+    await this.observe();
+    await this.options.onLease?.({ ...this.lease });
+    this.scheduleHeartbeat();
+  }
+  private identity(): Record<string, unknown> {
+    return { instanceId: this.lease!.instanceId, sessionId: this.lease!.sessionId, leaseId: this.lease!.leaseId };
+  }
+  private scheduleHeartbeat(): void {
+    if (this.state !== 'active') return;
+    this.timer = setTimeout(() => { void this.heartbeat(); }, this.options.heartbeatIntervalMs ?? 2000);
+    this.timer.unref();
+  }
+  async heartbeat(): Promise<void> {
+    if (this.heartbeatPending || this.state !== 'active') return;
+    this.heartbeatPending = true;
+    const revision = this.revision;
+    const requestedAt = this.now();
+    try {
+      this.assertActive();
+      const reply = z.object({ ttlMs: z.number().positive(), controlGeneration: generation }).parse(await this.rpc('heartbeat', this.identity()));
+      this.assertActive();
+      // A stop response alone can authorize a generation change. An old heartbeat may race it.
+      if (revision === this.revision) this.checkGeneration(reply.controlGeneration);
+      this.expiresAt = requestedAt + reply.ttlMs;
+    } catch (error) { this.invalidate(error); }
+    finally { this.heartbeatPending = false; this.scheduleHeartbeat(); }
+  }
+  private assertActive(): void {
+    if (this.state !== 'active') throw this.lostReason ?? new BodyError('LEASE_LOST', '服务端控制权已结束；请显式重启接管，不得重放旧动作');
+    if (this.now() >= this.expiresAt) {
+      const error = new BodyError('LEASE_EXPIRED', '控制租约已过期，未发送动作');
+      this.lose(error); throw error;
+    }
+  }
+  private checkGeneration(value: number): void {
+    if (value !== this.controlGeneration && !(this.stopping && value === this.controlGeneration + 1)) throw new BodyError('STALE_CONTROL', '控制代次已改变，旧控制器不能继续发送动作');
+  }
+  private asError(error: unknown): BodyError {
+    return error instanceof BodyError ? error : new BodyError('INVALID_RESPONSE', '服务端控制响应无效，已停止控制');
+  }
+  private lose(error: BodyError): void {
+    if (this.state === 'lost' || this.state === 'closed') return;
+    this.state = 'lost'; this.lostReason = error; clearTimeout(this.timer); this.exclusive = undefined;
+    if (this.lease) void this.rpc('release', this.identity()).catch(() => {});
+    this.options.onLost?.(error);
+  }
+  private invalidate(error: unknown): BodyError {
+    const parsed = this.asError(error);
+    if (!recoverable.has(parsed.code)) this.lose(parsed);
+    return parsed;
+  }
+  private async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await this.transport(this.connection.endpoint, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 4000),
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.connection.token}` },
+        body: JSON.stringify({ method, params }),
+      });
+    } catch { throw new BodyError('TRANSPORT_LOST', '服务端请求超时或断开；结果未知，未自动重发'); }
+    let reply: unknown;
+    try { reply = await response.json(); } catch { throw new BodyError('INVALID_RESPONSE', '服务端响应不是有效 JSON'); }
+    const parsed = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), result: z.unknown() }), z.object({ ok: z.literal(false), error: z.object({ code: z.string(), message: z.string() }) })]).parse(reply);
+    if (!parsed.ok) {
+      // Never relay arbitrary server error text that could accidentally include credentials.
+      const code = /^[A-Z_]{1,64}$/.test(parsed.error.code) ? parsed.error.code : 'INVALID_RESPONSE';
+      throw new BodyError(code, `服务端拒绝请求（${code}）`);
+    }
+    if (!response.ok) throw new BodyError('HTTP_ERROR', `服务端控制请求失败（HTTP ${response.status}）`);
+    return parsed.result;
+  }
+  async observe(block?: Position): Promise<Observation> {
+    this.assertActive();
+    const revision = this.revision;
+    try {
+      const observed = observationSchema.parse(await this.rpc('observe', { ...this.identity(), ...(block ? { block } : {}) }));
+      this.assertActive();
+      if (!observed.connected || observed.instanceId !== this.lease!.instanceId || observed.sessionId !== this.lease!.sessionId || observed.worldId !== this.options.worldId || observed.username !== this.options.username) throw new BodyError('WORLD_CHANGED', '角色或世界会话已改变，必须显式重新接管');
+      if (revision === this.revision) this.checkGeneration(observed.controlGeneration);
+      return observed;
+    } catch (error) { throw this.invalidate(error); }
+  }
+  acquireTask(taskToken: string): void {
+    this.assertActive();
+    if (this.taskOwner || this.exclusive || this.stopping) throw new BodyError('BUSY', '已有动作或任务运行');
+    this.taskOwner = taskToken;
+  }
+  releaseTask(taskToken: string): void { if (this.taskOwner === taskToken) this.taskOwner = undefined; }
+  async nearbyBlocks(options: { centerPlayer?: string; radius: number; maxResults: number }): Promise<NearbyBlocks> {
+    this.assertActive();
+    if (!this.hello.capabilities.includes('nearby-blocks')) throw new BodyError('UNSUPPORTED', '身体不支持附近容器发现');
+    const args = z.object({ centerPlayer: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), radius: z.number().int().min(1).max(8), maxResults: z.number().int().min(1).max(16) }).parse(options);
+    const revision = this.revision;
+    try {
+      const value = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: z.string(), controlGeneration: generation,
+        center: z.object({ player: identifier, position }), candidates: z.array(z.object({ position, id: identifier, properties: components, targetToken: z.string().uuid().optional(), distance: z.number().nonnegative(), visibility: z.enum(['visible', 'occluded', 'unknown']), visible: z.boolean().nullable().optional() })).max(16),
+        truncated: z.boolean().optional(), budget: z.unknown().optional(),
+      }).parse(await this.rpc('nearby-blocks', { ...this.identity(), ...args }));
+      this.assertActive(); if (revision === this.revision) this.checkGeneration(value.controlGeneration);
+      if (value.instanceId !== this.lease!.instanceId || value.sessionId !== this.lease!.sessionId || value.worldId !== this.options.worldId) throw new BodyError('WORLD_CHANGED', '附近发现回执不属于当前身体会话');
+      return value;
+    } catch (error) { throw this.invalidate(error); }
+  }
+  async nearbyResources(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position }): Promise<NearbyResources> {
+    this.assertActive();
+    if (!this.hello.capabilities.includes('nearby-resources')) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
+    const args = z.object({ blockIds: z.array(identifier).min(1).max(8), radius: z.number().int().min(1).max(6), maxResults: z.number().int().min(1).max(64), center: position.optional() }).parse(options);
+    const revision = this.revision;
+    try {
+      const value = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation, center: position,
+        candidates: z.array(z.object({ position, id: identifier, properties: components, targetToken: z.string().uuid(), distance: z.number().nonnegative(), visible: z.boolean(), requiresCorrectTool: z.boolean(), suitableToolSlots: z.array(z.number().int().min(0).max(8)), recommendedToolSlot: z.number().int().min(0).max(8).optional() })).max(64), truncated: z.boolean().optional(), budget: z.unknown().optional(),
+      }).parse(await this.rpc('nearby-resources', { ...this.identity(), ...args }));
+      this.assertActive(); if (revision === this.revision) this.checkGeneration(value.controlGeneration);
+      if (value.instanceId !== this.lease!.instanceId || value.sessionId !== this.lease!.sessionId || value.worldId !== this.options.worldId) throw new BodyError('WORLD_CHANGED', '资源观察不属于当前身体会话');
+      return value;
+    } catch (error) { throw this.invalidate(error); }
+  }
+  async act<N extends ActionName>(name: N, args: ActionArguments[N], taskToken?: string): Promise<Operation> {
+    this.assertActive();
+    if (name !== 'send-chat' && this.taskOwner && taskToken !== this.taskOwner) throw new BodyError('BUSY', '任务正在运行，原子动作不能绕过任务锁');
+    if (!this.hello.capabilities.includes(name)) throw new BodyError('UNSUPPORTED', `ServerBody 当前未实现 ${name}`);
+    if (this.stopping) throw new BodyError('BUSY', '正在停止，请等待确认后发送明确新动作');
+    if (name === 'send-chat' && args && 'message' in args && (args.message.startsWith('/') || /[\r\n]/.test(args.message))) throw new BodyError('INVALID_ARGUMENT', 'send-chat 只允许普通单行聊天');
+    this.validateSurvivalArguments(name, args);
+    const exclusive = name !== 'send-chat';
+    if (exclusive && this.exclusive) throw new BodyError('BUSY', '已有身体动作运行；先查询或停止');
+    const operationId = randomUUID();
+    if (this.taskOwner && taskToken === this.taskOwner) this.internalOperations.add(operationId);
+    const controlGeneration = this.controlGeneration;
+    const revision = this.revision;
+    if (exclusive) this.exclusive = operationId;
+    try {
+      const op = operationSchema.parse(await this.rpc('act', { ...this.identity(), controlGeneration, operationId, name, args }));
+      this.assertActive(); this.validateOperation(op, operationId, name, controlGeneration);
+      if (revision !== this.revision) {
+        const cancelled: Operation = { operationId, sessionId: this.lease!.sessionId, controlGeneration, name, status: 'cancelled', summary: '停止前动作的迟到回执已丢弃' };
+        this.remember(cancelled); return cancelled;
+      }
+      this.remember(op); return op;
+    } catch (error) {
+      const bodyError = this.asError(error);
+      // A stale response to a request fenced by our own stop is expected, not lease loss.
+      if (revision !== this.revision && bodyError.code === 'STALE_CONTROL' && this.state === 'active') {
+        const cancelled: Operation = { operationId, sessionId: this.lease!.sessionId, controlGeneration, name, status: 'cancelled', summary: '停止前动作已被代次屏障拒绝' };
+        this.remember(cancelled); return cancelled;
+      }
+      this.invalidate(error);
+      if (this.exclusive === operationId) this.exclusive = undefined;
+      if (['TRANSPORT_LOST', 'HTTP_ERROR', 'INVALID_RESPONSE', 'LEASE_LOST', 'WORLD_CHANGED', 'WRONG_INSTANCE', 'STALE_CONTROL', 'LEASE_EXPIRED', 'TIMEOUT', 'UNAVAILABLE', 'CLOSED', 'INTERNAL', 'STOP_UNCONFIRMED'].includes(bodyError.code)) {
+        const unknown: Operation = { operationId, sessionId: this.lease!.sessionId, controlGeneration, name, status: 'unknown', summary: `${bodyError.message}；不要重复执行，请核对实际世界状态` };
+        this.remember(unknown); return unknown;
+      }
+      this.internalOperations.delete(operationId);
+      throw bodyError;
+    }
+  }
+  private validateSurvivalArguments(name: ActionName, args: unknown): void {
+    if (name === 'pickup-item' && args && typeof args === 'object' && 'companionGuard' in args && !this.hello.capabilities.includes('companion-pickup')) throw new BodyError('UNSUPPORTED', '游戏端未声明持续拾取玩家保护能力');
+    const guardedStack = { slot: z.number().int().min(0).max(8), expectedItem: identifier, expectedCount: z.number().int().nonnegative(), expectedComponents: components };
+    const guardedBlock = { x: z.number().int(), y: z.number().int(), z: z.number().int(), expectedBlock: identifier, expectedProperties: components };
+    const schemas: Partial<Record<ActionName, z.ZodTypeAny>> = {
+      'approach-resource': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
+      'pickup-item': z.object({ entityId: z.string().uuid(), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components, expectedMaxStackSize: maxStackSize, companionGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().finite().min(1.5).max(4) }).optional(), timeoutMs: z.number().int().min(500).max(30000).optional() }),
+      'follow-companion': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), distance: z.number().finite().min(1.5).max(6).optional() }).strict(),
+      'approach-container': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
+      'approach-player': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid().optional(), distance: z.number().finite().min(1).max(1.5).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
+      'dig-block': z.object({ ...guardedBlock, targetToken: z.string().uuid().optional() }), 'open-container': z.object({ ...guardedBlock, targetToken: z.string().uuid().optional() }),
+      'place-block': z.object({ ...guardedBlock, ...guardedStack, face: z.enum(['up', 'down', 'north', 'south', 'east', 'west']) }),
+      'click-slot': z.object({ containerId: identifier, expectedRevision: generation, slot: z.number().int().nonnegative(), expectedItem: identifier, expectedCount: z.number().int().nonnegative(), expectedComponents: components,
+        expectedCarriedItem: identifier, expectedCarriedCount: z.number().int().nonnegative(), expectedCarriedComponents: components, button: z.union([z.literal(0), z.literal(1)]).optional() }),
+      'close-container': z.object({ containerId: identifier, expectedRevision: generation }),
+      'select-slot': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize }),
+      'drop-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, count: z.number().int().min(1).max(64), recipient: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), expectedEntityId: z.string().uuid().optional() }).refine(args => (args.recipient === undefined) === (args.expectedEntityId === undefined)),
+    };
+    if (schemas[name] && !schemas[name]!.safeParse(args).success) throw new BodyError('INVALID_ARGUMENT', '服务端生存动作缺少有效的状态／数量／完整组件／窗口版本前置核验');
+  }
+  private validateOperation(op: Operation, id: string, name?: string, expectedGeneration?: number): void {
+    if (op.sessionId !== this.lease!.sessionId || op.operationId !== id || (name && op.name !== name)) throw new BodyError('WORLD_CHANGED', '动作回执不属于当前会话或请求');
+    if (expectedGeneration !== undefined && op.controlGeneration !== expectedGeneration) throw new BodyError('STALE_CONTROL', '动作回执不属于请求控制代次');
+  }
+  private remember(op: Operation): void {
+    this.operations.set(op.operationId, op);
+    if (this.operations.size > 256) {
+      const terminal = [...this.operations.values()].find(item => item.status !== 'running');
+      if (terminal) { this.operations.delete(terminal.operationId); this.internalOperations.delete(terminal.operationId); }
+    }
+    if (op.status !== 'running' && this.exclusive === op.operationId) this.exclusive = undefined;
+  }
+  async operation(operationId: string): Promise<Operation> {
+    this.assertActive();
+    const known = this.operations.get(operationId);
+    if (!known) throw new BodyError('UNKNOWN_OPERATION', '该动作不属于当前控制器');
+    const revision = this.revision;
+    try {
+      const op = operationSchema.parse(await this.rpc('operation', { ...this.identity(), operationId }));
+      this.assertActive(); this.validateOperation(op, operationId, known.name, known.controlGeneration);
+      if (revision !== this.revision || (op.controlGeneration !== this.controlGeneration && op.status === 'running')) return this.operations.get(operationId)!;
+      this.remember(op); return op;
+    } catch (error) { throw this.invalidate(error); }
+  }
+  pendingOperations(): readonly Operation[] { return [...this.operations.values()].filter(op => op.status === 'running' && !this.internalOperations.has(op.operationId)); }
+  stop(): Promise<{ stopped: true }> {
+    if (this.stopping) return this.stopping;
+    this.assertActive();
+    const oldGeneration = this.controlGeneration;
+    this.revision++;
+    const stopping = async (): Promise<{ stopped: true }> => {
+      try {
+        const reply = z.object({ stopped: z.literal(true), controlGeneration: generation }).parse(await this.rpc('stop', this.identity()));
+        this.assertActive();
+        if (reply.controlGeneration !== oldGeneration + 1) throw new BodyError('STALE_CONTROL', '停止回执代次异常，控制已终止');
+        this.controlGeneration = reply.controlGeneration;
+        // Fence reads begun after stop was sent but before its new generation was confirmed.
+        this.revision++;
+        for (const op of this.operations.values()) if (op.status === 'running') this.remember({ ...op, status: 'cancelled', summary: '用户已停止动作' });
+        this.exclusive = undefined;
+        return { stopped: true };
+      } catch (error) {
+        const parsed = this.asError(error);
+        const terminal = recoverable.has(parsed.code) ? new BodyError('STOP_UNCONFIRMED', `停止未确认（${parsed.code}），旧控制已终止；请核查角色状态，不要继续旧任务`) : parsed;
+        // Failed stop cannot safely let a fenced local action disappear while it still runs remotely.
+        this.lose(terminal); throw terminal;
+      }
+    };
+    this.stopping = stopping().finally(() => { this.stopping = undefined; });
+    return this.stopping;
+  }
+  async close(): Promise<void> {
+    if (this.state === 'closed') return;
+    this.state = 'closed'; clearTimeout(this.timer); this.exclusive = undefined;
+    if (this.lease) { try { await this.rpc('release', this.identity()); } catch { /* Independent server expiry still applies. */ } }
+  }
+}

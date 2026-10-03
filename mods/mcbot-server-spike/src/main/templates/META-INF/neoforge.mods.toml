@@ -1,0 +1,22 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mods]]
+modId="mcbot_server_spike"
+version="${mod_version}"
+displayName="MCBOT Server Body Experiment"
+authors="muxue"
+description='''Experimental server-owned player lifecycle and physics. Not a product control API.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_server_spike]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_server_spike]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"

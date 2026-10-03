@@ -1,0 +1,27 @@
+{
+  "runtime": {
+    "tests": 143,
+    "pass": 143,
+    "fail": 0,
+    "skipped": 0
+  },
+  "legacy": {
+    "tests": 313,
+    "pass": 312,
+    "fail": 0,
+    "skipped": 1
+  },
+  "java": {
+    "checks": 387,
+    "build": "success"
+  },
+  "context": {
+    "date": "2026-10-03",
+    "os": "Windows 11",
+    "shell": "pwsh",
+    "node": "24.15.0",
+    "jdk": "21",
+    "realGameRerun": false,
+    "credentialsExported": false
+  }
+}

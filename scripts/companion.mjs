@@ -134,13 +134,44 @@ export function isWakeEvent(e) {
   return WAKE_TYPES.has(e.type);
 }
 
-export function isAddressedStop(e, { name, nickname }) {
-  if (!['chat', 'whisper'].includes(e.type)) return false;
-  const body = String(e.text ?? '').replace(/^[^:：]*[:：]\s*/, '').toLowerCase();
-  // 独立、明确的停止命令也立即响应；普通聊天提到“停止”不算。
-  if (/^(?:停|停下|停止|别挖|别建|等一下|等等|stop)[\s!！。.,，?？]*$/i.test(body.trim())) return true;
-  const addressed = [name, nickname].filter(Boolean).some((n) => body.includes(n.toLowerCase()));
-  return addressed && /停|别挖|别建|等一下|等等|\bstop\b/i.test(body);
+// 硬停止只识别有限的整句命令，不做模型判断或停止词子串扫描。
+export function isAddressedStop(e, { name, nickname } = {}) {
+  if (!['chat', 'whisper'].includes(e?.type)) return false;
+  let body;
+  if (Object.hasOwn(e, 'message')) {
+    // watch等结构化事件的message已经是正文，里面的冒号绝不是发言者前缀。
+    if (typeof e.message !== 'string') return false;
+    body = e.message;
+  } else {
+    if (typeof e.text !== 'string') return false;
+    body = e.text;
+    // 有username时只剥离与其完全一致的前缀；旧EventJournal没有username，
+    // 仅在有session/seq信封时接受它生成的「Java用户名: 正文」格式，并且只剥一次。
+    // 无信封的text视为正文，避免把「其他Bot: stop」误当无称呼的stop。
+    const prefix = /^([^:：\r\n]+)[:：]([ \t]*)/.exec(body);
+    const knownSpeaker = typeof e.username === 'string' && e.username.length > 0;
+    const legacyJournal = !knownSpeaker && typeof e.session === 'string' && e.session.length > 0
+      && Number.isSafeInteger(e.seq) && e.seq > 0;
+    if (prefix && ((knownSpeaker && prefix[1] === e.username)
+      || (legacyJournal && /^[A-Za-z0-9_]{1,16}$/.test(prefix[1]) && prefix[2].length > 0))) {
+      body = body.slice(prefix[0].length);
+    }
+  }
+  body = body.trim().toLowerCase();
+  // 不剥问号、引号、括号或任意后缀；「别停」「停止以后还能继续吗」不会命中。
+  const command = /^(?:停|停下|停止|别挖(?:了)?|别建(?:了)?|等一下|等等|stop)[ \t!！。.,，]*$/;
+  if (command.test(body)) return true;
+  for (const alias of [name, nickname]) {
+    if (typeof alias !== 'string' || !alias.trim()) continue;
+    const address = alias.trim().toLowerCase();
+    if (!body.startsWith(address)) continue;
+    const rest = body.slice(address.length);
+    // Codex stop / Codex停下可用，Codexstop、CodexBot2等名字子串不算点名。
+    if (/[a-z0-9_]$/.test(address) && /^[a-z0-9_]/.test(rest)) continue;
+    const instruction = rest.replace(/^[ \t,，:：!！]+/, '');
+    if (command.test(instruction) || /^暂停[ \t!！。.,，]*$/.test(instruction)) return true;
+  }
+  return false;
 }
 
 // This only selects the scheduling fast path; intent and authorization remain with the Agent.

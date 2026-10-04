@@ -49,12 +49,13 @@ test('Codex 身份、事件目录和默认记忆一致；点名或独立停止�
   assert.equal(flags[flags.indexOf('--runtime-dir') + 1], 'new-runtime');
   assert.equal(flags.filter((s) => s === '--username').length, 1);
   assert.equal(source.mcpServers.minecraft.args[2], 'Claude');
-  assert.equal(isAddressedStop({ type: 'chat', text: 'muxue: Codex 停' }, args), true);
-  assert.equal(isAddressedStop({ type: 'chat', text: 'CodexBot: 你停在哪里' }, args), false, '发言者名称不算正文点名');
-  assert.equal(isAddressedStop({ type: 'chat', text: 'muxue: 停下' }, args), true);
-  assert.equal(isAddressedStop({ type: 'chat', text: 'muxue: stop!' }, args), true);
-  assert.equal(isAddressedStop({ type: 'chat', text: 'muxue: 他说要停止施工' }, args), false);
-  assert.equal(isAddressedStop({ type: 'chat', text: 'muxue: 小克停' }, args), false);
+  // 显示文本带发言者时提供身份字段；旧journal则提供session/seq信封。
+  assert.equal(isAddressedStop({ type: 'chat', username: 'muxue', text: 'muxue: Codex 停' }, args), true);
+  assert.equal(isAddressedStop({ type: 'chat', username: 'CodexBot', text: 'CodexBot: 你停在哪里' }, args), false, '发言者名称不算正文点名');
+  assert.equal(isAddressedStop({ type: 'chat', username: 'muxue', text: 'muxue: 停下' }, args), true);
+  assert.equal(isAddressedStop({ type: 'chat', username: 'muxue', text: 'muxue: stop!' }, args), true);
+  assert.equal(isAddressedStop({ type: 'chat', username: 'muxue', text: 'muxue: 他说要停止施工' }, args), false);
+  assert.equal(isAddressedStop({ type: 'chat', username: 'muxue', text: 'muxue: 小克停' }, args), false);
 });
 
 test('Codex 在配置读取途中停止，不因迟到回应创建线程', async () => {

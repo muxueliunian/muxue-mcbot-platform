@@ -15,13 +15,14 @@ const clone = value => structuredClone(value);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { for (let i = 0; i < 600; i++) { if (check()) return; await delay(5); } assert.fail('condition did not become observable'); }
 const stack = (count = 1, maxStackSize = 64, components = {}) => ({ id: 'minecraft:cobblestone', count, maxStackSize, components });
-function fixture({ drops = [], blocks = 3, automatic = false, max = 64, dropCount = 1, full = false } = {}) {
+function fixture({ drops = [], blocks = 3, automatic = false, max = 64, dropCount = 1, full = false, blockId = 'minecraft:stone', dropItem = 'minecraft:cobblestone', yields } = {}) {
   const context = { instanceId: 'instance', sessionId: 'session', worldId: 'world', dimension: 'minecraft:overworld', controlGeneration: 0 };
   const state = { ...context, connected: true, username: 'Bot', source: 'server-observed', health: 20, food: 20, position: { x: 0, y: 64, z: 0 }, yaw: 0, pitch: 0, chat: [], chatCursor: 0, selectedSlot: 0, entities: [], container: null,
     inventory: Array.from({ length: 36 }, (_, slot) => ({ slot, id: full ? 'minecraft:dirt' : 'minecraft:air', count: full ? 64 : 0, components: {}, ...(full ? { maxStackSize: 64 } : {}) })),
     groundItems: drops.map((value, index) => ({ entityId: randomUUID(), position: { x: index + 1, y: 64, z: 0 }, onGround: true, visibility: 'visible', stack: clone(value) })), groundItemsTruncated: false, pickupCursor: 0, pickupOldestCursor: 0, pickupReceipts: [] };
   state.inventory[0] = { slot: 0, id: 'minecraft:iron_pickaxe', count: 1, components: {}, maxStackSize: 1 };
-  const candidates = Array.from({ length: blocks }, (_, i) => ({ position: { x: i + 1, y: 64, z: 1 }, id: 'minecraft:stone', properties: {}, distance: i + 1, visible: true, targetToken: randomUUID(), requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }));
+  const candidates = Array.from({ length: blocks }, (_, i) => ({ position: { x: i + 1, y: 64, z: 1 }, id: blockId, properties: {}, distance: i + 1, visible: true, targetToken: randomUUID(), requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }));
+  let broken = 0;
   let owner;
   const calls = [], ops = new Map();
   const pickup = (item, actual = item.stack) => {
@@ -50,7 +51,7 @@ function fixture({ drops = [], blocks = 3, automatic = false, max = 64, dropCoun
       if (name === 'dig-block') {
         if (body.protected) { status = 'failed'; result = { code: 'PROTECTED' }; }
         else {
-          const item = { entityId: randomUUID(), position: { x: args.x + 0.5, y: args.y, z: args.z + 0.5 }, onGround: true, visibility: 'visible', stack: stack(dropCount, max) };
+          const item = { entityId: randomUUID(), position: { x: args.x + 0.5, y: args.y, z: args.z + 0.5 }, onGround: true, visibility: 'visible', stack: { ...stack(yields?.[broken++] ?? dropCount, max), id: dropItem } };
           state.groundItems.push(item); if (automatic) pickup(item);
         }
       }
@@ -65,7 +66,7 @@ function fixture({ drops = [], blocks = 3, automatic = false, max = 64, dropCoun
     },
   };
   const events = new EventJournal(), tasks = new GatherTasks(body, events);
-  return { body, events, tasks, state, calls, pickup, candidates, ref: async () => (await tasks.discover({ blockIds: ['minecraft:stone'], radius: 4, maxResults: 32 })).resourceRef,
+  return { body, events, tasks, state, calls, pickup, candidates, ref: async () => (await tasks.discover({ blockIds: [blockId], radius: 4, maxResults: 32 })).resourceRef,
     done: async op => { await until(() => tasks.operation(op.operationId)?.status !== 'running'); return tasks.operation(op.operationId); } };
 }
 test('collect resolves actual stack maxima 16/64/99 and counts receipts independently of existing inventory', async () => {
@@ -89,8 +90,8 @@ test('gather mines then picks through the fixed token set without rescanning, wi
   assert.equal(f.calls[1].name, 'send-chat'); assert.equal(f.events.since(0, ['task']).length, 1);
 });
 
-function survivalFixture() {
-  const f = fixture({ automatic: true, blocks: 1 });
+function survivalFixture(options = {}) {
+  const f = fixture({ automatic: true, blocks: 1, ...options });
   f.state.inventory[10] = { ...f.state.inventory[0], slot: 10 };
   f.state.inventory[0] = { slot: 0, id: 'minecraft:air', count: 0, components: {} };
   f.state.inventory[11] = { slot: 11, id: 'minecraft:bread', count: 3, maxStackSize: 64, components: {} };
@@ -99,7 +100,7 @@ function survivalFixture() {
   f.body.survivalState = async () => ({ ...clone(f.state), serverTick: 1, observedAt: 1, maxHealth: 20, saturation: 0,
     foods: f.state.inventory.filter(item => item.id === 'minecraft:bread').map(item => ({ slot: item.slot, id: item.id, count: item.count, safe: true, nutrition: 5, saturationModifier: 0.6, eatDurationTicks: 32 })) });
   f.body.assessTool = async args => ({ ...clone(f.state), blockId: args.expectedBlock, properties: {}, requiresCorrectTool: true, notes: [],
-    candidates: f.state.inventory.filter(item => item.id === 'minecraft:iron_pickaxe').map(item => ({ ...clone(item), eligible: true, baseSpeed: 6, estimatedTicks: 5, remainingDurability: 250, estimate: 'estimated' })),
+    candidates: f.state.inventory.filter(item => item.id === 'minecraft:iron_pickaxe').map(item => ({ ...clone(item), eligible: true, baseSpeed: 6, estimatedTicks: 5, remainingDurability: 250, estimate: 'estimated', silkTouch: 0, fortune: 0, dropEffectsKnown: true })),
     recommendedSlot: f.state.inventory.find(item => item.id === 'minecraft:iron_pickaxe').slot });
   const nativeAct = f.body.act;
   f.body.act = async (name, args, token) => {
@@ -131,6 +132,93 @@ test('gather lends one task token for a meal and a backpack tool, then mines wit
   assert.equal(f.calls.filter(call => call.name === 'stop').length, 0);
   assert.equal(f.state.controlGeneration, 0); assert.equal(f.survival.read().state, 'idle');
   assert.equal(f.state.inventory[f.state.selectedSlot].id, 'minecraft:iron_pickaxe');
+});
+test('six ordinary ore targets use explicit no-silk assessment and frozen native pickup quantities', async () => {
+  for (const [blockId, dropItem] of [
+    ['minecraft:coal_ore', 'minecraft:coal'], ['minecraft:deepslate_coal_ore', 'minecraft:coal'],
+    ['minecraft:iron_ore', 'minecraft:raw_iron'], ['minecraft:deepslate_iron_ore', 'minecraft:raw_iron'],
+    ['minecraft:copper_ore', 'minecraft:raw_copper'], ['minecraft:deepslate_copper_ore', 'minecraft:raw_copper'],
+  ]) {
+    const f = survivalFixture({ blockId, dropItem }); f.policy.autoEat = false;
+    const assess = f.body.assessTool, assessments = [];
+    f.body.assessTool = args => { assessments.push(clone(args)); return assess(args); };
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: dropItem, count: 1 }));
+    assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.pickedUpCount, 1);
+    assert.equal(assessments[0].dropPreference, 'no_silk_touch'); assert.equal(assessments[0].expectedBlock, blockId);
+    assert.equal(f.calls.filter(call => call.name === 'discover').length, 1);
+    assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 1);
+    assert.equal(f.state.inventory[f.state.selectedSlot].id, 'minecraft:iron_pickaxe');
+  }
+});
+test('ore tool facts reject wooden unqualified, silk and unknown tools before any break', async () => {
+  for (const failure of ['wood', 'silk', 'unknown', 'incomplete']) {
+    const f = survivalFixture({ blockId: 'minecraft:iron_ore', dropItem: 'minecraft:raw_iron' }); f.policy.autoEat = false;
+    const assess = f.body.assessTool;
+    f.body.assessTool = async args => {
+      const result = await assess(args), tool = result.candidates[0];
+      if (failure === 'wood') Object.assign(tool, { id: 'minecraft:wooden_pickaxe', eligible: false });
+      if (failure === 'silk') tool.silkTouch = 1;
+      if (failure === 'unknown') tool.dropEffectsKnown = false;
+      if (failure === 'incomplete') delete tool.silkTouch;
+      return result;
+    };
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:raw_iron', count: 1 }));
+    assert.equal(result.status, ['unknown', 'incomplete'].includes(failure) ? 'unknown' : 'failed');
+    assert.equal(result.result.code, ['unknown', 'incomplete'].includes(failure) ? 'UNKNOWN' : 'WRONG_TOOL');
+    assert.equal(f.calls.some(call => ['swap-inventory', 'approach-resource', 'dig-block'].includes(call.name)), false);
+  }
+});
+test('variable copper and fortune yield reaches the item goal without opening another block and reports overage', async () => {
+  for (const automatic of [true, false]) {
+    const f = survivalFixture({ blockId: 'minecraft:deepslate_copper_ore', dropItem: 'minecraft:raw_copper', blocks: 3, automatic, yields: [2, 5, 4] }); f.policy.autoEat = false;
+    const assess = f.body.assessTool;
+    f.body.assessTool = async args => { const value = await assess(args); value.candidates[0].fortune = 3; return value; };
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:raw_copper', count: 4 }));
+    assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.targetCount, 4);
+    assert.equal(result.result.minedBlocks, 2); assert.equal(result.result.pickedUpCount, 7); assert.equal(result.result.overage, 3);
+    assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 2); assert.equal(f.calls.filter(call => call.name === 'discover').length, 1);
+  }
+});
+test('ore target mismatch and unsupported silk ore block goals never mine, mixed scans only mine matching targets', async () => {
+  for (const item of ['minecraft:raw_copper', 'minecraft:iron_ore']) {
+    const f = survivalFixture({ blockId: 'minecraft:iron_ore', dropItem: 'minecraft:raw_iron' });
+    await assert.rejects(f.tasks.start('gather-resources', { resourceRef: await f.ref(), item, count: 1 }), { code: 'UNSUPPORTED' });
+    assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
+  }
+  const f = survivalFixture({ blockId: 'minecraft:iron_ore', dropItem: 'minecraft:raw_iron', blocks: 2 }); f.policy.autoEat = false;
+  f.candidates[0].id = 'minecraft:oak_log';
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:raw_iron', count: 1 }));
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(f.calls.filter(call => call.name === 'dig-block').map(call => call.args.targetToken), [f.candidates[1].targetToken]);
+});
+test('ordinary ore gather rejects shortcut tool summaries without complete assessment', async () => {
+  const f = fixture({ blockId: 'minecraft:coal_ore', dropItem: 'minecraft:coal' });
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:coal', count: 1 }));
+  assert.equal(result.result.code, 'UNSUPPORTED'); assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
+});
+test('ore partial exhaustion and unknown break preserve native item count and do not rescan or replay', async () => {
+  for (const unknown of [false, true]) {
+    const f = survivalFixture({ blockId: 'minecraft:deepslate_iron_ore', dropItem: 'minecraft:raw_iron', blocks: unknown ? 3 : 1, dropCount: 2 }); f.policy.autoEat = false;
+    if (unknown) f.body.afterAct = (name, args, op) => { if (name === 'dig-block') op.status = 'unknown'; };
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:raw_iron', count: 5 }));
+    assert.equal(result.status, unknown ? 'unknown' : 'failed'); assert.equal(result.result.code, unknown ? 'UNKNOWN' : 'INSUFFICIENT_RESOURCES');
+    assert.equal(result.result[unknown ? 'lastConfirmedPickedUpCount' : 'pickedUpCount'], 2);
+    assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 1); assert.equal(f.calls.filter(call => call.name === 'discover').length, 1);
+  }
+});
+test('stop during ore digging retains confirmed item progress, retires the frozen set and permits a fresh task', async () => {
+  const f = survivalFixture({ blockId: 'minecraft:coal_ore', dropItem: 'minecraft:coal', blocks: 3, dropCount: 2 }); f.policy.autoEat = false;
+  let release, arrived; const seen = new Promise(resolve => { arrived = resolve; });
+  f.body.beforeAct = async name => { if (name === 'dig-block' && f.calls.filter(call => call.name === 'dig-block').length === 2) { arrived(); await new Promise(resolve => { release = resolve; }); } };
+  const accepted = await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:coal', count: 5 }); await seen;
+  f.tasks.cancel(); await f.body.stop(); f.tasks.stopped(); release(); await delay(20);
+  const cancelled = f.tasks.operation(accepted.operationId);
+  assert.equal(cancelled.status, 'cancelled'); assert.equal(cancelled.result.lastConfirmedPickedUpCount, 2);
+  assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 2);
+  await assert.rejects(f.tasks.start('gather-resources', { resourceRef: 'retired', item: 'minecraft:coal', count: 1 }), { code: 'STALE_REFERENCE' });
+  f.state.groundItems.push({ entityId: randomUUID(), position: { x: 1, y: 64, z: 0 }, onGround: true, visibility: 'visible', stack: { ...stack(), id: 'minecraft:coal' } });
+  const next = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:coal', count: 1 }));
+  assert.equal(next.status, 'succeeded', next.summary);
 });
 test('unknown borrowed consumption stops parent before digging and retires the child only after stop ACK', async () => {
   const f = survivalFixture(), nativeAct = f.body.act;

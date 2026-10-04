@@ -1,6 +1,6 @@
 # ServerBody 控制协议 v2
 
-2026-10-03 更新。本协议是当前实现与测试共用契约；当前只交付独服、本机控制、单 Bot。客户端协议 v1 保持兼容。服务端正常成本不设预算，默认无 Bot MC 客户端。Agent／模型凭据留在 Agent 主机。
+2026-10-04 更新。本协议是当前实现与测试共用契约；当前只交付独服、本机控制、单 Bot。客户端协议 v1 保持兼容。服务端正常成本不设预算，默认无 Bot MC 客户端。Agent／模型凭据留在 Agent 主机。本日整栈转移、任务总期限与矿石目录仅做编码和离线验证，未更新运行中的服务器。
 
 ## 传输与身份
 
@@ -38,6 +38,8 @@ B 基线已有11个动作：send-chat、look-at、move-to-position、follow-play
 
 act 通过身份与操作去重核验后，动作级失败可返回 `ok:true` 的 `Operation.status:"failed"`，`result.code` 给出结构化原因；ok 仅表示拿到动作回执，不代表动作成功。身份、租约、代次等协议拒绝仍是 `ok:false`。
 
+每租约最多接受4096个不同operationId，保留最近256条操作结果；结果淘汰不允许重放旧ID。`claim`／`heartbeat`／观察类／`act`／`operation`／`stop`回执增加`operationBudget:{used,remaining,limit,exhausted}`，表示读取当时的租约总额度。重复同ID不再计数；stop改变控制代次但不重置额度。耗尽时新动作返回`OPERATION_LIMIT`，查询、停止和释放继续可用，只有释放后明确重新接管才能获得新额度，不自动轮换租约或续做旧任务。新运行端保留旧服务端缺少该可选字段的兼容，缺字段不等于额度无限。
+
 错误码包括 FORBIDDEN、INVALID_ARGUMENT、WRONG_INSTANCE、WRONG_WORLD、WRONG_PLAYER、WORLD_CHANGED、DEAD_BODY、LEASE_BUSY、LEASE_LOST、STALE_CONTROL、BUSY、UNSUPPORTED、UNKNOWN_OPERATION、OPERATION_CONFLICT。生存动作还可能在 result.code 返回 STALE_ITEM、STALE_BLOCK、STALE_CONTAINER、UNLOADED、NO_LINE_OF_SIGHT、OUT_OF_REACH、NOT_DIGGABLE、TARGET_OCCUPIED、EMPTY_HAND_REQUIRED、DROP_PARTIAL、NATIVE_UNKNOWN 等。网络超时或原生调用已产生但无法完整确认的效果为 unknown，不自动重放动作；部分效果须核对实际库存、方块和掉落物。
 
 2026-10-03 R2 修复：原生调用入口前置待确认标记；调用内部或其后回执构造抛出协议错误（包括 UNSUPPORTED）／运行时异常时，尚未建立可靠结果的操作保留 unknown。写前拒绝、已证实无变化的拒绝仍是 failed；drop 的已确认 droppedCount 与独立已知 removedCount 保留，即使后续单件结果未知。重复 operationId 继续返回原回执。详见[边界修复与故障注入范围](boundary_review_fixes.md)，不把该离线验证称为真实 Mod 故障验收。
@@ -53,6 +55,8 @@ act 通过身份与操作去重核验后，动作级失败可返回 `ok:true` �
 任务用短期随机 `containerRef`（30秒供提交）绑定身体／实例／世界／维度／控制代次、位置及方块状态。新服务端另签发固定120秒有效、最多保留256个的随机targetToken，绑定实际BlockEntity身份；双箱绑定两半，不读取内容，不使用哈希。同坐标同状态替换、卸载重载或会话变化拒绝旧引用。带token开箱后，菜单在自身生命周期内持续校验来源实例与状态，不因发现缓存淘汰而误失效；每次点击仍核验菜单版本和完整组件。旧服务端无此能力时明确返回state-only保护及近距限制。
 
 任务写互斥贯穿走近、开取关、返回交物，内部步骤不会逐个唤醒Agent。走近复用第二批统一原生高差导航，限已加载地形、32格搜索半径，预算见文末第二批契约；这些是上限，不保证任意32格位置都有路。真实碰撞形状、扫掠身体、整脚底支撑、危险及实体占位逐tick复核；无路或预算用尽明确失败，不挖路／搭桥／传送／隐式生成路线区块。接收者开始时绑定UUID；行走中移动超过0.5格停止，最后丢出前再次校验身份、可见及1.5格距离。仍只从一个足量源栈取物，要求空快捷栏；同 ID 多组件变体拒绝，variant编号尚不是可授权选择句柄。结果区分 withdrawn／held／dropped 与 pickup unconfirmed，不自动重试 unknown 或补丢物品。
+
+2026-10-04容器增量：请求数量恰好等于完整源栈且目标为已核验空快捷栏时，用两次普通PICKUP左键完成取起／放下，核对完整组件、来源映射、数量、实际堆叠上限及空carried；不使用QUICK_MOVE。部分栈保留逐件右键与原槽归还核验。容器四类任务共享从受理开始的90秒总期限，初始观察、动作请求、动作轮询、接收者检查与失败收尾均计时；原有单动作期限仍保留。超时请求身体停止，最多再等待5秒；停止未确认保留写锁，直到最新明确停止确认。写后未确认结果仍为unknown及最后确认下限，迟到回执不重放动作、不影响新所有者。
 
 资源／容器／玩家走近及指定掉落物拾取的路线规划站位，要求中心与水平`x/z±0.2`四角均满足各自原有reach／LOS或拾取碰撞条件，为`<0.15`格的路点到达容差留裕量。实际到达与原生交互范围不放宽；狭窄区域没有合格网格站位仍可返回NO_PATH。
 
@@ -101,7 +105,9 @@ Observation新增`groundItems`：`[{entityId,position,stack:{id,count,components
 
 pickup-item成功result为`{entityId,pickedUpCount,pickup:"confirmed",requestedCount,remainingCount,stack}`；部分原生拾取也只报告真实片段。失败保留真实已获得量和`code`，没有Post时为`pickup:"unconfirmed"`，不猜消失实体的剩余量。其它玩家拾取为PICKUP_TAKEN，未知消失／合并为PICKUP_UNKNOWN，变体或上限变化为STALE_ITEM；危险／掉血／无进展为BLOCKED，移动过远为TARGET_MOVED，原生延迟／拒绝等未确认在有限时限内停止。收据也覆盖dig／walk期间的自然拾取；Node按seq累计一次，不再把pickup-item返回量重复相加。
 
-资源目录仅五种石料：`minecraft:stone`、`minecraft:deepslate`、`minecraft:granite`、`minecraft:diorite`、`minecraft:andesite`；八种原木：`minecraft:oak_log`、`minecraft:spruce_log`、`minecraft:birch_log`、`minecraft:jungle_log`、`minecraft:acacia_log`、`minecraft:dark_oak_log`、`minecraft:mangrove_log`、`minecraft:cherry_log`。blockIds不支持通配符；不是任意矿石或Mod方块目录，也不能区分玩家建筑与天然树。明确用户请求／授权区域仍由Agent判断，发现不等于破坏授权。
+资源目录包括五种石料：`minecraft:stone`、`minecraft:deepslate`、`minecraft:granite`、`minecraft:diorite`、`minecraft:andesite`；八种原木：`minecraft:oak_log`、`minecraft:spruce_log`、`minecraft:birch_log`、`minecraft:jungle_log`、`minecraft:acacia_log`、`minecraft:dark_oak_log`、`minecraft:mangrove_log`、`minecraft:cherry_log`。2026-10-04新增六种矿石：`minecraft:coal_ore`、`minecraft:iron_ore`、`minecraft:copper_ore`以及各自的`deepslate_`变种，仅目标普通产物`minecraft:coal`、`minecraft:raw_iron`、`minecraft:raw_copper`。blockIds不支持通配符；不是任意矿石或Mod方块目录，也不能区分玩家建筑与天然地形。明确用户请求／授权区域仍由Agent判断，发现不等于破坏授权。
+
+有限任务先筛选与目标产物匹配的冻结候选，矿石须完整工具评估／准备能力、已知掉落效果与非精准工具；服务端资源引用挖掘仍在执行前核验实际主手及原生位置相关采掘资格。首批不支持精准矿石块，不按工具名称写等级表，不保证数据包或Mod未改变掉落。目标数量按原生新拾取回执累计；铜的多产物、时运等可导致一次真实拾取超过目标，以`overage`如实记录，到量后不再开挖新候选。实际掉落不匹配、无工具、未知或部分完成均保留真实结果，不扩大区域或自动重试。
 
 nearby-resources按固定center的水平圆形半径和y±2扫描，最多845个位置、150000次地形读取；只用已加载区块，不隐式加载未知区域。发现与后续approach／dig一致禁止`pos.y<floor(Bot.y)`、方块实体、玩家身体或任何附近玩家脚底支撑、液体／危险邻居及上方重力方块。候选只返回当前Bot视线通过者：`{position,id,properties,targetToken,distance,visible:true,requiresCorrectTool,suitableToolSlots,recommendedToolSlot?}`；工具槽仅0–8，由真实采掘工具适用性／速度提供，不凭物品名字猜。候选截断／预算耗尽通过truncated与budget明示。
 

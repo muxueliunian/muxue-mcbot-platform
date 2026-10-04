@@ -204,8 +204,8 @@ test('an older successful stop cannot release the lock retained by a newer faile
 
 test('task timeout with an unconfirmed Body stop keeps its lock until a later explicit stop succeeds', async () => {
   const f = fixture(), act = f.body.act; let clock = 0;
-  const tasks = new ContainerTasks(f.body, () => clock += 20000);
-  f.body.act = async (...args) => ({ ...await act(...args), status: 'running' });
+  const tasks = new ContainerTasks(f.body, () => clock);
+  f.body.act = async (...args) => { const op = await act(...args); clock = 20000; return { ...op, status: 'running' }; };
   f.body.stop = async () => { throw new BodyError('STOP_UNCONFIRMED', 'Injected timeout stop failure'); };
   const ref = (await tasks.discover({ radius: 4, maxResults: 8 })).candidates[0].containerRef;
   const result = await tasks.run('container-list', { containerRef: ref });
@@ -331,9 +331,9 @@ test('ServerBody validates nearby context, retains source mapping and enforces t
 
 test('task timeout stops native running operation before releasing task ownership', async () => {
   const f = fixture(); let clock = 0, stops = 0;
-  const tasks = new ContainerTasks(f.body, () => clock += 20000);
+  const tasks = new ContainerTasks(f.body, () => clock);
   const originalAct = f.body.act;
-  f.body.act = async (...args) => ({ ...await originalAct(...args), status: 'running' });
+  f.body.act = async (...args) => { const op = await originalAct(...args); clock = 20000; return { ...op, status: 'running' }; };
   f.body.stop = async () => { stops++; return { stopped: true }; };
   const ref = (await tasks.discover({ radius: 4, maxResults: 8 })).candidates[0].containerRef;
   const op = await tasks.run('container-list', { containerRef: ref });
@@ -557,11 +557,11 @@ test('custom output withdrawal deposits carried items into active empty player s
   assert.equal(op.status, 'succeeded'); assert.equal(op.result.withdrawnCount, 3); assert.equal(op.result.heldCount, 3);
   assert.equal(f.state.container, null); assert.deepEqual(f.state.inventory[0].components, components);
   const clicks = f.calls.filter(call => call.name === 'click-slot');
-  assert.equal(clicks.length, 4); assert.equal(clicks[0].args.slot, 0);
+  assert.equal(clicks.length, 2); assert.equal(clicks[0].args.slot, 0);
   assert.equal(clicks[1].args.slot, 2); assert.equal(clicks[1].args.expectedItem, 'minecraft:air');
   assert.equal(clicks[1].args.expectedCount, 0); assert.deepEqual(clicks[1].args.expectedComponents, {});
   assert.equal(clicks[1].args.expectedCarriedCount, 3); assert.deepEqual(clicks[1].args.expectedCarriedComponents, components);
-  assert.deepEqual(clicks.slice(1).map(call => call.args.expectedCarriedCount), [3, 2, 1]);
+  assert.deepEqual(clicks.map(call => call.args.button), [0, 0]);
 });
 
 test('activity fields remain in full-menu guards: changed activity stops before a second click', async () => {
@@ -571,4 +571,213 @@ test('activity fields remain in full-menu guards: changed activity stops before 
   const op = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', count: 3 });
   assert.equal(op.result.code, 'CONTAINER_CHANGED'); assert.equal(op.result.withdrawnCount, 0);
   assert.equal(f.calls.filter(call => call.name === 'click-slot').length, 1);
+});
+
+test('whole 64, 16 and component-defined 99 stacks use two native clicks and conserve every item', async () => {
+  for (const size of [64, 16, 99]) {
+    const f = fixture({ configureMenu: menu => { menu.slots[0].count = size; menu.slots[0].maxStackSize = size; } });
+    let deposited;
+    const act = f.body.act;
+    f.body.act = async (...args) => { const op = await act(...args); if (args[0] === 'close-container') return op; if (f.state.container) deposited = clone(f.state.container); return op; };
+    const result = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', stacks: 1 });
+    assert.equal(result.status, 'succeeded'); assert.equal(result.result.withdrawnCount, size); assert.equal(result.result.heldCount, size);
+    assert.deepEqual(f.calls.filter(call => call.name === 'click-slot').map(call => [call.args.slot, call.args.button]), [[0, 0], [2, 0]]);
+    assert.equal(deposited.slots[0].count, 0); assert.equal(deposited.carried.count, 0);
+    assert.equal(deposited.slots[2].count, size); assert.equal(f.state.inventory[0].count, size);
+    assert.equal(deposited.slots.filter(stack => stack.id === 'minecraft:oak_log').reduce((sum, stack) => sum + stack.count, 0) + deposited.carried.count, size);
+    assert.deepEqual(f.state.inventory[0].components, components); assert.equal(f.state.inventory[0].maxStackSize, size);
+  }
+});
+
+test('partial stacks retain per-item placement and return the exact remainder', async () => {
+  const f = fixture({ configureMenu: menu => { menu.slots[0].count = 64; menu.slots[0].maxStackSize = 64; } });
+  let beforeClose;
+  f.body.beforeAct = name => { if (name === 'close-container') beforeClose = clone(f.state.container); };
+  const result = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', count: 3 });
+  assert.equal(result.status, 'succeeded'); assert.equal(result.result.withdrawnCount, 3);
+  assert.deepEqual(f.calls.filter(call => call.name === 'click-slot').map(call => call.args.button), [0, 1, 1, 1, 0]);
+  assert.equal(beforeClose.slots[0].count, 61); assert.equal(beforeClose.slots[2].count, 3); assert.equal(beforeClose.carried.count, 0);
+  assert.deepEqual(beforeClose.slots[0].components, components); assert.equal(beforeClose.slots[0].maxStackSize, 64);
+});
+
+test('whole-stack destination changes refuse placement, and unknown pickup/deposit never retry or clean up', async () => {
+  const changed = fixture();
+  changed.body.beforeObserve = () => {
+    if (changed.state.container?.carried.count) Object.assign(changed.state.container.slots[2], { id: 'minecraft:stone', count: 1, components: {} });
+  };
+  const refused = await changed.tasks.run('container-withdraw', { containerRef: await changed.ref(), item: 'minecraft:oak_log', count: 10 });
+  assert.equal(refused.result.code, 'CONTAINER_CHANGED'); assert.equal(refused.result.withdrawnCount, 0);
+  assert.equal(changed.calls.filter(call => call.name === 'click-slot').length, 1);
+  assert.equal(changed.state.container.carried.count, 10); assert.equal(changed.state.container.slots[2].id, 'minecraft:stone');
+  for (const at of [1, 2]) {
+    const f = fixture(), act = f.body.act; let clicks = 0;
+    f.body.act = async (...args) => { const op = await act(...args); return args[0] === 'click-slot' && ++clicks === at ? { ...op, status: 'unknown', result: undefined } : op; };
+    const result = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', count: 10 });
+    assert.equal(result.status, 'unknown'); assert.equal(result.result.withdrawnCount, 0); assert.equal(result.result.cleanup, undefined);
+    assert.equal(f.calls.filter(call => call.name === 'click-slot').length, at); assert.equal(f.calls.some(call => call.name === 'close-container'), false);
+    assert.equal(f.state.container.carried.count + f.state.inventory[0].count, 10);
+  }
+});
+
+test('whole-stack receipt rejects altered count, components, max, source, mapping and carried state', async () => {
+  const mutations = [
+    menu => { menu.slots[2].count--; }, menu => { menu.slots[2].components = { changed: true }; },
+    menu => { menu.slots[2].maxStackSize = 16; }, menu => { menu.slots[2].source = 'container'; },
+    menu => { menu.slots[2].playerSlot = 1; }, menu => { menu.slots[2].active = false; },
+    menu => { menu.carried = { id: 'minecraft:oak_log', count: 1, components }; },
+    menu => { menu.slots[0].source = 'player'; },
+  ];
+  for (const mutate of mutations) {
+    const f = fixture(), act = f.body.act; let clicks = 0;
+    f.body.act = async (...args) => { const op = await act(...args); if (args[0] === 'click-slot' && ++clicks === 2) mutate(op.result.container); return op; };
+    const result = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', count: 10 });
+    assert.equal(result.status, 'unknown'); assert.equal(result.result.withdrawnCount, 0); assert.equal(result.result.cleanup, undefined);
+    assert.equal(f.calls.filter(call => call.name === 'click-slot').length, 2); assert.equal(f.calls.some(call => call.name === 'close-container'), false);
+  }
+});
+
+test('one total deadline bounds cumulative observations and keeps the confirmed partial lower bound', async () => {
+  const f = fixture(); let clock = 0, stoppedInventory, stops = 0;
+  const tasks = new ContainerTasks(f.body, () => clock, undefined, { timeoutMs: 100 });
+  f.body.beforeObserve = () => { clock += 10; };
+  f.body.stop = async () => { stops++; stoppedInventory = clone(f.state.inventory); f.state.container = null; return { stopped: true }; };
+  const ref = (await tasks.discover({ radius: 4, maxResults: 8 })).candidates[0].containerRef;
+  const result = await tasks.run('container-withdraw', { containerRef: ref, item: 'minecraft:oak_log', count: 3 });
+  assert.equal(result.status, 'unknown'); assert.equal(result.result.code, 'TASK_TIMEOUT'); assert.equal(stops, 1);
+  assert.ok(result.result.withdrawnCount > 0 && result.result.withdrawnCount < 3);
+  assert.equal(result.result.lastConfirmedHeldCount, result.result.withdrawnCount);
+  assert.equal(stoppedInventory[0].count, result.result.withdrawnCount);
+  assert.equal(result.result.cleanup, undefined); assert.equal(f.calls.some(call => call.name === 'close-container'), false);
+  assert.doesNotThrow(() => f.body.acquireTask('after-confirmed-stop')); f.body.releaseTask('after-confirmed-stop');
+});
+
+for (const phase of ['observe', 'act', 'operation', 'recipient']) {
+  test(`total deadline exits a hung ${phase} request and ignores its late reply`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture(), gate = deferred(), entered = deferred(), actEntered = deferred();
+    const delivered = [], tasks = new ContainerTasks(f.body, Date.now, op => delivered.push(op), { timeoutMs: 100 });
+    let stops = 0;
+    f.body.stop = async () => { stops++; f.state.container = null; return { stopped: true }; };
+    if (phase === 'observe') f.body.beforeObserve = async () => { entered.resolve(); await gate.promise; };
+    if (phase === 'act') {
+      const act = f.body.act;
+      f.body.act = async (...args) => { const op = await act(...args); entered.resolve(); await gate.promise; return op; };
+    }
+    if (phase === 'operation') {
+      const act = f.body.act;
+      f.body.act = async (...args) => { const op = await act(...args); actEntered.resolve(); return { ...op, status: 'running' }; };
+      f.body.operation = async operationId => { entered.resolve(); await gate.promise; return { operationId, sessionId: 'session', name: 'open-container', status: 'succeeded', summary: 'late' }; };
+    }
+    if (phase === 'recipient') {
+      const nearby = f.body.nearbyBlocks;
+      f.body.nearbyBlocks = async args => { if (args.radius === 1) { entered.resolve(); await gate.promise; } return nearby(args); };
+    }
+    const ref = (await tasks.discover({ radius: 4, maxResults: 8 })).candidates[0].containerRef;
+    const pending = tasks.run(phase === 'recipient' ? 'give-item' : 'container-list', phase === 'recipient' ? { item: 'minecraft:diamond', count: 1, player: 'Alex' } : { containerRef: ref });
+    if (phase === 'operation') { await actEntered.promise; for (let i = 0; i < 8; i++) await Promise.resolve(); t.mock.timers.tick(50); }
+    await entered.promise; t.mock.timers.tick(100);
+    const result = await pending;
+    assert.equal(result.status, 'unknown'); assert.equal(result.result.code, 'TASK_TIMEOUT'); assert.equal(stops, 1); assert.equal(result.result.cleanup, undefined);
+    const calls = clone(f.calls), receipts = clone(delivered); gate.resolve(); for (let i = 0; i < 12; i++) await Promise.resolve();
+    assert.deepEqual(f.calls, calls); assert.deepEqual(delivered, receipts); assert.equal(tasks.operation(result.operationId), result);
+    assert.equal(result.result.withdrawnCount, 0); assert.equal(result.result.droppedCount, 0);
+    assert.doesNotThrow(() => f.body.acquireTask('after-timeout')); f.body.releaseTask('after-timeout');
+  });
+}
+
+for (const stopMode of ['failed', 'hung']) {
+  test(`timeout ${stopMode} stop retains owner until an explicit confirmation`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture(), readGate = deferred(), entered = deferred(), stopEntered = deferred(), stopGate = deferred();
+    const tasks = new ContainerTasks(f.body, Date.now, undefined, { timeoutMs: 100, stopTimeoutMs: 20 });
+    f.body.beforeObserve = async () => { entered.resolve(); await readGate.promise; };
+    f.body.stop = async () => { stopEntered.resolve(); if (stopMode === 'failed') throw new BodyError('STOP_UNCONFIRMED', 'injected'); return stopGate.promise; };
+    const pending = tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' });
+    await entered.promise; t.mock.timers.tick(100); await stopEntered.promise;
+    if (stopMode === 'hung') t.mock.timers.tick(20);
+    const result = await pending;
+    assert.equal(result.status, 'unknown'); assert.equal(result.result.code, 'STOP_UNCONFIRMED'); assert.deepEqual(f.calls, []);
+    assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+    await assert.rejects(tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' }), { code: 'BUSY' });
+    readGate.resolve(); stopGate.resolve({ stopped: true }); for (let i = 0; i < 12; i++) await Promise.resolve();
+    assert.throws(() => f.body.acquireTask('late-stop-cannot-release'), { code: 'BUSY' });
+    const handle = tasks.cancel(); f.body.stop = async () => ({ stopped: true }); await f.body.stop(); assert.equal(tasks.stopped(handle), true);
+    f.body.beforeObserve = undefined;
+    assert.equal((await tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' })).status, 'succeeded');
+  });
+}
+
+test('external stop wins an expired-request race without old automatic stop affecting a new owner', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(), oldGate = deferred(), oldEntered = deferred(), nextGate = deferred(), nextEntered = deferred(); let reads = 0, stops = 0;
+  const tasks = new ContainerTasks(f.body, Date.now, undefined, { timeoutMs: 100 });
+  f.body.beforeObserve = async () => { if (++reads === 1) { oldEntered.resolve(); await oldGate.promise; } else if (reads === 2) { nextEntered.resolve(); await nextGate.promise; } };
+  f.body.stop = async () => { stops++; return { stopped: true }; };
+  const args = { item: 'minecraft:diamond', count: 1, player: 'Alex' }, old = tasks.run('give-item', args);
+  await oldEntered.promise; t.mock.timers.tick(100);
+  const handle = tasks.cancel(); await f.body.stop(); assert.equal(tasks.stopped(handle), true);
+  const next = tasks.run('give-item', args); await nextEntered.promise;
+  const oldResult = await old;
+  assert.equal(oldResult.status, 'cancelled'); assert.equal(stops, 1); assert.deepEqual(f.calls, []);
+  assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
+  oldGate.resolve(); for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.equal(stops, 1); assert.throws(() => f.body.acquireTask('late-finally'), { code: 'BUSY' });
+  nextGate.resolve(); assert.equal((await next).status, 'succeeded');
+});
+
+test('confirmed external stop leaves a hung old request bounded without expiring the new task', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(), oldGate = deferred(), oldEntered = deferred(), nextGate = deferred(), nextEntered = deferred(); let reads = 0, stops = 0;
+  const tasks = new ContainerTasks(f.body, Date.now, undefined, { timeoutMs: 100 });
+  f.body.beforeObserve = async () => { if (++reads === 1) { oldEntered.resolve(); await oldGate.promise; } else if (reads === 2) { nextEntered.resolve(); await nextGate.promise; } };
+  f.body.stop = async () => { stops++; return { stopped: true }; };
+  const args = { item: 'minecraft:diamond', count: 1, player: 'Alex' }, old = tasks.run('give-item', args);
+  await oldEntered.promise; t.mock.timers.tick(20);
+  const handle = tasks.cancel(); await f.body.stop(); assert.equal(tasks.stopped(handle), true);
+  const next = tasks.run('give-item', args); await nextEntered.promise;
+  t.mock.timers.tick(80);
+  assert.equal((await old).status, 'cancelled'); assert.equal(stops, 1); assert.deepEqual(f.calls, []);
+  assert.throws(() => f.body.acquireTask('old-deadline-cannot-release'), { code: 'BUSY' });
+  oldGate.resolve(); for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.equal(stops, 1); assert.throws(() => f.body.acquireTask('late-response-cannot-release'), { code: 'BUSY' });
+  nextGate.resolve(); assert.equal((await next).status, 'succeeded');
+});
+
+test('unknown cleanup close or cleanup transport/world loss replaces a clear refusal with uncertain counts', async () => {
+  for (const cleanupFailure of ['UNKNOWN', 'TRANSPORT_LOST', 'WORLD_CHANGED']) {
+    const f = fixture({ configureMenu: menu => { menu.slots[0].count = 1; } });
+    const act = f.body.act; let menuReads = 0;
+    if (cleanupFailure === 'UNKNOWN') f.body.act = async (...args) => { const op = await act(...args); return args[0] === 'close-container' ? { ...op, status: 'unknown', result: undefined } : op; };
+    else f.body.beforeObserve = () => {
+      if (f.state.container && ++menuReads === 2) {
+        if (cleanupFailure === 'TRANSPORT_LOST') throw new BodyError('TRANSPORT_LOST', 'cleanup disconnected');
+        f.state.worldId = 'replacement-world';
+      }
+    };
+    const result = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', count: 2 });
+    assert.equal(result.status, 'unknown'); assert.equal(result.result.code, cleanupFailure); assert.equal(result.result.cleanup, 'unconfirmed');
+    assert.equal(result.result.withdrawnCount, 0); assert.equal(result.result.lastConfirmedHeldCount, 0); assert.equal(result.result.heldCount, undefined);
+    assert.equal(f.calls.filter(call => call.name === 'click-slot').length, 0);
+    assert.equal(f.calls.filter(call => call.name === 'close-container').length, cleanupFailure === 'UNKNOWN' ? 1 : 0);
+  }
+});
+
+test('a late timeout stop confirmation cannot retire a task started after a newer external stop', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(), oldGate = deferred(), oldEntered = deferred(), autoStop = deferred(), stopEntered = deferred(), nextGate = deferred(), nextEntered = deferred();
+  let reads = 0, stops = 0;
+  const tasks = new ContainerTasks(f.body, Date.now, undefined, { timeoutMs: 100 });
+  f.body.beforeObserve = async () => { if (++reads === 1) { oldEntered.resolve(); await oldGate.promise; } else if (reads === 2) { nextEntered.resolve(); await nextGate.promise; } };
+  f.body.stop = async () => { if (++stops === 1) { stopEntered.resolve(); return autoStop.promise; } return { stopped: true }; };
+  const args = { item: 'minecraft:diamond', count: 1, player: 'Alex' }, old = tasks.run('give-item', args);
+  await oldEntered.promise; t.mock.timers.tick(100); await stopEntered.promise;
+  const handle = tasks.cancel(); await f.body.stop(); assert.equal(tasks.stopped(handle), true);
+  const next = tasks.run('give-item', args); await nextEntered.promise;
+  autoStop.resolve({ stopped: true });
+  const oldResult = await old;
+  assert.equal(oldResult.status, 'unknown'); assert.equal(oldResult.result.code, 'TASK_TIMEOUT'); assert.equal(stops, 2);
+  assert.throws(() => f.body.acquireTask('old-stop-cannot-release'), { code: 'BUSY' }); assert.deepEqual(f.calls, []);
+  oldGate.resolve(); for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.throws(() => f.body.acquireTask('old-finally-cannot-release'), { code: 'BUSY' });
+  nextGate.resolve(); assert.equal((await next).status, 'succeeded');
 });

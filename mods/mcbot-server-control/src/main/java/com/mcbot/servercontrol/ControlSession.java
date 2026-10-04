@@ -160,9 +160,9 @@ final class ControlSession {
         }
         authorize(p);
         switch(method) {
-            case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return obj("ttlMs",TTL_MS,"controlGeneration",generation);
+            case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return withOperationBudget(obj("ttlMs",TTL_MS,"controlGeneration",generation));
             case "release": revokeCurrent("Controller released control");requireNativeStopped(); return obj("released",true);
-            case "stop": cancel("Stopped by controller");requireNativeStopped(); return obj("stopped",true,"controlGeneration",generation);
+            case "stop": cancel("Stopped by controller");requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
             case "observe", "nearby-blocks", "nearby-resources", "survival-state", "assess-tool": {
                 if(!method.equals("observe")&&!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree(method)))
                     throw error("UNSUPPORTED","Nearby discovery capability is not available");
@@ -175,7 +175,7 @@ final class ControlSession {
                 };
                 observation.addProperty("instanceId",instanceId); observation.addProperty("sessionId",sessionId);
                 observation.addProperty("worldId",worldId); observation.addProperty("controlGeneration",generation);
-                return observation;
+                return withOperationBudget(observation);
             }
             case "watch":
                 if(!stopToken.equals(string(p,"stopToken"))) throw error("FORBIDDEN","Wrong host stop token");
@@ -185,7 +185,13 @@ final class ControlSession {
         }
     }
     private JsonObject claimResult() {
-        return obj("leaseId",leaseId,"stopToken",stopToken,"ttlMs",Math.max(1,expiresAt-clock.getAsLong()),"instanceId",instanceId,"sessionId",sessionId,"controlGeneration",generation,"chatCursor",game.chatCursor());
+        return withOperationBudget(obj("leaseId",leaseId,"stopToken",stopToken,"ttlMs",Math.max(1,expiresAt-clock.getAsLong()),"instanceId",instanceId,"sessionId",sessionId,"controlGeneration",generation,"chatCursor",game.chatCursor()));
+    }
+    private JsonObject withOperationBudget(JsonObject result) {
+        // This is the lifetime admission budget of the authenticated lease, not the result cache.
+        int used=seenIds.size();
+        result.add("operationBudget",obj("used",used,"remaining",ID_LIMIT-used,"limit",ID_LIMIT,"exhausted",used>=ID_LIMIT));
+        return result;
     }
     private JsonObject operation(String method,JsonObject p) {
         String id=string(p,"operationId");
@@ -193,17 +199,17 @@ final class ControlSession {
         Operation old=history.get(id);
         if(method.equals("operation")) {
             if(old==null) throw error("UNKNOWN_OPERATION","Result absent or evicted; never replay");
-            return old.json();
+            return withOperationBudget(old.json());
         }
         long requestedGeneration=Protocol.generation(p);
         if(requestedGeneration!=generation) throw error("STALE_CONTROL","Control generation changed");
         String name=string(p,"name"); JsonObject args=object(p,"args");
         if(old!=null) {
             if(!old.name.equals(name)||!old.args.equals(args)||old.generation!=requestedGeneration) throw error("OPERATION_CONFLICT","Operation ID already used with different content");
-            return old.json();
+            return withOperationBudget(old.json());
         }
         if(seenIds.contains(id)) throw error("UNKNOWN_OPERATION","Result evicted; never replay this ID");
-        if(seenIds.size()>=ID_LIMIT) throw error("BUSY","Lease operation limit reached; release and explicitly claim again");
+        if(seenIds.size()>=ID_LIMIT) throw error("OPERATION_LIMIT","All "+ID_LIMIT+" lease operation IDs are used; stop and observation remain available; release and explicitly claim again for a new budget");
         if(!name.equals("send-chat")&&game.nativeWriteInProgress())throw error("BUSY","A synchronous native write must return before another action may start");
         if(!name.equals("send-chat")&&history.values().stream().anyMatch(o->o.status.equals("running")&&!o.name.equals("send-chat"))) throw error("BUSY","Stop the current operation first");
         Operation operation=new Operation(id,sessionId,generation,name,args);
@@ -220,6 +226,6 @@ final class ControlSession {
             // Chat is allowed during movement; a failing new operation must not abort its neighbour.
             game.abort(operation);
         }
-        return operation.json();
+        return withOperationBudget(operation.json());
     }
 }

@@ -51,6 +51,9 @@ public final class ControlSessionTest {
         try {runnable.run();throw new AssertionError("Expected "+code);}
         catch(Protocol.Error e) {if(!e.code.equals(code))throw new AssertionError("Expected "+code+", got "+e.code);}
     }
+    private static void budget(JsonObject response,int used,String message) {
+        check(response.getAsJsonObject("operationBudget").equals(obj("used",used,"remaining",ControlSession.ID_LIMIT-used,"limit",ControlSession.ID_LIMIT,"exhausted",used==ControlSession.ID_LIMIT)),message);
+    }
     public static void main(String[] ignored) throws Exception {
         Fixture f=new Fixture();
         JsonObject hello=f.session.call("hello",obj());
@@ -58,11 +61,13 @@ public final class ControlSessionTest {
         check(f.game.creations==0&&hello.get("username").getAsString().equals("ServerBot"),"configured identity before claim");
         JsonObject claim=f.claim("a"), auth=f.auth(claim);
         check(f.game.creations==1&&claim.get("chatCursor").getAsLong()==7,"claim creates one body and cursor");
+        budget(claim,0,"new lease exposes its full lifetime operation budget");
         errorCode("UNSUPPORTED",()->f.session.call("nearby-blocks",auth));
         f.game.nearby=true;
         JsonObject nearby=f.session.call("nearby-blocks",auth);
         check(nearby.get("instanceId").getAsString().equals(f.session.instanceId)&&nearby.get("sessionId").equals(claim.get("sessionId"))&&nearby.get("worldId").getAsString().equals("world")&&nearby.get("controlGeneration").equals(claim.get("controlGeneration")),"nearby discovery binds full control context");
         check(f.game.discoveries==1&&f.game.starts==0,"discovery is a read and creates no operation");
+        budget(nearby,0,"nearby reads do not consume operation IDs");
         JsonObject wrongNearby=auth.deepCopy();wrongNearby.addProperty("leaseId","wrong");
         errorCode("LEASE_LOST",()->f.session.call("nearby-blocks",wrongNearby));
         check(f.game.discoveries==1,"unauthorized discovery never enters game code");
@@ -71,13 +76,17 @@ public final class ControlSessionTest {
         String id=UUID.randomUUID().toString();JsonObject action=f.act(claim,id);
         JsonObject first=f.session.call("act",action),again=f.session.call("act",action.deepCopy());
         check(first.equals(again)&&f.game.starts==1,"duplicate ID does not repeat action");
+        budget(first,1,"first admitted ID consumes exactly one unit");
+        budget(again,1,"duplicate ID consumes no additional units");
         JsonObject changed=action.deepCopy();changed.add("args",obj("message","different"));
         errorCode("OPERATION_CONFLICT",()->f.session.call("act",changed));
         JsonObject observation=f.session.call("observe",auth);
         check(observation.get("container").isJsonNull()&&observation.get("instanceId").getAsString().equals(f.session.instanceId),"observation carries epoch and null");
+        budget(observation,1,"observation does not consume the lifetime budget");
         JsonObject wrong=auth.deepCopy();wrong.addProperty("instanceId","other");errorCode("WRONG_INSTANCE",()->f.session.call("heartbeat",wrong));
         JsonObject stopped=f.session.call("stop",auth);
         check(stopped.get("controlGeneration").getAsLong()>claim.get("controlGeneration").getAsLong()&&f.game.exists,"stop advances generation and retains body");
+        budget(stopped,1,"stop changes generation without resetting the lease operation budget");
         errorCode("STALE_CONTROL",()->f.session.call("act",f.act(claim,UUID.randomUUID().toString())));
         JsonObject fresh=f.act(claim,UUID.randomUUID().toString());fresh.add("controlGeneration",stopped.get("controlGeneration"));
         check(f.session.call("act",fresh).get("status").getAsString().equals("succeeded"),"first new-generation action works");
@@ -105,9 +114,36 @@ public final class ControlSessionTest {
         for(int i=0;i<ControlSession.HISTORY_LIMIT;i++) cache.session.call("act",cache.act(c,UUID.randomUUID().toString()));
         int starts=cache.game.starts;errorCode("UNKNOWN_OPERATION",()->cache.session.call("act",cache.act(c,firstId)));
         check(cache.game.starts==starts,"evicted ID is never replayed");
-        for(int i=ControlSession.HISTORY_LIMIT+1;i<ControlSession.ID_LIMIT;i++) cache.session.call("act",cache.act(c,UUID.randomUUID().toString()));
-        errorCode("BUSY",()->cache.session.call("act",cache.act(c,UUID.randomUUID().toString())));
-        cache.session.call("release",cache.auth(c));JsonObject reset=cache.claim("b");cache.session.call("act",cache.act(reset,UUID.randomUUID().toString()));
+        budget(cache.session.call("observe",cache.auth(c)),ControlSession.HISTORY_LIMIT+1,"history eviction never replenishes admitted-ID budget");
+        for(int i=ControlSession.HISTORY_LIMIT+1;i<ControlSession.ID_LIMIT-1;i++) cache.session.call("act",cache.act(c,UUID.randomUUID().toString()));
+        budget(cache.session.call("observe",cache.auth(c)),ControlSession.ID_LIMIT-1,"4095 accepted IDs leave exactly one unit");
+        cache.game.immediate=false;
+        JsonObject finalAction=cache.act(c,UUID.randomUUID().toString());finalAction.addProperty("name","move-to-position");
+        JsonObject last=cache.session.call("act",finalAction);
+        budget(last,ControlSession.ID_LIMIT,"4096th action is admitted and exhausts the lease budget");
+        int fullStarts=cache.game.starts;
+        check(cache.session.call("act",finalAction.deepCopy()).equals(last)&&cache.game.starts==fullStarts,"last retained ID can be retried while exhausted without execution or new budget use");
+        JsonObject conflict=finalAction.deepCopy();conflict.add("args",obj("message","different"));
+        errorCode("OPERATION_CONFLICT",()->cache.session.call("act",conflict));
+        errorCode("UNKNOWN_OPERATION",()->cache.session.call("act",cache.act(c,firstId)));
+        errorCode("OPERATION_LIMIT",()->cache.session.call("act",cache.act(c,UUID.randomUUID().toString())));
+        check(cache.game.starts==fullStarts,"conflict, evicted retry and exhausted admission never enter native actions");
+        JsonObject lastQuery=cache.auth(c);lastQuery.add("operationId",last.get("operationId"));
+        budget(cache.session.call("operation",lastQuery),ControlSession.ID_LIMIT,"operation diagnostics remain available while exhausted");
+        budget(cache.session.call("observe",cache.auth(c)),ControlSession.ID_LIMIT,"exhausted observation remains available without consuming or resetting IDs");
+        budget(cache.session.call("heartbeat",cache.auth(c)),ControlSession.ID_LIMIT,"heartbeat renewal does not reset exhausted budget");
+        budget(cache.claim("a"),ControlSession.ID_LIMIT,"retransmitted claim never rotates exhausted lease");
+        JsonObject fullStop=cache.session.call("stop",cache.auth(c));
+        budget(fullStop,ControlSession.ID_LIMIT,"stop remains available at exhaustion and does not reset the budget");
+        check(cache.game.active==null&&cache.session.call("operation",lastQuery).get("status").getAsString().equals("cancelled"),"stop cancels running native action at the operation-ID limit");
+        JsonObject afterStop=cache.act(c,UUID.randomUUID().toString());afterStop.add("controlGeneration",fullStop.get("controlGeneration"));
+        errorCode("OPERATION_LIMIT",()->cache.session.call("act",afterStop));
+        cache.session.call("release",cache.auth(c));JsonObject reset=cache.claim("b");
+        budget(reset,0,"only release and explicit claim establish a fresh operation budget");
+        errorCode("LEASE_LOST",()->cache.session.call("observe",cache.auth(c)));
+        errorCode("LEASE_LOST",()->cache.session.call("act",cache.act(c,UUID.randomUUID().toString())));
+        budget(cache.session.call("observe",cache.auth(reset)),0,"old lease diagnostic and action attempts cannot affect new lease budget");
+        cache.session.call("act",cache.act(reset,UUID.randomUUID().toString()));
         check(cache.game.starts==ControlSession.ID_LIMIT+1,"new lease resets bounded ID budget");
         Fixture concurrent=new Fixture();concurrent.game.immediate=false;JsonObject cc=concurrent.claim("a");
         JsonObject movement=concurrent.act(cc,UUID.randomUUID().toString());movement.addProperty("name","move-to-position");

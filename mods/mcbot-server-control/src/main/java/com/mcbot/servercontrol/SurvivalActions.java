@@ -234,6 +234,7 @@ final class SurvivalActions {
             var resource=resources.require(player,string(args,"targetToken"));
             if(!resource.position().equals(position))throw error("STALE_TARGET","Resource reference position does not match digging target");
             if(!player.hasCorrectToolForDrops(state,player.serverLevel(),position))throw error("MISSING_TOOL","Native position-sensitive harvest check refused resource drops for the selected hand");
+            requireOrdinaryOreTool(state,position);
         }
         if(state.isAir()||state.getDestroySpeed(player.serverLevel(),position)<0) throw error("NOT_DIGGABLE","Block cannot be dug");
         BlockHitResult hit=hit(position,null);look(hit.getLocation());guard(operation);
@@ -263,6 +264,10 @@ final class SurvivalActions {
             if(now()>=deadline) throw error("TIMEOUT","Mining time limit reached");
             if(!player.serverLevel().hasChunkAt(digPosition)||!player.serverLevel().getBlockState(digPosition).equals(digState)) throw error("STALE_BLOCK","Block changed during mining");
             if(player.getInventory().selected!=digSlot||!hand().equals(digHand)) throw error("STALE_ITEM","Main hand changed during mining");
+            if(operation.args.has("targetToken")) {
+                if(!player.hasCorrectToolForDrops(digState,player.serverLevel(),digPosition))throw error("MISSING_TOOL","Native resource harvest eligibility changed during mining");
+                requireOrdinaryOreTool(digState,digPosition);
+            }
             hit(digPosition,null);
             var progress=mining();
             if(!progress.mcbot$isDestroyingBlock()||progress.mcbot$hasDelayedDestroy()) throw error("FORBIDDEN","Native mining state changed unexpectedly");
@@ -276,6 +281,12 @@ final class SurvivalActions {
             } else player.swing(InteractionHand.MAIN_HAND,true);
             },this::abortDig);
         } finally { session.expire(); }
+    }
+    private void requireOrdinaryOreTool(BlockState state,BlockPos position) {
+        String id=BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        if(!ResourceCatalog.ore(id))return;
+        var view=ToolAssessment.snapshot(player.getInventory().selected,player.getMainHandItem(),player.registryAccess());
+        ResourceCatalog.requireOrdinaryOreTool(id,ToolAssessment.candidate(view,state,state.getDestroySpeed(player.serverLevel(),position)));
     }
     private void completeDig() {
         ControlSession.Operation operation=digging;

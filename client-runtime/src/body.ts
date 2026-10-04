@@ -1,5 +1,7 @@
 /** The shared Body contract deliberately has no game-library or Agent types. */
 export interface Position { x: number; y: number; z: number }
+/** Snapshot of the current lease's distinct operation IDs; stop does not replenish it. */
+export interface OperationBudget { used: number; remaining: number; limit: number; exhausted: boolean }
 export type Components = Record<string, unknown>;
 export interface ItemValue { id: string; count: number; components?: Components; maxStackSize?: number; componentsComplete?: boolean; componentError?: string }
 export interface ItemStack extends ItemValue { slot: number; source?: 'container' | 'player' | 'unknown'; playerSlot?: number; active?: boolean; mayPickup?: boolean }
@@ -27,6 +29,7 @@ export interface Threat {
 export interface SurvivalDangers { onFire: boolean; inLava: boolean; inWater: boolean; air: number; maxAir: number; fallDistance: number; lowHealth: boolean; retreatRecommended: boolean }
 export interface SurvivalState {
   instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number;
+  operationBudget?: OperationBudget;
   serverTick: number; observedAt: number; health: number; maxHealth: number; food: number; saturation: number; selectedSlot: number;
   inventory?: ItemStack[]; foods: FoodCandidate[];
   dangers?: SurvivalDangers; threats?: { radius: number; complete: boolean; nearby: Threat[]; serverTick: number };
@@ -54,6 +57,7 @@ export interface Observation {
   inventory: ItemStack[]; entities: Entity[]; chat: ChatLine[]; chatCursor: number;
   container: Container | null; block?: BlockObservation; source: 'client-observed' | 'server-observed';
   instanceId?: string; controlGeneration?: number; selectedSlot?: number;
+  operationBudget?: OperationBudget;
   groundItems?: GroundItem[]; groundItemsTruncated?: boolean; pickupCursor?: number; pickupOldestCursor?: number; pickupReceipts?: PickupReceipt[];
 }
 export interface BodyHello {
@@ -87,6 +91,7 @@ export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
 export interface Operation {
   operationId: string; sessionId: string; name: string; status: OperationStatus; summary: string; result?: unknown; controlGeneration?: number;
+  operationBudget?: OperationBudget;
 }
 export interface Body {
   readonly hello: BodyHello;

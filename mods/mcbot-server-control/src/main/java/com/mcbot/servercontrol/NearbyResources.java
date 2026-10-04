@@ -17,7 +17,7 @@ final class NearbyResources {
             throw error("INVALID_ARGUMENT","blockIds requires one to eight explicit catalog IDs");
         Set<String> ids=new LinkedHashSet<>();
         for(JsonElement entry:args.getAsJsonArray("blockIds")) {
-            if(!entry.isJsonPrimitive()||!entry.getAsJsonPrimitive().isString()||!ResourceCatalog.allowed(entry.getAsString())) throw error("UNSUPPORTED","Resource ID is not in the stone/log catalog");
+            if(!entry.isJsonPrimitive()||!entry.getAsJsonPrimitive().isString()||!ResourceCatalog.allowed(entry.getAsString())) throw error("UNSUPPORTED","Resource ID is not in the finite stone/log/coal/iron/copper catalog");
             ids.add(entry.getAsString());
         }
         int radius=integer(args,"radius",4,1,6),limit=integer(args,"maxResults",32,1,64);
@@ -52,9 +52,10 @@ final class NearbyResources {
         for(Candidate candidate:found.subList(0,Math.min(found.size(),options.maxResults()))) {
             JsonObject properties=new JsonObject();candidate.state().getValues().forEach((property,value)->properties.addProperty(property.getName(),value.toString()));
             var tools=ToolAssessment.evaluateSummary(inventory,candidate.state(),candidate.state().getDestroySpeed(body.serverLevel(),candidate.position()));
-            JsonArray suitable=new JsonArray();for(var tool:tools)if(tool.slot()<9&&Boolean.TRUE.equals(tool.eligible()))suitable.add(tool.slot());
-            var recommended=ToolAssessment.recommend(tools,body.getInventory().selected,ToolAssessment.Policy.defaults(),true);
-            var inventoryRecommended=ToolAssessment.recommend(tools,body.getInventory().selected,ToolAssessment.Policy.defaults(),false);
+            var policy=ResourceCatalog.discoveryPolicy(BuiltInRegistries.BLOCK.getKey(candidate.state().getBlock()).toString());
+            JsonArray suitable=new JsonArray();for(var tool:tools)if(tool.slot()<9&&ToolAssessment.recommendationReason(tool,policy)==null)suitable.add(tool.slot());
+            var recommended=ToolAssessment.recommend(tools,body.getInventory().selected,policy,true);
+            var inventoryRecommended=ToolAssessment.recommend(tools,body.getInventory().selected,policy,false);
             JsonObject value=obj("position",position(Vec3.atLowerCornerOf(candidate.position())),"id",BuiltInRegistries.BLOCK.getKey(candidate.state().getBlock()).toString(),"properties",properties,
                 "targetToken",targets.issue(body,candidate.position(),candidate.state()),"distance",candidate.distance(),"visible",true,"requiresCorrectTool",candidate.state().requiresCorrectToolForDrops(),"suitableToolSlots",suitable);
             if(recommended!=null)value.addProperty("recommendedToolSlot",recommended.slot());

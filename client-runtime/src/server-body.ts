@@ -6,6 +6,8 @@ import { BodyError, type Body, type BodyHello, type Position, type Observation, 
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const operationBudget = z.object({ used: generation, remaining: generation, limit: generation.refine(value => value > 0), exhausted: z.boolean() })
+  .refine(value => value.used <= value.limit && value.remaining === value.limit - value.used && value.exhausted === (value.remaining === 0), 'Inconsistent operation budget');
 const components = z.record(z.unknown());
 const maxStackSize = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional();
 const position = z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() });
@@ -15,7 +17,7 @@ const stack = z.object(observedStackShape).refine(validComponents, 'Incomplete c
 const itemValue = z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize });
 const stateIdentity = { instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation };
 const threatSchema = z.object({ entityId: z.string().uuid(), type: identifier.nullable(), classification: z.enum(['hostile', 'attacking_self', 'neutral', 'friendly', 'player', 'unknown']), hostilitySource: z.enum(['vanilla_hostile_allowlist', 'native_target_self', 'native_recent_attacker', 'none', 'unknown']), targetingSelf: z.boolean().nullable(), distance: z.number().finite().nonnegative().nullable(), lineOfSight: z.boolean().nullable(), alive: z.boolean().nullable(), explosionPreparing: z.boolean().nullable(), defenseEligible: z.boolean(), defenseReason: z.string().nullable(), factsAvailable: z.boolean().optional() }).refine(threat => threat.factsAvailable !== false || threat.classification === 'unknown' && threat.hostilitySource === 'unknown' && threat.defenseEligible === false, 'Unavailable threat facts cannot declare an eligible hostile');
-const survivalSchema = z.object({ ...stateIdentity, serverTick: generation, observedAt: z.number().finite(), health: z.number().finite(), maxHealth: z.number().positive(), food: z.number().finite(), saturation: z.number().finite(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack).optional(),
+const survivalSchema = z.object({ ...stateIdentity, operationBudget: operationBudget.optional(), serverTick: generation, observedAt: z.number().finite(), health: z.number().finite(), maxHealth: z.number().positive(), food: z.number().finite(), saturation: z.number().finite(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack).optional(),
   dangers: z.object({ onFire: z.boolean(), inLava: z.boolean(), inWater: z.boolean(), air: z.number().finite(), maxAir: z.number().finite(), fallDistance: z.number().finite().nonnegative(), lowHealth: z.boolean(), retreatRecommended: z.boolean() }).optional(),
   threats: z.object({ radius: z.number().finite().positive().max(32), complete: z.boolean(), nearby: z.array(threatSchema).max(64), serverTick: generation }).optional(),
   foods: z.array(z.object({ slot: z.number().int().min(0).max(35), id: identifier, count: z.number().int().positive(), nutrition: z.number().nonnegative(), saturationModifier: z.number().nonnegative(), eatDurationTicks: z.number().int().nonnegative(), safe: z.boolean(), reason: z.string().optional(), metadataIncomplete: z.boolean().optional() })).max(36) });
@@ -29,6 +31,7 @@ const helloSchema = z.object({
 });
 const observationSchema = z.object({
   instanceId: identifier, controlGeneration: generation,
+  operationBudget: operationBudget.optional(),
   sessionId: identifier, worldId: identifier, connected: z.boolean(), username: identifier, dimension: z.string(),
   health: z.number(), food: z.number(), position, yaw: z.number(), pitch: z.number(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack),
   entities: z.array(z.object({ id: z.string(), type: z.string(), name: z.string(), position })),
@@ -41,6 +44,7 @@ const observationSchema = z.object({
 });
 const operationSchema = z.object({
   operationId: identifier, sessionId: identifier, name: z.string(), controlGeneration: generation,
+  operationBudget: operationBudget.optional(),
   status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'unknown']), summary: z.string(), result: z.unknown().optional(),
 });
 export interface ServerConnection { protocol: 2; backend: 'server'; endpoint: string; token: string; worldId: string; username: string }
@@ -74,7 +78,7 @@ interface ServerOptions {
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
 const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity'];
-const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION']);
+const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
   hello!: BodyHello;
@@ -216,6 +220,7 @@ export class ServerBody implements Body {
     if (!parsed.ok) {
       // Never relay arbitrary server error text that could accidentally include credentials.
       const code = /^[A-Z_]{1,64}$/.test(parsed.error.code) ? parsed.error.code : 'INVALID_RESPONSE';
+      if (code === 'OPERATION_LIMIT') throw new BodyError(code, '当前租约的动作额度已耗尽；仍可读取状态和叫停。需明确释放并重新接管，不能自动续做旧任务。');
       throw new BodyError(code, `服务端拒绝请求（${code}）`);
     }
     if (!response.ok) throw new BodyError('HTTP_ERROR', `服务端控制请求失败（HTTP ${response.status}）`);

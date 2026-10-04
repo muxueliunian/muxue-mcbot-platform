@@ -28,6 +28,7 @@ export function summarizeObservation(state: Observation) {
   return {
     sessionId: state.sessionId, worldId: state.worldId, instanceId: state.instanceId,
     controlGeneration: state.controlGeneration, source: state.source, connected: state.connected,
+    ...(state.operationBudget ? { operationBudget: { ...state.operationBudget } } : {}),
     username: state.username, dimension: state.dimension, health: state.health, food: state.food,
     position: state.position, yaw: state.yaw, pitch: state.pitch, selectedSlot: state.selectedSlot,
     inventory: state.inventory.filter(stack => stack.count > 0).map(stackSummary),
@@ -56,6 +57,7 @@ export function summarizeOperation(operation: Operation) {
     if (Array.isArray(result.items) && result.items.length > 64) compact.itemsTruncated = true;
   }
   return { operationId: operation.operationId, sessionId: operation.sessionId, controlGeneration: operation.controlGeneration,
+    ...(operation.operationBudget ? { operationBudget: { ...operation.operationBudget } } : {}),
     name: operation.name, status: operation.status, summary: operation.summary,
     ...(result ? { result: compact, detailsAvailable: true } : {}) };
 }

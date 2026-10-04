@@ -14,6 +14,19 @@ type Progress = { stage: string; item: string; requestedCount?: number; requeste
 type Active = { id: string; taskToken: string; borrowed?: BorrowedPickup; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
+// Fixed vanilla ordinary outputs authorize targets, never predict actual loot/yield or stack limits.
+const oreDrops: Readonly<Record<string, string>> = {
+  'minecraft:coal_ore': 'minecraft:coal', 'minecraft:deepslate_coal_ore': 'minecraft:coal',
+  'minecraft:iron_ore': 'minecraft:raw_iron', 'minecraft:deepslate_iron_ore': 'minecraft:raw_iron',
+  'minecraft:copper_ore': 'minecraft:raw_copper', 'minecraft:deepslate_copper_ore': 'minecraft:raw_copper',
+};
+function dropPreference(block: string, item: string): 'any' | 'silk_touch' | 'no_silk_touch' | undefined {
+  if (Object.hasOwn(oreDrops, block)) return oreDrops[block] === item ? 'no_silk_touch' : undefined;
+  if (block === 'minecraft:stone') return item === 'minecraft:cobblestone' ? 'no_silk_touch' : item === block ? 'silk_touch' : undefined;
+  if (block === 'minecraft:deepslate') return item === 'minecraft:cobbled_deepslate' ? 'no_silk_touch' : item === block ? 'silk_touch' : undefined;
+  if (['minecraft:granite', 'minecraft:diorite', 'minecraft:andesite', 'minecraft:oak_log', 'minecraft:spruce_log', 'minecraft:birch_log', 'minecraft:jungle_log', 'minecraft:acacia_log', 'minecraft:dark_oak_log', 'minecraft:mangrove_log', 'minecraft:cherry_log'].includes(block) && block === item) return 'any';
+  return undefined;
+}
 
 /** Finite goals on a frozen candidate set; native pickup receipts, never mined blocks or net inventory, determine quantity. */
 export class GatherTasks {
@@ -43,7 +56,7 @@ export class GatherTasks {
     this.references.set(resourceRef, { context: contextOf(scan), expires: this.now() + 30000, scan, radius: options.radius });
     if (this.references.size > 32) this.references.delete(this.references.keys().next().value!);
     return { resourceRef, center: scan.center, candidates: scan.candidates.map(({ targetToken: _private, properties: _properties, ...item }) => item), truncated: scan.truncated,
-      limitation: '只限本次已加载、可见的原版石料／原木候选和固定区域；不能识别人工建筑或天然树，也不支持任意模组矿石。引用30秒内提交；不补扫扩展候选，不挖路或搭桥。' };
+      limitation: '只限本次已加载、可见的原版石料／原木及煤、铁、铜和深层矿石候选和固定区域；矿石只支持煤／粗铁／粗铜普通产物，精准矿石块未支持。不能识别人工建筑或天然树，不支持任意模组矿石；数据包实际掉落仍以原生拾取回执为准。引用30秒内提交；不补扫扩展候选，不挖路或搭桥。' };
   }
   private check(task: Active): void {
     task.borrowed?.check();
@@ -144,10 +157,14 @@ export class GatherTasks {
       }
       let candidates: NearbyResources['candidates'] = [];
       if (name === 'gather-resources') {
+        if (Object.hasOwn(oreDrops, request.item)) throw new BodyError('UNSUPPORTED', '首轮矿石采集只支持煤／粗铁／粗铜普通产物，精准矿石块目标尚未支持');
         const ref = this.references.get(request.resourceRef ?? '');
         if (!ref || ref.expires <= this.now()) throw new BodyError('STALE_REFERENCE', '资源引用过期，请重新观察授权区域');
         if (!isDeepStrictEqual(ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
         task.center = ref.scan.center; task.radius = ref.radius; candidates = structuredClone(ref.scan.candidates);
+        const compatible = candidates.filter(candidate => dropPreference(candidate.id, request.item) !== undefined);
+        if (candidates.length > 0 && compatible.length === 0) throw new BodyError('UNSUPPORTED', '冻结资源候选与所需物品的已知掉落不匹配，未开挖');
+        candidates = compatible;
       }
       const currentTask = task;
       for (const item of state.groundItems) if (item.stack.id === request.item && (!borrowed || item.entityId === borrowed.entityId) && this.inside(currentTask, item.position)) currentTask.allowed.add(item.entityId);
@@ -261,6 +278,7 @@ export class GatherTasks {
       for (const candidate of candidates) {
         if (this.done(task)) break;
         let state = await this.observe(task);
+        if (this.done(task)) break;
         this.capacity(task, state);
         const policy = this.survivalPolicy?.();
         const borrowed = { taskToken: task.taskToken, context: task.context, check: () => {
@@ -277,13 +295,17 @@ export class GatherTasks {
           }
         }
         let slot = candidate.recommendedToolSlot;
+        const preference = dropPreference(candidate.id, task.request.item)!;
         if (this.survival && this.body.assessTool) {
           const assessed = await this.body.assessTool({ ...candidate.position, expectedBlock: candidate.id, policy: policy?.toolPolicy, minRemainingDurability: policy?.minRemainingDurability,
-            dropPreference: ['minecraft:stone', 'minecraft:deepslate'].includes(candidate.id) && task.request.item !== candidate.id ? 'no_silk_touch' : 'any' });
+            dropPreference: preference });
           this.check(task);
           if (!isDeepStrictEqual(contextOf(assessed), task.context)) throw new BodyError('WORLD_CHANGED', '工具评估不属于采集授权代次');
           const choice = assessed.candidates.find(tool => tool.slot === assessed.recommendedSlot);
           if (!choice || choice.eligible !== true || choice.componentsComplete === false || choice.components === undefined) throw new BodyError('WRONG_TOOL', '没有已核验且满足掉落／耐久策略的工具');
+          if (Object.hasOwn(oreDrops, candidate.id) && choice.dropEffectsKnown !== true) throw new BodyError('UNKNOWN', '矿石工具的掉落效果尚未核验，未开挖或自动重试');
+          if (Object.hasOwn(oreDrops, candidate.id) && (!Number.isInteger(choice.silkTouch) || choice.silkTouch! < 0)) throw new BodyError('UNKNOWN', '矿石工具缺少明确精准采集评估，未开挖');
+          if (preference === 'no_silk_touch' && choice.silkTouch! > 0 || preference === 'silk_touch' && choice.silkTouch === 0) throw new BodyError('WRONG_TOOL', '推荐工具与目标掉落冲突，未开挖');
           task.progress.stage = 'preparing-tool';
           if (choice.count === 0 && choice.id === 'minecraft:air' && choice.slot <= 8) {
             await this.step(task, 'select-slot', { slot: choice.slot, expectedItem: choice.id, expectedCount: 0, expectedComponents: choice.components });
@@ -293,7 +315,10 @@ export class GatherTasks {
             if (prepared.status !== 'succeeded') throw new BodyError(prepared.status === 'unknown' ? 'UNKNOWN' : 'WRONG_TOOL', prepared.summary);
           }
           state = await this.observe(task); slot = state.selectedSlot;
-        } else if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
+        } else {
+          if (Object.hasOwn(oreDrops, candidate.id)) throw new BodyError('UNSUPPORTED', '矿石采集需要完整工具评估与准备能力，未仅依据基础快捷栏资格开挖');
+          if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
+        }
         if (slot === undefined) throw new BodyError('WRONG_TOOL', '准备工具后没有权威选槽状态');
         const tool = state.inventory.find(item => item.slot === slot);
         if (!tool || tool.components === undefined) throw new BodyError('WRONG_TOOL', '缺少完整原生工具快照，未挖掘');

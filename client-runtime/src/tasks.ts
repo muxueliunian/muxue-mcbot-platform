@@ -7,15 +7,18 @@ type Target = { context: Context; expires: number; block: NearbyBlocks['candidat
 type Request = { containerRef?: string; item?: string; count?: number; stacks?: number; player?: string; say?: string };
 type TaskName = 'container-list' | 'container-withdraw' | 'give-item' | 'fetch-and-give';
 type StopHandle = { epoch: number; taskId?: string };
+type Limit = { deadline: number; expired: Promise<never>; timer: ReturnType<typeof setTimeout> };
+type TaskOwner = { id: string; epoch: number; cancelled: boolean; limit: Limit };
 type Progress = { requestedCount: number; maxStackSize?: number; withdrawnCount: number; heldCount?: number; droppedCount: number; carriedCount?: number; lastConfirmedHeldCount?: number; lastConfirmedCarriedCount?: number; counts?: string; pickup: 'unconfirmed'; player?: string; item?: string; items?: unknown[]; stage: string; code?: string; cleanup?: string; containerProtection?: 'instance-bound' | 'state-only' };
 /** A bounded task runner. Authoritative snapshots and target tokens stay inside the task boundary. */
 export class ContainerTasks {
   private readonly targets = new Map<string, Target>();
   private readonly operations = new Map<string, Operation>();
   private epoch = 0;
-  private active?: { id: string; cancelled: boolean };
+  private active?: TaskOwner;
   private stopping?: StopHandle;
-  constructor(private readonly body: Body, private readonly now = Date.now, private readonly onResult?: (operation: Operation) => void) {}
+  constructor(private readonly body: Body, private readonly now = Date.now, private readonly onResult?: (operation: Operation) => void,
+    private readonly limits: { timeoutMs?: number; stopTimeoutMs?: number } = {}) {}
   assertIdle(): void { if (this.active || this.stopping) throw new BodyError('BUSY', '容器任务运行或停止尚未确认；请等待或叫停'); }
   cancel(): StopHandle {
     this.epoch++; this.targets.clear();
@@ -60,31 +63,61 @@ export class ContainerTasks {
     return this.body.act('approach-container', { targetToken: target.block.targetToken, timeoutMs });
   }
   private context(state: Context): Context { return { instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration }; }
-  private check(epoch: number): void { if (epoch !== this.epoch) throw new BodyError('CANCELLED', '任务已叫停，后续步骤未执行'); }
+  private limit(timeoutMs: number, message: string): Limit {
+    const deadline = this.now() + timeoutMs;
+    let timer!: ReturnType<typeof setTimeout>;
+    const expired = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new BodyError('TASK_TIMEOUT', message)), timeoutMs); });
+    // The timer can fire while stop is pending, without an outstanding request race.
+    void expired.catch(() => {});
+    return { deadline, expired, timer };
+  }
+  private check(epoch: number): void {
+    if (epoch !== this.epoch) throw new BodyError('CANCELLED', '任务已叫停，后续步骤未执行');
+    if (this.active?.epoch === epoch && this.now() >= this.active.limit.deadline) throw new BodyError('TASK_TIMEOUT', '容器任务达到总等待期限，后续步骤未执行');
+  }
+  private async wait<T>(epoch: number, request: () => Promise<T>, actionLimit?: Limit): Promise<T> {
+    this.check(epoch);
+    if (actionLimit && this.now() >= actionLimit.deadline) throw new BodyError('TASK_TIMEOUT', '动作超过任务等待时限，后续步骤未执行');
+    const taskLimit = this.active?.epoch === epoch ? this.active.limit : undefined;
+    // Late responses are consumed by the race, but never enter task progress or start another action.
+    return Promise.race([request(), ...(taskLimit ? [taskLimit.expired] : []), ...(actionLimit ? [actionLimit.expired] : [])]);
+  }
+  private async timeout(id: string, epoch: number): Promise<void> {
+    // An external stop may have retired this owner and started another task already.
+    if (epoch !== this.epoch || this.active?.id !== id) throw new BodyError('CANCELLED', '任务已由外部停止，后续步骤未执行');
+    const stopping = this.cancel();
+    const limit = this.limit(this.limits.stopTimeoutMs ?? 5000, '停止确认超过等待期限');
+    try {
+      const result = await Promise.race([this.body.stop(), limit.expired]);
+      if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '身体停止未确认');
+      this.stopped(stopping);
+    } catch {
+      throw new BodyError('STOP_UNCONFIRMED', '任务超时后的身体停止未确认；保留写锁，请明确叫停后再开始');
+    } finally { clearTimeout(limit.timer); }
+  }
   private async observe(epoch: number, context?: Context): Promise<Observation> {
-    this.check(epoch); const state = await this.body.observe(); this.check(epoch);
+    const state = await this.wait(epoch, () => this.body.observe()); this.check(epoch);
     if (context && !isDeepStrictEqual(this.context(state), context)) throw new BodyError('WORLD_CHANGED', '任务身体／世界／维度／控制代次已改变');
     return state;
   }
   private async step<N extends ActionName>(epoch: number, token: string, context: Context, name: N, args: ActionArguments[N]): Promise<Operation> {
     await this.observe(epoch, context); this.check(epoch);
-    const started = this.now();
-    let op = await this.body.act(name, args, token);
-    const deadline = started + (('timeoutMs' in args ? args.timeoutMs : undefined) ?? 15000) + 1000;
-    while (op.status === 'running') {
-      this.check(epoch);
-      if (this.now() >= deadline) {
-        const stopping = this.cancel();
-        const result = await this.body.stop();
-        if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '任务超时后的身体停止未确认；不能继续新任务');
-        this.stopped(stopping);
-        throw new BodyError('TASK_TIMEOUT', '动作超过任务等待时限，已请求停止；未启动后续步骤，不要重复执行');
+    const limit = this.limit((('timeoutMs' in args ? args.timeoutMs : undefined) ?? 15000) + 1000, '动作超过任务等待时限，后续步骤未执行');
+    try {
+      let op = await this.wait(epoch, () => this.body.act(name, args, token), limit);
+      while (op.status === 'running') {
+        await this.wait(epoch, () => new Promise<void>(resolve => setTimeout(resolve, 50)), limit);
+        op = await this.wait(epoch, () => this.body.operation(op.operationId), limit);
       }
-      await new Promise(resolve => setTimeout(resolve, 50)); this.check(epoch);
-      op = await this.body.operation(op.operationId);
-    }
-    // Known partial drop evidence remains useful even when cancelled or failed.
-    this.onResult?.(op); return op;
+      if (epoch === this.epoch) {
+        this.check(epoch);
+        if (this.now() >= limit.deadline) throw new BodyError('TASK_TIMEOUT', '动作回执超过等待期限，后续步骤未执行');
+      }
+      // Known partial drop evidence remains useful even when externally cancelled or failed.
+      // Never deliver an old task's receipt into a newly acquired owner.
+      if (!this.active || this.active.id === token) this.onResult?.(op);
+      return op;
+    } finally { clearTimeout(limit.timer); }
   }
   private success(op: Operation, epoch: number): void {
     if (op.status === 'unknown') throw new BodyError('UNKNOWN', `${op.name}: ${op.summary}`);
@@ -114,7 +147,7 @@ export class ContainerTasks {
     if (!this.body.nearbyBlocks) throw new BodyError('UNSUPPORTED', '缺少接收者权威视线检查');
     this.check(epoch);
     // nearby-blocks validates the explicit center player's dimension and line of sight; entity presence alone is insufficient.
-    const check = await this.body.nearbyBlocks({ centerPlayer: player, radius: 1, maxResults: 1 }); this.check(epoch);
+    const check = await this.wait(epoch, () => this.body.nearbyBlocks!({ centerPlayer: player, radius: 1, maxResults: 1 })); this.check(epoch);
     if (!isDeepStrictEqual(this.context(check), context) || check.center.player !== player) throw new BodyError('WORLD_CHANGED', '接收者观察不属于任务会话');
     const point = check.center.position;
     if (Math.hypot(point.x - state.position.x, point.y - state.position.y, point.z - state.position.z) > 2) throw new BodyError('OUT_OF_REACH', '接收者须在2格内；首版不自动移动或绕障');
@@ -140,7 +173,9 @@ export class ContainerTasks {
     if (!this.body.acquireTask || !this.body.releaseTask) throw new BodyError('UNSUPPORTED', '容器任务需要共享身体写锁');
     if (this.body.pendingOperations().length) throw new BodyError('BUSY', '已有身体动作运行；请先完成或停止');
     const id = randomUUID(), epoch = this.epoch;
-    this.body.acquireTask(id); this.active = { id, cancelled: false };
+    this.body.acquireTask(id);
+    const owner: TaskOwner = { id, epoch, cancelled: false, limit: this.limit(this.limits.timeoutMs ?? 90000, '容器任务达到总等待期限，后续步骤未执行') };
+    this.active = owner;
     let context: Context | undefined;
     let ownedMenu: string | undefined;
     const progress: Progress = { requestedCount: request.count ?? 0, withdrawnCount: 0, heldCount: 0, droppedCount: 0, pickup: 'unconfirmed', player: request.player, item: request.item, stage: 'starting' };
@@ -198,7 +233,18 @@ export class ContainerTasks {
           menu = await this.click(epoch, id, context, menu, origin, 0);
           progress.carriedCount = menu.carried.count;
           if (!isDeepStrictEqual(menu.carried, { id: origin.id, count: origin.count, components: origin.components, ...(origin.maxStackSize !== undefined ? { maxStackSize: origin.maxStackSize } : {}) })) throw new BodyError('UNKNOWN', '取栈回执与授权物品或有效堆叠上限不一致；未继续');
-          for (let transferred = 0; transferred < count; transferred++) {
+          const emptied = menu.slots.find(stack => stack.slot === origin.slot);
+          const emptyDestination = menu.slots.find(stack => stack.slot === destination.slot);
+          if (!emptied || emptied.source !== 'container' || emptied.active === false || !this.empty(emptied) || !isDeepStrictEqual(emptyDestination, destination)) throw new BodyError('UNKNOWN', '取栈回执的来源或空目标槽已改变；未继续');
+          if (count === origin.count) {
+            menu = await this.click(epoch, id, context, menu, emptyDestination!, 0);
+            progress.carriedCount = menu.carried.count;
+            const actual = menu.slots.find(stack => stack.slot === destination.slot);
+            const sourceAfter = menu.slots.find(stack => stack.slot === origin.slot);
+            if (!this.empty(menu.carried) || !actual || actual.source !== 'player' || actual.active === false || actual.playerSlot !== acquiredSlot || actual.id !== origin.id || actual.count !== count
+              || !isDeepStrictEqual(actual.components, origin.components) || actual.maxStackSize !== origin.maxStackSize || !isDeepStrictEqual(sourceAfter, emptied)) throw new BodyError('UNKNOWN', '整栈放入后的实际数量、组件、来源或鼠标持物异常；未继续');
+            progress.withdrawnCount = count; progress.heldCount = count;
+          } else for (let transferred = 0; transferred < count; transferred++) {
             const dest = menu.slots.find(stack => stack.slot === destination.slot)!;
             menu = await this.click(epoch, id, context, menu, dest, 1);
             progress.carriedCount = menu.carried.count;
@@ -271,25 +317,34 @@ export class ContainerTasks {
       progress.stage = 'done';
       return this.record(id, context, name, 'succeeded', progress.droppedCount ? '物品已丢出，指定玩家拾取尚未确认' : name === 'container-list' ? '容器内容已读取并关箱' : '物品已取出并持有', progress);
     } catch (error) {
-      const code = error instanceof BodyError ? error.code : 'UNKNOWN'; progress.code = code;
-      const status = code === 'CANCELLED' ? 'cancelled' : ['UNKNOWN', 'WORLD_CHANGED', 'TRANSPORT_LOST', 'TASK_TIMEOUT', 'LEASE_LOST', 'STALE_CONTROL', 'LEASE_EXPIRED', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED'].includes(code) ? 'unknown' : 'failed';
+      let failure = error;
+      const codeOf = (value: unknown) => value instanceof BodyError ? value.code : 'UNKNOWN';
+      const statusOf = (code: string): Operation['status'] => code === 'CANCELLED' ? 'cancelled' : ['UNKNOWN', 'WORLD_CHANGED', 'TRANSPORT_LOST', 'TASK_TIMEOUT', 'LEASE_LOST', 'STALE_CONTROL', 'LEASE_EXPIRED', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED'].includes(code) ? 'unknown' : 'failed';
+      // A clear precondition refusal may close our own empty-cursor menu. Never clean up after stop or unknown effects.
+      if (statusOf(codeOf(failure)) === 'failed' && epoch === this.epoch && ownedMenu && context) {
+        try {
+          const current = (await this.observe(epoch, context)).container;
+          if (current?.id === ownedMenu && this.empty(current.carried)) {
+            const closing = await this.step(epoch, id, context, 'close-container', { containerId: current.id, expectedRevision: current.revision });
+            this.success(closing, epoch); progress.cleanup = 'closed';
+          } else progress.cleanup = 'carried_or_changed_menu_left_for_inspection';
+        } catch (cleanupError) {
+          progress.cleanup = 'unconfirmed';
+          if (statusOf(codeOf(cleanupError)) !== 'failed') failure = cleanupError;
+        }
+      }
+      if (codeOf(failure) === 'TASK_TIMEOUT') {
+        try { await this.timeout(id, epoch); } catch (stopError) { failure = stopError; }
+      }
+      const code = codeOf(failure), status = statusOf(code); progress.code = code;
       if (status === 'cancelled' || status === 'unknown') {
         progress.lastConfirmedHeldCount = progress.heldCount; progress.lastConfirmedCarriedCount = progress.carriedCount;
         delete progress.heldCount; delete progress.carriedCount;
         progress.counts = '已取出／丢出数量为最后确认的下限；叫停或不明回执后的当前背包与鼠标持物未确认。';
       }
-      // A clear precondition refusal may close our own empty-cursor menu. Never clean up after stop or unknown effects.
-      if (status === 'failed' && epoch === this.epoch && ownedMenu && context) {
-        try {
-          const current = (await this.observe(epoch, context)).container;
-          if (current?.id === ownedMenu && this.empty(current.carried)) {
-            const closing = await this.step(epoch, id, context, 'close-container', { containerId: current.id, expectedRevision: current.revision });
-            progress.cleanup = closing.status === 'succeeded' ? 'closed' : 'unconfirmed';
-          } else progress.cleanup = 'carried_or_changed_menu_left_for_inspection';
-        } catch { progress.cleanup = 'unconfirmed'; }
-      }
-      return this.record(id, context ?? { sessionId: this.body.hello.sessionId ?? '', worldId: this.body.hello.worldId ?? '', dimension: '' }, name, status, (error as Error).message, progress);
+      return this.record(id, context ?? { sessionId: this.body.hello.sessionId ?? '', worldId: this.body.hello.worldId ?? '', dimension: '' }, name, status, (failure as Error).message, progress);
     } finally {
+      clearTimeout(owner.limit.timer);
       // cancel fences old steps immediately; even a settled old run retains its lock until stopped(handle).
       // A late finally from a confirmed stop must never release or clear the newly started task.
       if (this.active?.id === id && !this.active.cancelled) { this.body.releaseTask(id); this.active = undefined; }

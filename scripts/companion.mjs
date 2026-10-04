@@ -145,15 +145,17 @@ export function isAddressedStop(e, { name, nickname } = {}) {
   } else {
     if (typeof e.text !== 'string') return false;
     body = e.text;
-    // 有username时只剥离与其完全一致的前缀；旧EventJournal没有username，
-    // 仅在有session/seq信封时接受它生成的「Java用户名: 正文」格式，并且只剥一次。
+    // 有username时只剥离与其完全一致的前缀；旧日志没有username，
+    // 仅在有session/seq信封时接受生产者的显示格式，并且只剥一次。
     // 无信封的text视为正文，避免把「其他Bot: stop」误当无称呼的stop。
     const prefix = /^([^:：\r\n]+)[:：]([ \t]*)/.exec(body);
     const knownSpeaker = typeof e.username === 'string' && e.username.length > 0;
     const legacyJournal = !knownSpeaker && typeof e.session === 'string' && e.session.length > 0
       && Number.isSafeInteger(e.seq) && e.seq > 0;
+    const journalPrefix = prefix && (/^[A-Za-z0-9_]{1,16}$/.test(prefix[1])
+      || (e.type === 'whisper' && /^[A-Za-z0-9_]{1,16} 悄悄对你说$/.test(prefix[1])));
     if (prefix && ((knownSpeaker && prefix[1] === e.username)
-      || (legacyJournal && /^[A-Za-z0-9_]{1,16}$/.test(prefix[1]) && prefix[2].length > 0))) {
+      || (legacyJournal && journalPrefix && prefix[2].length > 0))) {
       body = body.slice(prefix[0].length);
     }
   }

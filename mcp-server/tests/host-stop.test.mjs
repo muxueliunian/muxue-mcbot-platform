@@ -5,10 +5,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isAddressedStop, runtimeFiles } from '../../scripts/companion.mjs';
 import { createServerBodyControl } from '../../scripts/server-body-control.mjs';
+import { EventStore } from '../dist/event-store.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const CLAUDE = { name: 'Claude', nickname: '小克' };
@@ -78,6 +79,160 @@ test('Codex称呼大小写、英文单词边界、自定义昵称字面量及非
     assert.equal(isAddressedStop({ type, message: '小克，停下' }, CLAUDE), false);
   }
 });
+
+// game-events.ts 的 whisper 经 EventStore 落盘后只有 session/seq/type/text，
+// 不能用结构化 message 或普通 chat 的「tester: 正文」代替这条生产格式。
+const mineflayerWhisper = (message, overrides = {}) => ({
+  session: 'mineflayer-session', seq: 1, type: 'whisper',
+  text: `tester 悄悄对你说: ${message}`, ...overrides,
+});
+for (const [agent, identity, commands, otherBot] of [
+  ['Claude', CLAUDE, ['停下', 'stop!', '小克，停下', 'Claude STOP!'], 'Codex stop!'],
+  ['Codex', CODEX, ['停下', 'stop!', 'Codex stop!', 'CodexBot，停下'], '小克，停下'],
+]) {
+  for (const message of commands) {
+    test(`Mineflayer私聊/${agent} 真实信封明确叫停 ${message}`, () => {
+      assert.equal(isAddressedStop(mineflayerWhisper(message), identity), true);
+    });
+  }
+  for (const message of ['别停', '不停', '停下？', 'stop?', '“停下”', '"stop"',
+    '刚才他说“停下”', '停止以后还能继续吗？', 'Gemini: stop!', otherBot,
+    `${identity.nickname}，别停`, `${identity.nickname} stop?`, `${identity.nickname}：“停下”`,
+    'tester: stop!', '另一条说明：停下']) {
+    test(`Mineflayer私聊/${agent} 真实信封不凭关键词叫停 ${message}`, () => {
+      assert.equal(isAddressedStop(mineflayerWhisper(message), identity), false);
+    });
+  }
+}
+
+test('Mineflayer私聊前缀严格限于有效journal信封、whisper类型和真实显示格式', () => {
+  for (const overrides of [
+    { session: undefined }, { session: '' }, { session: 1 },
+    { seq: undefined }, { seq: 0 }, { seq: -1 }, { seq: 1.5 }, { seq: '1' },
+    { seq: Number.MAX_SAFE_INTEGER + 1 }, { seq: NaN }, { seq: Infinity },
+    { type: 'chat' }, { type: 'system_chat' }, { type: 'task' }, { type: 'hurt' },
+    { message: '' }, { message: null }, { message: 'Gemini: stop!' },
+    { text: 'tester 悄悄对你说：停下' }, { text: 'tester 悄悄对你说:停下' },
+    { text: 'tester 悄悄对你说 : 停下' }, { text: 'tester 私聊: 停下' },
+    { text: '玩家 悄悄对你说: 停下' }, { text: 'SeventeenChars1234 悄悄对你说: 停下' },
+    { text: 'tester-name 悄悄对你说: 停下' }, { text: '前缀 tester 悄悄对你说: 停下' },
+  ]) {
+    assert.equal(isAddressedStop(mineflayerWhisper('停下', overrides), CODEX), false,
+      `不能扩大私聊前缀边界：${JSON.stringify(overrides)}`);
+  }
+  for (const username of ['A', 'Alice_123', 'Abcdefghijklmnop']) {
+    assert.equal(isAddressedStop(mineflayerWhisper('Codex stop!', {
+      text: `${username} 悄悄对你说: Codex stop!`,
+    }), CODEX), true, username);
+  }
+  assert.equal(isAddressedStop(mineflayerWhisper('无关显示文本', { message: 'Codex stop!' }), CODEX), true,
+    '结构化正文仍优先，不受显示格式限制');
+});
+
+for (const stopMessage of ['停下', 'Codex stop!']) {
+  test(`宿主/Codex/Mineflayer真实私聊 ${stopMessage}：忙时独立停止，旧任务不重放，首新任务仅一次`, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-whisper-stop-'));
+    const runtime = path.join(dir, 'runtime'), agentLog = path.join(dir, 'agent.jsonl');
+    const controlFile = path.join(dir, 'agent-control.jsonl'), config = path.join(dir, 'mcp.json');
+    fs.mkdirSync(runtime);
+    const events = new EventStore(runtime, CODEX.name);
+    const F = runtimeFiles(runtime, CODEX.name);
+    fs.writeFileSync(config, JSON.stringify({ mcpServers: { minecraft: {
+      command: process.execPath, args: ['never-executed-mcp-fixture.mjs', '--username', CODEX.name],
+    } } }));
+    const records = () => {
+      try { return fs.readFileSync(agentLog, 'utf8').split('\n').filter(Boolean).map(JSON.parse); }
+      catch { return []; }
+    };
+    const turns = () => records().filter(r => r.kind === 'turn');
+    const requests = method => records().filter(r => r.kind === 'request' && r.method === method);
+    const stops = () => requests('mcpServer/tool/call').filter(r => r.params.tool === 'stop-action');
+    const confirmations = () => requests('mcpServer/tool/call').filter(r => r.params.tool === 'send-chat');
+    const whisper = message => events.add('whisper', `tester 悄悄对你说: ${message}`);
+    const complete = turn => fs.appendFileSync(controlFile, JSON.stringify({
+      action: 'complete', threadId: turn.threadId, turnId: turn.turnId, status: 'interrupted',
+    }) + '\n');
+    let output = '';
+    const driver = spawn(process.execPath, [path.join(ROOT, 'scripts/companion.mjs'), '--agent', 'codex',
+      '--body', 'mineflayer', '--name', CODEX.name, '--nickname', CODEX.nickname,
+      '--mcp-config', config, '--headless', '--server-check-seconds', '0'], {
+      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
+        COMPANION_RUNTIME_DIR: runtime, COMPANION_MEMORY_DIR: path.join(dir, 'memory'),
+        COMPANION_AGENT_CMD: JSON.stringify([process.execPath, path.join(ROOT, 'mcp-server/tests/fixtures/fake-codex.mjs')]),
+        CODEX_HOME: path.join(dir, 'codex-home'), FAKE_AGENT_LOG: agentLog,
+        FAKE_CODEX_CONTROL: controlFile, FAKE_CODEX_MANUAL_INTERRUPT: '1',
+      },
+    });
+    driver.stdout.on('data', data => { output += data; }); driver.stderr.on('data', data => { output += data; });
+    const exited = new Promise((resolve, reject) => { driver.once('exit', resolve); driver.once('error', reject); });
+    try {
+      await waitFor(() => records().some(r => r.kind === 'completed'), '启动轮完成');
+      whisper('Codex，跟着我 [hold] OLD_ACTIVE_WHISPER');
+      await waitFor(() => turns().some(r => r.text.includes('OLD_ACTIVE_WHISPER')), '私聊旧任务保持忙碌');
+      const active = turns().find(r => r.text.includes('OLD_ACTIVE_WHISPER'));
+      const nonStops = ['Codex，别停', 'Codex stop?', 'Codex：“停下”', 'Gemini: stop!', '小克，停下'];
+      for (const message of nonStops) whisper(message);
+      whisper('Codex，查询位置 OLD_QUEUED_WHISPER');
+      await waitFor(() => output.includes('OLD_QUEUED_WHISPER'), '私聊负例和旧任务已到达忙宿主');
+      assert.equal(stops().length, 0, '否定、疑问、引用和其他Bot称呼不停止');
+      assert.equal(requests('turn/interrupt').length, 0);
+      assert.equal(turns().length, 2, '旧消息只能排队');
+
+      whisper(stopMessage);
+      await waitFor(() => stops().length === 1 && requests('turn/interrupt').length === 1,
+        `真实私聊必须触发宿主独立stopActions：${output}`, 4000);
+      assert.deepEqual(stops()[0].params, {
+        threadId: active.threadId, server: 'minecraft', tool: 'stop-action', arguments: {},
+      });
+      assert.equal(requests('turn/interrupt')[0].params.turnId, active.turnId);
+      assert.equal(records().some(r => r.kind === 'completed' && r.turnId === active.turnId), false,
+        '首次停止不依赖忙模型回合完成');
+      assert.equal(confirmations().length, 0, 'interrupt ACK不能提前确认已停止');
+      assert.equal(events.deliveredSeq(), events.latestSeq(), '旧队列及叫停消息已消费，不留给wait-for-events重放');
+
+      complete(active);
+      await waitFor(() => confirmations().length === 1 && output.includes('原地停止已确认'), '旧轮真正结束后确认停止');
+      assert.equal(stops().length, 2, '旧轮结束后再次停身体');
+      const log = records();
+      const completedAt = log.findIndex(r => r.kind === 'completed' && r.turnId === active.turnId);
+      const stopAt = log.flatMap((r, i) => r.kind === 'request' && r.method === 'mcpServer/tool/call'
+        && r.params.tool === 'stop-action' ? [i] : []);
+      const confirmAt = log.findIndex(r => r.kind === 'host_tool' && r.tool === 'send-chat');
+      assert.ok(stopAt[0] < completedAt && completedAt < stopAt[1] && stopAt[1] < confirmAt);
+      assert.equal(turns().length, 2, '宿主确认停止无需模型轮');
+      assert.equal(records().filter(r => r.kind === 'start').length, 1, '同一Agent进程保持连接');
+      assert.equal(records().filter(r => r.kind === 'stdin_closed').length, 0);
+
+      complete(active); // 迟到的重复通知也不得恢复旧任务。
+      whisper('Codex，查询位置 FIRST_NEW_WHISPER_AFTER_STOP');
+      await waitFor(() => turns().some(r => r.text.includes('FIRST_NEW_WHISPER_AFTER_STOP')), '停止后的第一条新私聊');
+      const next = turns().find(r => r.text.includes('FIRST_NEW_WHISPER_AFTER_STOP'));
+      assert.equal(next.pid, active.pid); assert.equal(next.threadId, active.threadId);
+      assert.match(next.text, /停止记录/);
+      assert.doesNotMatch(next.text, /OLD_ACTIVE_WHISPER|OLD_QUEUED_WHISPER|\[hold\]/);
+      for (const message of nonStops) assert.ok(!next.text.includes(message), '不重放停止前的私聊');
+      await waitFor(() => events.deliveredSeq() === events.latestSeq(), '首新私聊消费游标');
+      await sleep(1800); // 跨越宿主下一次journal轮询和批处理窗口。
+      assert.equal(turns().filter(r => r.text.includes('FIRST_NEW_WHISPER_AFTER_STOP')).length, 1);
+      assert.equal(turns().length, 3);
+      assert.deepEqual(records().filter(r => r.kind === 'violation'), []);
+    } finally {
+      fs.writeFileSync(F.stop, '');
+      try { await waitFor(() => driver.exitCode !== null || driver.signalCode !== null, '私聊宿主退出', 10000); }
+      catch {
+        if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(driver.pid), '/T', '/F'], {
+          windowsHide: true, stdio: 'ignore',
+        });
+        else driver.kill('SIGKILL');
+      }
+      assert.equal(await exited, 0, output);
+      assert.equal(fs.existsSync(F.lock), false, '正常退出释放宿主锁');
+      assert.equal(path.dirname(dir), os.tmpdir());
+      assert.ok(path.basename(dir).startsWith('mcbot-whisper-stop-'));
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 // 最小v2租约服务；真正的分类、watch、revoke和宿主进程来自生产代码。
 async function fixture() {

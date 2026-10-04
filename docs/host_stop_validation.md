@@ -38,12 +38,12 @@
 
 1. 有 `message` 字段时，它是权威正文。空正文或非字符串不从 `text` 补出命令，正文内的冒号不再被当成发言者分隔符。
 2. 只有 `text`、但有 `username` 时，仅移除与该发言者完全相同的首个前缀。
-3. 兼容现有 `EventJournal`：有非空 `session` 和正整数 `seq`，且无已知发言者时，仅移除一次 `Java用户名: 正文` 形式的前缀；用户名为1–16位ASCII字母、数字或下划线，冒号后须有空格或制表符。当前生产者见 `client-runtime/src/events.ts`。
+3. 兼容现有日志：有非空 `session` 和正整数 `seq`，且无已知发言者时，仅移除一次 `Java用户名: 正文` 形式的前缀；用户名为1–16位ASCII字母、数字或下划线，冒号后须有空格或制表符。`whisper` 类型另兼容真实Mineflayer的 `Java用户名 悄悄对你说: 正文` 前缀；`chat` 等其他类型不接受该私聊前缀。生产者分别见 `client-runtime/src/events.ts`、`mcp-server/src/game-events.ts` 和 `mcp-server/src/event-store.ts`。
 4. 没有上述信封元数据的 `text` 被视为正文，不能猜测 `其他Bot: stop!` 中冒号前的名字是发言者。发言者名字不计入正文点名；单独的“停下”仍是独立命令。
 
 既有 `codex-adapter.test.mjs` 中六个带发言者显示前缀的夹具补齐 `username`，保留原断言；没有删除或放宽测试。新矩阵同时覆盖结构化事件和真实旧journal格式的 `chat`／`whisper`。
 
-## 本轮实际执行结果
+## 初次云端执行结果
 
 环境：Linux、Node v22.16.0。GitHub直连克隆不可用，通过连接器读取所需原文件，在隔离目录重建相关宿主、协议及测试文件；这不是完整仓库构建。所有集成测试使用真实 `companion.mjs` 子进程、仓库现有Claude/Codex协议替身及loopback模拟v2服务，不使用真实模型账号、不启动Minecraft。
 
@@ -74,12 +74,27 @@ node --test --test-timeout=90000 \
 
 本轮未执行的两项为：`start-server-play PrepareOnly读取v2身份和显式Node路径但不运行Agent且不写token`（无pwsh），以及 `Codex 配置不回写 null 字段；只开放真实注册的 V0 游戏工具`（选择性镜像未包含完整旧工具源码目录）。没有为通过测试伪造该目录，也没有删除这些用例。未运行完整npm构建／全量依赖测试、Java测试、Windows进程树与启动器检查、真实模型和游戏复验。
 
-## 待本机复验
+## 本机评审后补修与验证
 
-在已有完整检出、Node和PowerShell 7环境中，用pwsh执行以下离线回归，不使用真实模型账号：
+2026-10-04，Windows11／pwsh／Node24.19，在完整Git工作树上复评。修复前四文件组合301项全部通过，包含云端排除的两项，但发现这些用例将 `whisper` 也写成普通聊天格式，遗漏实际Mineflayer生产者的 `用户名 悄悄对你说: 正文`。原PR识别器对此返回false，使既有Codex／Mineflayer私聊失去宿主立即停止路径。
+
+补修只为有效旧日志信封中的 `whisper` 增加该确定前缀，仍只剥一次；普通 `chat`、无信封文本和权威 `message` 正文不扩大解释。新增41项回归覆盖真实格式正反例、信封／类型／用户名边界，以及两条真实宿主子进程测试。后者使用生产 `EventStore` 写日志、既有Codex协议替身保持忙回合，确认“停下”和“Codex stop!”均在旧轮完成前发出首次 `stop-action`，旧轮结束后再次停止并确认；不重放旧消息，首条新私聊只交付一次，Agent进程保持连接并正常收尾。
+
+| 执行 | 实际结果 |
+| --- | --- |
+| 原PR识别器＋新增41项 | 30通过、11失败；两条宿主测试均因未触发首次 `stop-action` 超时，先红记录保留 |
+| `mcp-server` TypeScript构建 | 通过，使用既有依赖及Node24.19 |
+| 补修后六文件组合 | **356项全部通过、0失败、0跳过**，约50.465秒，包含新增41项、原四文件及Codex／ClientBody驱动回归 |
+
+本机日志为未随仓库分发的 `output/pr1-review-host-windows.log`、`output/pr1-whisper-red.log` 和 `output/pr1-whisper-windows-final.log`。上述运行相互重叠，不累加为覆盖率。未使用真实模型账号、启动Minecraft或修改游戏配置；真实游戏复验仍待另行进行，Java与生存动作实现未变，本批没有重复运行其验收。
+
+## 复验命令与待实服项目
+
+在已有完整检出、已安装依赖、Node和PowerShell 7环境中，用pwsh执行以下离线回归，不使用真实模型账号。新增私聊集成直接使用生产 `EventStore`，须先构建：
 
 ```powershell
-node --test --test-timeout=90000 mcp-server/tests/host-stop.test.mjs mcp-server/tests/server-driver.test.mjs mcp-server/tests/agent-protocols.test.mjs mcp-server/tests/codex-adapter.test.mjs
+npm --prefix mcp-server run build
+node --test --test-timeout=90000 mcp-server/tests/host-stop.test.mjs mcp-server/tests/server-driver.test.mjs mcp-server/tests/agent-protocols.test.mjs mcp-server/tests/codex-adapter.test.mjs mcp-server/tests/codex-driver.test.mjs mcp-server/tests/client-driver.test.mjs
 ```
 
 随后在另行准备、授权的隔离游戏环境中核对真实chat／whisper投影和四个正例、五个反例，确认忙时叫停、停止后首个新任务、旧任务不重放及角色保持在线；分别记录Claude/Codex结果。此项本PR未执行，不要求为了提交PR启动Minecraft。

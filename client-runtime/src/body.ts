@@ -1,14 +1,14 @@
 /** The shared Body contract deliberately has no game-library or Agent types. */
 export interface Position { x: number; y: number; z: number }
 export type Components = Record<string, unknown>;
-export interface ItemValue { id: string; count: number; components?: Components; maxStackSize?: number }
+export interface ItemValue { id: string; count: number; components?: Components; maxStackSize?: number; componentsComplete?: boolean; componentError?: string }
 export interface ItemStack extends ItemValue { slot: number; source?: 'container' | 'player' | 'unknown'; playerSlot?: number; active?: boolean; mayPickup?: boolean }
 export interface GroundItem { entityId: string; position: Position; stack: ItemValue; onGround?: boolean; visible?: boolean | null; visibility: 'visible' | 'occluded' | 'unknown' }
 export interface CompanionGuard { player: string; expectedEntityId: string; maxDistance: number }
 export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string }
 export interface NearbyResources {
   instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number; center: Position;
-  candidates: Array<{ position: Position; id: string; properties: Components; targetToken: string; distance: number; visible: boolean; requiresCorrectTool: boolean; suitableToolSlots: number[]; recommendedToolSlot?: number }>;
+  candidates: Array<{ position: Position; id: string; properties: Components; targetToken: string; distance: number; visible: boolean; requiresCorrectTool: boolean; suitableToolSlots: number[]; recommendedToolSlot?: number; recommendedInventorySlot?: number }>;
   truncated?: boolean; budget?: unknown;
 }
 export interface NearbyBlocks {
@@ -18,6 +18,33 @@ export interface NearbyBlocks {
   truncated?: boolean; budget?: unknown;
 }
 export interface Entity { id: string; type: string; name: string; position: Position }
+export interface FoodCandidate { slot: number; id: string; count: number; nutrition: number; saturationModifier: number; eatDurationTicks: number; safe: boolean; reason?: string }
+export interface Threat {
+  entityId: string; type: string | null; classification: 'hostile' | 'attacking_self' | 'neutral' | 'friendly' | 'player' | 'unknown';
+  hostilitySource: 'vanilla_hostile_allowlist' | 'native_target_self' | 'native_recent_attacker' | 'none' | 'unknown';
+  targetingSelf: boolean | null; distance: number | null; lineOfSight: boolean | null; alive: boolean | null; explosionPreparing: boolean | null; defenseEligible: boolean; defenseReason: string | null; factsAvailable?: boolean;
+}
+export interface SurvivalDangers { onFire: boolean; inLava: boolean; inWater: boolean; air: number; maxAir: number; fallDistance: number; lowHealth: boolean; retreatRecommended: boolean }
+export interface SurvivalState {
+  instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number;
+  serverTick: number; observedAt: number; health: number; maxHealth: number; food: number; saturation: number; selectedSlot: number;
+  inventory?: ItemStack[]; foods: FoodCandidate[];
+  dangers?: SurvivalDangers; threats?: { radius: number; complete: boolean; nearby: Threat[]; serverTick: number };
+}
+export interface ToolAssessmentOptions extends Position {
+  expectedBlock?: string; policy?: 'fastest_valid' | 'conserve_durability'; minRemainingDurability?: number; dropPreference?: 'any' | 'silk_touch' | 'no_silk_touch';
+}
+export interface ToolCandidate extends ItemStack {
+  eligible: boolean | null; nativeEligible?: boolean; eligibilityBasis?: string; baseSpeed: number | null; estimatedTicks: number | null;
+  remainingDurability: number | null; reason?: string; estimate: 'native-base' | 'estimated' | 'unknown';
+  silkTouch?: number; fortune?: number; dropEffectsKnown?: boolean;
+  recommendationEligible?: boolean; recommendationReason?: string;
+}
+export interface ToolAssessment {
+  instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number;
+  position: Position; blockId: string; properties: Components; requiresCorrectTool: boolean; candidates: ToolCandidate[];
+  recommendedSlot?: number; notes: string[];
+}
 export interface ChatLine { seq: number; time: number; username?: string; message: string }
 export interface Container { id: string; type: string; revision?: number; slots: ItemStack[]; carried: ItemValue }
 export interface BlockObservation { position: Position; state: 'loaded' | 'unloaded'; id?: string; properties?: Record<string, unknown> }
@@ -51,6 +78,10 @@ export interface ActionArguments {
   'close-container': { containerId: string; expectedRevision?: number };
   'select-slot': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number };
   'drop-item': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number; count: number; recipient?: string; expectedEntityId?: string };
+  'swap-inventory': { sourceSlot: number; hotbarSlot: number; expectedSource: ItemValue; expectedTarget: ItemValue };
+  'eat-item': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number; timeoutMs?: number };
+  'defend-entity': { entityId: string; expectedDimension: string; maxDistance: number; minHealth: number; maxAttacks: number; timeoutMs: number; slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number };
+  'retreat-from-entity': { entityId: string; expectedDimension: string; distance?: number; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
@@ -63,10 +94,13 @@ export interface Body {
   act<N extends ActionName>(name: N, args: ActionArguments[N], taskToken?: string): Promise<Operation>;
   nearbyBlocks?(options: { centerPlayer?: string; radius: number; maxResults: number }): Promise<NearbyBlocks>;
   nearbyResources?(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position }): Promise<NearbyResources>;
+  survivalState?(options?: { details?: boolean }): Promise<SurvivalState>;
+  assessTool?(options: ToolAssessmentOptions): Promise<ToolAssessment>;
   acquireTask?(taskToken: string): void;
   releaseTask?(taskToken: string): void;
   operation(operationId: string): Promise<Operation>;
   pendingOperations(): readonly Operation[];
+  isBusy?(): boolean;
   stop(): Promise<{ stopped: true }>;
   close(): Promise<void>;
 }

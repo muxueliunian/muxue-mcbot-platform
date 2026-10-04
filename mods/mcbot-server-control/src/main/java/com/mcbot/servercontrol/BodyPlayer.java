@@ -10,6 +10,7 @@ final class BodyPlayer extends ServerPlayer {
     private final ServerController controller;
     private int lastSurvivalTick=Integer.MIN_VALUE;
     float forwardInput;
+    private boolean jumpInput;
     BodyPlayer(MinecraftServer server,ServerLevel level,GameProfile profile,ServerController controller) {
         this(server,level,profile,ClientInformation.createDefault(),controller);
     }
@@ -40,7 +41,7 @@ final class BodyPlayer extends ServerPlayer {
             Vec3 motion=listener.takePendingMotion();
             if(motion!=null) setDeltaMovement(motion);
         }
-        xxa=yya=0; zza=forwardInput;
+        xxa=yya=0; zza=forwardInput;setJumping(jumpInput);
         Vec3 before=position();
         super.doTick();
         Vec3 displacement=position().subtract(before);
@@ -48,8 +49,12 @@ final class BodyPlayer extends ServerPlayer {
         setKnownMovement(displacement);
     }
     void moveInput(double x,double z) {
-        float yaw=(float)Math.toDegrees(Math.atan2(-x,z));
-        setYRot(yaw); setYHeadRot(yaw); forwardInput=1;
+        moveInput(x,z,1);
     }
-    void stopInput() { forwardInput=0; xxa=yya=zza=0; setJumping(false); }
+    void moveInput(double x,double z,float strength) {
+        float yaw=(float)Math.toDegrees(Math.atan2(-x,z));
+        setYRot(yaw); setYHeadRot(yaw); forwardInput=Math.max(0,Math.min(1,strength));
+    }
+    void jumpInput(boolean jump) {jumpInput=jump;setJumping(jump);}
+    void stopInput() { forwardInput=0; jumpInput=false;xxa=yya=zza=0; setJumping(false); }
 }

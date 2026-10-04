@@ -9,6 +9,7 @@ import { mockServerControl } from './mock-server-control.mjs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer } from '../dist/mcp.js';
+import { SurvivalTasks } from '../dist/survival-tasks.js';
 
 const clone = value => structuredClone(value);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -86,6 +87,77 @@ test('gather mines then picks through the fixed token set without rescanning, wi
   assert.equal(f.calls.filter(call => call.name === 'discover').length, 1); assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 3);
   assert.ok(f.calls.filter(call => call.name === 'dig-block').every(call => f.candidates.some(candidate => candidate.targetToken === call.args.targetToken)));
   assert.equal(f.calls[1].name, 'send-chat'); assert.equal(f.events.since(0, ['task']).length, 1);
+});
+
+function survivalFixture() {
+  const f = fixture({ automatic: true, blocks: 1 });
+  f.state.inventory[10] = { ...f.state.inventory[0], slot: 10 };
+  f.state.inventory[0] = { slot: 0, id: 'minecraft:air', count: 0, components: {} };
+  f.state.inventory[11] = { slot: 11, id: 'minecraft:bread', count: 3, maxStackSize: 64, components: {} };
+  f.state.food = 10;
+  f.body.hello.capabilities.push('survival-state', 'swap-inventory', 'eat-item', 'assess-tool');
+  f.body.survivalState = async () => ({ ...clone(f.state), serverTick: 1, observedAt: 1, maxHealth: 20, saturation: 0,
+    foods: f.state.inventory.filter(item => item.id === 'minecraft:bread').map(item => ({ slot: item.slot, id: item.id, count: item.count, safe: true, nutrition: 5, saturationModifier: 0.6, eatDurationTicks: 32 })) });
+  f.body.assessTool = async args => ({ ...clone(f.state), blockId: args.expectedBlock, properties: {}, requiresCorrectTool: true, notes: [],
+    candidates: f.state.inventory.filter(item => item.id === 'minecraft:iron_pickaxe').map(item => ({ ...clone(item), eligible: true, baseSpeed: 6, estimatedTicks: 5, remainingDurability: 250, estimate: 'estimated' })),
+    recommendedSlot: f.state.inventory.find(item => item.id === 'minecraft:iron_pickaxe').slot });
+  const nativeAct = f.body.act;
+  f.body.act = async (name, args, token) => {
+    const op = await nativeAct(name, args, token);
+    if (name === 'swap-inventory') {
+      const source = clone(f.state.inventory[args.sourceSlot]), target = clone(f.state.inventory[args.hotbarSlot]);
+      f.state.inventory[args.sourceSlot] = { ...target, slot: args.sourceSlot };
+      f.state.inventory[args.hotbarSlot] = { ...source, slot: args.hotbarSlot };
+    }
+    if (name === 'eat-item') {
+      f.state.inventory[args.slot].count--; f.state.food += 5;
+      op.result = { consumedCount: 1, lastConfirmedConsumedCount: 1, consumption: 'confirmed' };
+    }
+    return op;
+  };
+  const survival = new SurvivalTasks(f.body);
+  const policy = { armed: true, revision: 1, autoEat: true, urgentFood: 6, protectedItems: [], toolPolicy: 'fastest_valid', minRemainingDurability: 2 };
+  f.tasks.useSurvival(survival, () => policy);
+  return { ...f, survival, policy };
+}
+test('gather lends one task token for a meal and a backpack tool, then mines without advancing generation', async () => {
+  const f = survivalFixture();
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(result.status, 'succeeded', result.summary);
+  const actions = f.calls.filter(call => call.token);
+  assert.equal(new Set(actions.map(call => call.token)).size, 1);
+  assert.equal(f.calls.filter(call => call.name === 'eat-item').length, 1);
+  assert.equal(f.calls.filter(call => call.name === 'swap-inventory').length, 2);
+  assert.equal(f.calls.filter(call => call.name === 'stop').length, 0);
+  assert.equal(f.state.controlGeneration, 0); assert.equal(f.survival.read().state, 'idle');
+  assert.equal(f.state.inventory[f.state.selectedSlot].id, 'minecraft:iron_pickaxe');
+});
+test('unknown borrowed consumption stops parent before digging and retires the child only after stop ACK', async () => {
+  const f = survivalFixture(), nativeAct = f.body.act;
+  f.body.act = async (name, args, token) => { const result = await nativeAct(name, args, token); return name === 'eat-item' ? { ...result, status: 'unknown', summary: 'injected missing native receipt' } : result; };
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(result.status, 'unknown'); assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
+  assert.equal(f.calls.filter(call => call.name === 'eat-item').length, 1);
+  assert.equal(f.calls.filter(call => call.name === 'stop').length, 1);
+  assert.equal(f.survival.read().state, 'idle');
+});
+test('tool changed after assessment is not silently prepared under the old eligibility decision', async () => {
+  const f = survivalFixture(); f.policy.autoEat = false;
+  const assess = f.body.assessTool;
+  f.body.assessTool = async args => { const result = await assess(args); f.state.inventory[10] = { slot: 10, id: 'minecraft:dirt', count: 1, components: {}, maxStackSize: 64 }; return result; };
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(result.status, 'failed'); assert.equal(f.calls.some(call => ['swap-inventory', 'dig-block'].includes(call.name)), false);
+});
+test('failed stop after an unknown borrowed meal retains parent and child barriers against the next writer', async () => {
+  const f = survivalFixture(), nativeAct = f.body.act;
+  f.body.act = async (name, args, token) => { const result = await nativeAct(name, args, token); return name === 'eat-item' ? { ...result, status: 'unknown', summary: 'lost consumption receipt' } : result; };
+  f.body.stop = async () => { throw new BodyError('STOP_UNCONFIRMED', 'injected missing stop receipt'); };
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 1 }));
+  assert.equal(result.status, 'unknown');
+  assert.throws(() => f.tasks.assertIdle(), { code: 'BUSY' });
+  assert.throws(() => f.survival.assertIdle(), { code: 'BUSY' });
+  await assert.rejects(f.body.act('look-at', { x: 0, y: 64, z: 0 }), { code: 'BUSY' });
+  assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
 });
 test('first native receipt can resolve a stack while automatic dig pickup and overage remain authoritative', async () => {
   const f = fixture({ automatic: true, max: 16, dropCount: 16 });

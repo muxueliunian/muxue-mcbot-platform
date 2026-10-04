@@ -17,6 +17,10 @@ final class PickupItem {
         Object identity();JsonObject stack();Vec3 target();boolean available();boolean eligible();
         boolean safe(Vec3 from,Vec3 to);boolean inReach(Vec3 feet);List<Vec3> plan();
         void move(Vec3 delta);void stop();
+        default boolean nativeNavigation(){return false;}
+        default void navigate(){throw new UnsupportedOperationException();}
+        default void cancelNavigation(){}
+        default JsonObject navigationDetails(){return null;}
         default void validateCompanion() {}
         default boolean routeAllowed(Vec3 feet) {return true;}
     }
@@ -76,8 +80,9 @@ final class PickupItem {
             if(view.health()<health)throw error("BLOCKED","Body took damage while approaching drop");
             if(view.target().distanceTo(view.feet())>8)throw error("OUT_OF_REACH","Drop must stay within eight blocks");
             if(view.target().distanceTo(initialTarget)>0.75)throw error("TARGET_MOVED","Bound drop moved; no unbounded chase");
-            if(!view.safe(view.feet(),view.feet()))throw error("BLOCKED","Body is not on safe loaded flat ground");
+            if(!view.nativeNavigation()&&!view.safe(view.feet(),view.feet()))throw error("BLOCKED","Body is not on safe loaded flat ground");
             long now=clock.getAsLong();if(now>=deadline)throw error("TIMEOUT","Native pickup was not confirmed within its time limit");
+            if(view.nativeNavigation()){view.navigate();return;}
             if(view.inReach(view.feet())){view.stop();return;}
             if(route==null){route=view.plan();if(!view.mayDrive()){stop();return;}}
             Vec3 feet=view.feet();while(index<route.size()&&feet.subtract(route.get(index)).horizontalDistance()<0.15)index++;
@@ -99,10 +104,10 @@ final class PickupItem {
     private JsonObject result(String code) {
         JsonObject result=obj("entityId",entityId,"pickedUpCount",picked,"pickup",picked>0?"confirmed":"unconfirmed","requestedCount",expected.get("count").getAsInt());
         if(code==null&&!stolen)result.addProperty("remainingCount",expected.get("count").getAsInt()-picked);
-        if(pickedStack!=null)result.add("stack",pickedStack.deepCopy());if(code!=null)result.addProperty("code",code);return result;
+        if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());if(pickedStack!=null)result.add("stack",pickedStack.deepCopy());if(code!=null)result.addProperty("code",code);return result;
     }
     void fail(String code,String message){operation.finish("failed",code+": "+message,result(code));stop();}
-    void stop(){stopped=true;route=null;view.stop();}
+    void stop(){stopped=true;route=null;view.cancelNavigation();view.stop();}
     static PickupItem create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,SurvivalActions survival) {
         UUID uuid;
         try {uuid=UUID.fromString(string(operation.args,"entityId"));}catch(IllegalArgumentException invalid){throw error("INVALID_ARGUMENT","entityId must be a UUID");}
@@ -119,12 +124,13 @@ final class PickupItem {
         }):null;
         View view=new View(){
             FlatApproach geometry;
+            final NativeNavigation navigation=new NativeNavigation(body,session,operation);
             public boolean mayDrive(){return session.mayDrive(operation);}
-            public void refresh(){
-                if(body.containerMenu!=body.inventoryMenu||!body.onGround()||body.isInWater()||body.isInLava()||body.isPassenger()||body.isFallFlying()||body.isSleeping()||body.getPose()!=Pose.STANDING||body.isOnFire()||body.getTicksFrozen()>0)
-                    throw error("BLOCKED","Body cannot safely walk to a dropped item");
-                geometry=new FlatApproach(body);
-            }
+            public void refresh(){NativeNavigation.conditions(body);geometry=new FlatApproach(body);}
+            public boolean nativeNavigation(){return true;}
+            public void navigate(){navigation.tick(target(),feet->routeAllowed(feet)&&inReach(feet),this::routeAllowed);}
+            public void cancelNavigation(){navigation.stop();}
+            public JsonObject navigationDetails(){return navigation.diagnostics();}
             public Vec3 feet(){return body.position();}public float health(){return body.getHealth();}
             public Object identity(){return item==null?null:body.serverLevel().getEntity(uuid);}
             public boolean available(){return item!=null&&item.isAlive()&&!item.isRemoved()&&item.level()==body.serverLevel();}

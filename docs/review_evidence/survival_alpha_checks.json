@@ -1,0 +1,108 @@
+{
+  "date": "2026-10-03",
+  "scope": "Survival Alpha batch 1, not complete survival",
+  "minecraft": "1.21.1",
+  "neoforge": "21.1.217",
+  "validatedNode": "24.19.0",
+  "mcpToolCount": 38,
+  "offline": {
+    "clientRuntimePassed": 206,
+    "javaChecksPassed": 645,
+    "hostFocusedPassed": 42,
+    "explicitRuntimeStartupPassed": 3
+  },
+  "realProgram": {
+    "result": "passed",
+    "checks": 47,
+    "elapsedMs": 22560,
+    "stages": [
+      {
+        "phase": "tool-qualification-speeds",
+        "status": "passed"
+      },
+      {
+        "phase": "prepare-occupied-native-swap",
+        "status": "passed"
+      },
+      {
+        "phase": "inventory-tool-native-gather",
+        "status": "passed"
+      },
+      {
+        "phase": "manual-native-food",
+        "status": "passed"
+      },
+      {
+        "phase": "native-food-stop",
+        "status": "passed"
+      },
+      {
+        "phase": "auto-eat-on-off",
+        "status": "passed"
+      },
+      {
+        "phase": "urgent-food-preempts-wait",
+        "status": "passed"
+      }
+    ]
+  },
+  "realAgent": {
+    "provider": "Claude",
+    "profile": "b",
+    "model": "claude-sonnet-5-5",
+    "effort": "low",
+    "result": "passed",
+    "liveInitTools": 38,
+    "inputBoundary": "Five fixed evaluator prompts, not hosted player chat",
+    "phases": [
+      {
+        "name": "query-and-policy",
+        "result": "passed",
+        "elapsedMs": 6295,
+        "firstToolMs": 2744
+      },
+      {
+        "name": "prepare-backpack-tool",
+        "result": "passed",
+        "elapsedMs": 3583,
+        "firstToolMs": 1889
+      },
+      {
+        "name": "assess-native-tool",
+        "result": "passed",
+        "elapsedMs": 5318,
+        "firstToolMs": 2074
+      },
+      {
+        "name": "one-native-food",
+        "result": "passed",
+        "elapsedMs": 5533,
+        "firstToolMs": 1846
+      },
+      {
+        "name": "game-completion-message",
+        "result": "passed",
+        "elapsedMs": 4650,
+        "firstToolMs": 1656
+      }
+    ]
+  },
+  "cleanup": {
+    "javaExitCode": 0,
+    "portsClosed": [
+      25568,
+      25578,
+      8766
+    ],
+    "configurationByteEqual": true,
+    "originalRepositoryModified": false,
+    "formalServerModified": false
+  },
+  "unresolved": [
+    "Node24.15 Windows native exit 0xC0000409, no confirmed root cause",
+    "high-difference navigation and auto-defense not implemented",
+    "special Mod food/tool hooks not broadly verified",
+    "R6 container/ground-item degradation remains pending",
+    "Codex live regression for the five new tools not performed"
+  ]
+}

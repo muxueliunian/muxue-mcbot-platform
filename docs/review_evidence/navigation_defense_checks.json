@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-03",
+  "scope": "MC 1.21.1 / NeoForge 21.1.217; one ServerBot; local Agent; isolated dedicated server",
+  "runtime": {
+    "java": 21,
+    "cliAccount": "user-selected local profile; credentials not included",
+    "node": "24.19.0"
+  },
+  "offline": {
+    "relevantHostTests": {
+      "passed": 58,
+      "failed": 0
+    },
+    "javaControlChecks": {
+      "passed": 732,
+      "failed": 0
+    },
+    "clientRuntime": {
+      "passed": 227,
+      "failed": 0
+    }
+  },
+  "actualProgram": {
+    "processesExitCode": [
+      0,
+      0
+    ],
+    "artifact": "server-navigation-defense-2026-10-03T12-31-32.716Z-33836",
+    "tools": 39,
+    "scenarios": 16,
+    "durationMs": 97583,
+    "failed": 0,
+    "source": "server-navigation-defense-smoke.mjs",
+    "checks": 55
+  },
+  "actualAgent": {
+    "artifact": "navigation-defense-agent-claude-2026-10-03T12-35-42.803Z-48400",
+    "input": "fixed evaluation prompts",
+    "model": "Sonnet 5.5",
+    "passed": 5,
+    "phases": 5,
+    "effort": "low",
+    "agent": "Claude"
+  },
+  "continuousHostedChat": {
+    "status": "continuous runtime completed with one audited invalid health check",
+    "actualScenarioMs": 1803947,
+    "nativeWalks": 153,
+    "healthSamples": 153,
+    "minimumObservedBodyHealth": 20,
+    "stopConfirmedMs": 805,
+    "artifact": "navigation-defense-hosted-soak-2026-10-03T12-48-27.326Z-19420",
+    "invalidIndependentHealthCheck": "RCON selector returned error text; original raw passed flag does not establish all phases",
+    "normalProcessExit": true
+  },
+  "comparison": "actual bytes and fields; no hashes or fingerprints",
+  "limits": [
+    "Controlled platform is not natural wilderness survival",
+    "2 ms navigation slice is a soft target; observed maximum 15.8213 ms",
+    "Real no-damage shove corner not individually reproduced; deterministic production geometry test only",
+    "Native callback reentrant stop covered offline, not a real Mod fault injection",
+    "Codex new survival tools not model-tested in this batch",
+    "Node 24.15 native exit root cause unresolved",
+    "Building, crafting, general Mod compatibility, other versions and remote deployment not delivered"
+  ],
+  "correctedHostedShortRetest": {
+    "result": "passed",
+    "phases": 19,
+    "actualScenarioMs": 204085,
+    "stopConfirmedMs": 470,
+    "observedTools": 39,
+    "excludedEntityNativeUuidMatched": true,
+    "excludedEntityHealthBefore": 20,
+    "excludedEntityHealthAfter": 20,
+    "artifact": "navigation-defense-hosted-soak-2026-10-03T13-19-01.652Z-7176",
+    "normalHostPeerAndMcpExit": true,
+    "noProductCodeChangeBetweenRuns": true
+  },
+  "cleanup": {
+    "savedServer": true,
+    "javaExitCode": 0,
+    "targetPortsListening": [],
+    "serverPropertiesOpsWhitelistActualBytesEqual": true,
+    "ownedProcessesRemaining": 0,
+    "modifiedTestWorldRetained": true,
+    "committed": false,
+    "pushed": false
+  }
+}

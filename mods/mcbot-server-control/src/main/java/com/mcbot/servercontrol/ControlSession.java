@@ -17,11 +17,14 @@ final class ControlSession {
         JsonObject observe(JsonObject params);
         default JsonObject nearbyBlocks(JsonObject params) {throw error("UNSUPPORTED","Nearby discovery is not available");}
         default JsonObject nearbyResources(JsonObject params) {throw error("UNSUPPORTED","Resource discovery is not available");}
+        default JsonObject survivalState(JsonObject params) {throw error("UNSUPPORTED","Survival state is not available");}
+        default JsonObject assessTool(JsonObject params) {throw error("UNSUPPORTED","Native tool assessment is not available");}
         JsonObject watch();
         long chatCursor();
         void begin(Operation operation);
         void abort(Operation operation);
         void stop();
+        default boolean nativeWriteInProgress() {return false;}
     }
     static final class Operation {
         final String id, sessionId, name;
@@ -68,13 +71,14 @@ final class ControlSession {
         return leaseId!=null&&game.connected()&&operation.generation==generation&&operation.sessionId.equals(sessionId)&&operation.status.equals("running");
     }
     private void cancel(String reason) {
-        // Invalidate old operations even when a native cleanup callback throws.
+        // Withdraw authority before cleanup can reenter a native hook.
+        generation++;
+        for(Operation o:history.values()) o.finish("cancelled",reason,o.result);
         try { game.stop(); }
         catch(RuntimeException ignored) { /* Metadata and the next physical guard remain authoritative. */ }
-        finally {
-            generation++;
-            for(Operation o:history.values()) o.finish("cancelled",reason,null);
-        }
+    }
+    private void requireNativeStopped() {
+        if(game.nativeWriteInProgress())throw error("STOP_UNCONFIRMED","Authorization was withdrawn but the synchronous native write has not returned");
     }
     void revokeCurrent(String reason) {
         Retired previous=leaseId==null?null:new Retired(sessionId,leaseId,stopToken);
@@ -114,6 +118,7 @@ final class ControlSession {
             if(!Objects.equals(sessionId,expected)) throw error("WORLD_CHANGED","Body session changed before explicit respawn");
             if(game.connected()) throw error("INVALID_ARGUMENT","Live body cannot respawn");
             revokeCurrent("Explicit native respawn requested");
+            requireNativeStopped();
             // Even an interrupted native replacement invalidates the old epoch, never old-task recovery.
             try { game.respawn(); }
             finally { bodyChanged(); }
@@ -124,6 +129,7 @@ final class ControlSession {
             if(!worldId.equals(string(p,"worldId"))) throw error("WRONG_WORLD","Configured world does not match");
             if(!username.equals(string(p,"username"))) throw error("WRONG_PLAYER","Only the configured player may be controlled");
             String requestedController=string(p,"controllerId");
+            requireNativeStopped();
             if(leaseId!=null) {
                 if(!requestedController.equals(controllerId)) throw error("LEASE_BUSY","Another controller owns this body");
                 return claimResult(); // Retransmission never extends TTL.
@@ -138,11 +144,13 @@ final class ControlSession {
         }
         if(method.equals("revoke")) {
             String requestedSession=string(p,"sessionId"), requestedLease=string(p,"leaseId"), requestedToken=string(p,"stopToken");
-            if(retired.stream().anyMatch(r->r.sessionId.equals(requestedSession)&&r.leaseId.equals(requestedLease)&&r.stopToken.equals(requestedToken)))
+            if(retired.stream().anyMatch(r->r.sessionId.equals(requestedSession)&&r.leaseId.equals(requestedLease)&&r.stopToken.equals(requestedToken))) {
+                requireNativeStopped();
                 return obj("stopped",true,"revoked",true);
+            }
             authorize(p);
             if(!stopToken.equals(requestedToken)) throw error("FORBIDDEN","Wrong host stop token");
-            revokeCurrent("Host revoked control"); return obj("stopped",true,"revoked",true);
+            revokeCurrent("Host revoked control");requireNativeStopped(); return obj("stopped",true,"revoked",true);
         }
         if(method.equals("watch")&&leaseId==null) {
             Retired last=retired.peekLast();
@@ -153,12 +161,18 @@ final class ControlSession {
         authorize(p);
         switch(method) {
             case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return obj("ttlMs",TTL_MS,"controlGeneration",generation);
-            case "release": revokeCurrent("Controller released control"); return obj("released",true);
-            case "stop": cancel("Stopped by controller"); return obj("stopped",true,"controlGeneration",generation);
-            case "observe", "nearby-blocks", "nearby-resources": {
+            case "release": revokeCurrent("Controller released control");requireNativeStopped(); return obj("released",true);
+            case "stop": cancel("Stopped by controller");requireNativeStopped(); return obj("stopped",true,"controlGeneration",generation);
+            case "observe", "nearby-blocks", "nearby-resources", "survival-state", "assess-tool": {
                 if(!method.equals("observe")&&!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree(method)))
                     throw error("UNSUPPORTED","Nearby discovery capability is not available");
-                JsonObject observation=method.equals("observe")?game.observe(p):method.equals("nearby-resources")?game.nearbyResources(p):game.nearbyBlocks(p);
+                JsonObject observation=switch(method) {
+                    case "observe" -> game.observe(p);
+                    case "nearby-resources" -> game.nearbyResources(p);
+                    case "nearby-blocks" -> game.nearbyBlocks(p);
+                    case "survival-state" -> game.survivalState(p);
+                    default -> game.assessTool(p);
+                };
                 observation.addProperty("instanceId",instanceId); observation.addProperty("sessionId",sessionId);
                 observation.addProperty("worldId",worldId); observation.addProperty("controlGeneration",generation);
                 return observation;
@@ -190,6 +204,7 @@ final class ControlSession {
         }
         if(seenIds.contains(id)) throw error("UNKNOWN_OPERATION","Result evicted; never replay this ID");
         if(seenIds.size()>=ID_LIMIT) throw error("BUSY","Lease operation limit reached; release and explicitly claim again");
+        if(!name.equals("send-chat")&&game.nativeWriteInProgress())throw error("BUSY","A synchronous native write must return before another action may start");
         if(!name.equals("send-chat")&&history.values().stream().anyMatch(o->o.status.equals("running")&&!o.name.equals("send-chat"))) throw error("BUSY","Stop the current operation first");
         Operation operation=new Operation(id,sessionId,generation,name,args);
         history.put(id,operation); seenIds.add(id);

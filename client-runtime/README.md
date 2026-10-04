@@ -1,5 +1,7 @@
 # Body 运行端（ServerBody 与 ClientBody V1）
 
+2026-10-03增量：能力齐备的ServerBody现在提供39个MCP工具，包含主背包准备、工具基础评估、自动进食、有限防卫及revision策略；高差导航通过`navigation-3d`声明。生存终态单独记录，不因静默进食或取消而丢历史，也不逐击唤醒模型。当前验收与限制见[生存第二批](../docs/server_navigation_defense_validation.md)；下文13／21／33等数量属于相应历史阶段。
+
 这是独立的 TypeScript／MCP 包，使用同一 Body 契约连接两种后端。ServerBody 连接安装 `mcbot-server-control` 的独立服务器，显式接管服务端生存角色，无额外 Bot Minecraft 客户端；A／B／C、持续陪伴及有限采集首批已有对应真实验证。ClientBody 是保留的可选 V1 原型，连接安装 `mcbot-control` 的真实客户端，客户端须先由用户进入世界，游戏服务器无需安装该客户端控制 Mod。
 
 本包运行依赖仅声明 MCP SDK 与 zod，不安装或加载 Mineflayer，不读取 RCON。它不启动 Minecraft 或管理登录；ServerBody 的创建／附着、原生交互与显式重生由服务端控制模块执行。Agent／模型凭据留在宿主，连接文件是本机控制凭据，不能分享或提交仓库。

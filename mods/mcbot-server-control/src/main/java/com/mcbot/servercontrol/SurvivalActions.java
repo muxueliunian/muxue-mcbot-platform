@@ -11,6 +11,12 @@ import net.minecraft.network.protocol.game.*;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
+import net.neoforged.neoforge.event.entity.player.SweepAttackEvent;
 import net.minecraft.world.inventory.*;
 import net.minecraft.world.item.*;
 import net.minecraft.world.level.ClipContext;
@@ -24,7 +30,8 @@ import static com.mcbot.servercontrol.Protocol.*;
 
 /** Ordinary player packet entry points, with authoritative preconditions and no client prediction. */
 final class SurvivalActions {
-    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item");
+    private static final Map<ServerPlayer,NativeDefenseUse> NATIVE_ATTACKS=new IdentityHashMap<>();
+    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","defend-entity");
     private final ServerPlayer player;
     private final ControlSession session;
     private final TargetTokens targets;
@@ -43,6 +50,10 @@ final class SurvivalActions {
     private JsonObject knownMenuState;
     private long menuGeneration,revision;
     private final NativeActionBoundary nativeEffects=new NativeActionBoundary();
+    private NativeFoodUse eating;
+    private int lastEatTick=Integer.MIN_VALUE;
+    private NativeDefenseUse defense;
+    private int lastDefenseTick=Integer.MIN_VALUE;
     SurvivalActions(ServerPlayer player,ControlSession session,TargetTokens targets,ResourceTargets resources) { this.player=player;this.session=session;this.targets=targets;this.resources=resources; }
     boolean handles(String name) { return CAPABILITIES.contains(name); }
     private ServerPlayerGameModeAccessor mining() { return (ServerPlayerGameModeAccessor)player.gameMode; }
@@ -66,6 +77,30 @@ final class SurvivalActions {
         if(!stack.isEmpty())value.addProperty("maxStackSize",stack.getMaxStackSize());return value;
     }
     JsonObject stack(int slot,ItemStack stack) {JsonObject value=stackValue(stack);value.addProperty("slot",slot);return value;}
+    JsonObject observedStack(int slot,ItemStack stack) {
+        JsonObject value=StackObservation.value(itemId(stack),stack.getCount(),()->stackValue(stack));value.addProperty("slot",slot);return value;
+    }
+    JsonArray observedInventory() {
+        JsonArray result=new JsonArray();for(int i=0;i<player.getInventory().getContainerSize();i++)result.add(observedStack(i,player.getInventory().getItem(i)));return result;
+    }
+    JsonObject survivalState(JsonObject params) {
+        boolean details=!params.has("details")||bool(params,"details");
+        JsonArray foods=new JsonArray();
+        for(int slot=0;slot<36;slot++) {
+            ItemStack stack=player.getInventory().getItem(slot);if(stack.isEmpty())continue;
+            JsonObject food=FoodSafety.candidate(slot,stack,player);if(food!=null)foods.add(food);
+        }
+        JsonObject result=obj("dimension",player.serverLevel().dimension().location().toString(),"serverTick",player.getServer().getTickCount(),"observedAt",System.currentTimeMillis(),
+            "connected",true,"username",player.getGameProfile().getName(),"source","server-observed","health",player.getHealth(),"maxHealth",player.getMaxHealth(),
+            "food",player.getFoodData().getFoodLevel(),"saturation",player.getFoodData().getSaturationLevel(),"selectedSlot",player.getInventory().selected,
+            "usingItem",player.isUsingItem(),"foods",foods);
+        JsonObject dangers=ThreatSense.dangers(player),threats=ThreatSense.nearby(player);
+        for(JsonElement entry:threats.getAsJsonArray("nearby")) {
+            JsonObject threat=entry.getAsJsonObject();if(threat.has("explosionPreparing")&&!threat.get("explosionPreparing").isJsonNull()&&threat.get("explosionPreparing").getAsBoolean()&&threat.get("defenseEligible").getAsBoolean())dangers.addProperty("retreatRecommended",true);
+        }
+        result.add("dangers",dangers);result.add("threats",threats);
+        if(details)result.add("inventory",observedInventory());return result;
+    }
     JsonObject components(ItemStack stack) {
         if(stack.isEmpty()) return new JsonObject();
         for(var component:stack.getComponents()) if(component.type().isTransient())
@@ -183,6 +218,9 @@ final class SurvivalActions {
                 case "close-container" -> close(operation);
                 case "select-slot" -> selectSlot(operation);
                 case "drop-item" -> drop(operation);
+                case "swap-inventory" -> swapInventory(operation);
+                case "eat-item" -> eat(operation);
+                case "defend-entity" -> defend(operation);
                 default -> throw error("UNSUPPORTED","Unknown survival action");
             }
             },()->abort(operation));
@@ -195,7 +233,7 @@ final class SurvivalActions {
         if(args.has("targetToken")) {
             var resource=resources.require(player,string(args,"targetToken"));
             if(!resource.position().equals(position))throw error("STALE_TARGET","Resource reference position does not match digging target");
-            if(state.requiresCorrectToolForDrops()&&!player.getMainHandItem().isCorrectToolForDrops(state))throw error("MISSING_TOOL","Selected hand cannot obtain drops from this resource");
+            if(!player.hasCorrectToolForDrops(state,player.serverLevel(),position))throw error("MISSING_TOOL","Native position-sensitive harvest check refused resource drops for the selected hand");
         }
         if(state.isAir()||state.getDestroySpeed(player.serverLevel(),position)<0) throw error("NOT_DIGGABLE","Block cannot be dug");
         BlockHitResult hit=hit(position,null);look(hit.getLocation());guard(operation);
@@ -208,6 +246,14 @@ final class SurvivalActions {
         nativeEffects.confirmed(); // START was accepted, but the authoritative block is still unchanged.
     }
     void tick() {
+        if(defense!=null&&lastDefenseTick!=player.getServer().getTickCount()) {
+            lastDefenseTick=player.getServer().getTickCount();NativeDefenseUse current=defense;current.tick();
+            if(defense==current&&!current.alive())defense=null;
+        }
+        if(eating!=null&&lastEatTick!=player.getServer().getTickCount()) {
+            lastEatTick=player.getServer().getTickCount();NativeFoodUse current=eating;current.tick();
+            if(eating==current&&!current.alive())eating=null;
+        }
         if(digging==null||lastDigTick==player.getServer().getTickCount()) return;
         lastDigTick=player.getServer().getTickCount();ControlSession.Operation operation=digging;
         try {
@@ -320,6 +366,153 @@ final class SurvivalActions {
         worldAction();JsonObject args=operation.args;int slot=hotbar(args);expectedItem(args,"expectedItem","expectedCount","expectedComponents",player.getInventory().getItem(slot));guard(operation);
         nativeEffects.sent();select(slot);operation.finish(player.getInventory().selected==slot?"succeeded":"unknown","Native selected hotbar slot observed",obj("selectedSlot",player.getInventory().selected,"stack",hand()));
     }
+    private void expectedStack(JsonObject expected,ItemStack stack) {
+        if(expected.has("componentsComplete")&&!bool(expected,"componentsComplete"))throw error("INCOMPLETE_GUARD","Expected stack components are incomplete");
+        if(!string(expected,"id").equals(itemId(stack))||integer(expected,"count")!=stack.getCount()||!object(expected,"components").equals(components(stack)))throw error("STALE_ITEM","Inventory stack ID, count or components changed");
+        if(expected.has("maxStackSize")&&(stack.isEmpty()||integer(expected,"maxStackSize")!=stack.getMaxStackSize()))throw error("STALE_ITEM","Inventory stack maximum changed");
+    }
+    private void swapInventory(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;int source=integer(args,"sourceSlot"),target=integer(args,"hotbarSlot");
+        if(source<0||source>35||target<0||target>8||source==target)throw error("INVALID_ARGUMENT","Swap requires distinct main inventory 0..35 and hotbar 0..8 slots");
+        AbstractContainerMenu menu=player.inventoryMenu;
+        if(!menu.getCarried().isEmpty()||!menu.stillValid(player))throw error("BUSY","Inventory swap requires an empty cursor and valid own inventory menu");
+        var backing=menu.slots.stream().map(slot->new MenuSlotSources.BackingSlot(slot.container,slot.getContainerSlot(),slot.container.getContainerSize())).toList();
+        int sourceMenu=InventorySwap.menuSlot(backing,player.getInventory(),source),targetMenu=InventorySwap.menuSlot(backing,player.getInventory(),target);
+        Slot sourceSlot=menu.getSlot(sourceMenu),targetSlot=menu.getSlot(targetMenu);
+        ItemStack sourceStack=player.getInventory().getItem(source),targetStack=player.getInventory().getItem(target);
+        expectedStack(object(args,"expectedSource"),sourceStack);expectedStack(object(args,"expectedTarget"),targetStack);
+        if(!sourceSlot.isActive()||!targetSlot.isActive()||(!sourceStack.isEmpty()&&(!sourceSlot.mayPickup(player)||!targetSlot.mayPlace(sourceStack)||sourceStack.getCount()>targetSlot.getMaxStackSize(sourceStack)))
+            ||(!targetStack.isEmpty()&&(!targetSlot.mayPickup(player)||!sourceSlot.mayPlace(targetStack)||targetStack.getCount()>sourceSlot.getMaxStackSize(targetStack))))throw error("UNSUPPORTED","Native slot eligibility or capacity does not permit a complete swap");
+        JsonArray before=observedInventory();guard(operation);
+        if(player.containerMenu!=menu||!menu.getCarried().isEmpty())throw error("STALE_CONTAINER","Own inventory menu or cursor changed before swap");
+        nativeEffects.sent();
+        player.connection.handleContainerClick(new ServerboundContainerClickPacket(menu.containerId,menu.getStateId(),sourceMenu,target,ClickType.SWAP,menu.getCarried().copy(),new Int2ObjectOpenHashMap<>()));
+        // Relevant stacks must still encode completely; unrelated inventory entries may carry explicit read-only degradation.
+        stackValue(player.getInventory().getItem(source));stackValue(player.getInventory().getItem(target));
+        JsonArray after=observedInventory();JsonObject result=obj("sourceSlot",source,"hotbarSlot",target,"inventory",after);
+        if(player.containerMenu!=menu||!menu.getCarried().isEmpty())operation.finish("unknown","Inventory menu or cursor changed during native swap; do not repeat",result);
+        else if(InventorySwap.exact(before,after,source,target))operation.finish("succeeded","Native inventory SWAP and complete source/target receipts confirmed",result);
+        else if(before.equals(after))operation.finish("failed","Native swap produced no inventory change",obj("code","FORBIDDEN","sourceSlot",source,"hotbarSlot",target,"inventory",after));
+        else operation.finish("unknown","Native swap produced other inventory effects; do not repeat",result);
+    }
+    private void eat(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;int slot=hotbar(args);ItemStack stack=player.getInventory().getItem(slot);
+        if(!player.inventoryMenu.getCarried().isEmpty())throw error("BUSY","Food use requires an empty own inventory cursor");
+        expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
+        FoodSafety.Profile profile=FoodSafety.assess(stack,player);
+        if(!profile.safe())throw error("UNSUPPORTED","Food has unverified or protected consumption semantics: "+profile.reason());
+        if(!player.canEat(false))throw error("FORBIDDEN","Body is not hungry; no native food use was sent");
+        JsonObject before=stackValue(stack),returned=profile.food().usingConvertsTo().map(this::stackValue).orElse(null);
+        long eatDeadline=now()+(long)bounded(args,"timeoutMs",Math.max(15_000,profile.food().eatDurationTicks()*50L+2_000),500,120_000);
+        NativeFoodUse use=new NativeFoodUse(operation,new NativeFoodUse.View() {
+            public void guard(){SurvivalActions.this.guard(operation);}
+            public int slot(){return player.getInventory().selected;}
+            public boolean using(){return player.isUsingItem();}
+            public boolean mainHand(){return player.getUsedItemHand()==InteractionHand.MAIN_HAND;}
+            public JsonObject hand(){return stackValue(player.getMainHandItem());}
+            public JsonArray inventory(){return observedInventory();}
+            public int food(){return player.getFoodData().getFoodLevel();}
+            public float saturation(){return player.getFoodData().getSaturationLevel();}
+            public void stopUsing(){stopNativeFoodUse();}
+        },nativeEffects,SurvivalActions::now,eatDeadline,slot,before,returned);
+        eating=use;lastEatTick=Integer.MIN_VALUE;guard(operation);nativeEffects.sent();select(slot);
+        if(player.getInventory().selected!=slot||!before.equals(stackValue(player.getMainHandItem())))throw error("STALE_ITEM","Native selected hand differs from guarded food");
+        player.connection.handleUseItem(new ServerboundUseItemPacket(InteractionHand.MAIN_HAND,++sequence,player.getYRot(),player.getXRot()));
+        use.tick();if(!use.alive())eating=null;
+    }
+    void receiveFoodFinish(boolean mainHand,ItemStack original,ItemStack result) {
+        NativeFoodUse use=eating;if(use==null||!use.alive())return;
+        nativeEffects.tick(use.operation,()->use.finished(mainHand,player.getInventory().selected,stackValue(original),stackValue(result)),()->abortEat(use.operation));
+    }
+    private void defend(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;int slot=hotbar(args);
+        if(slot!=player.getInventory().selected)throw error("STALE_ITEM","Select and prepare the defense hand explicitly first");
+        if(!player.inventoryMenu.getCarried().isEmpty())throw error("BUSY","Defense requires an empty own inventory cursor");
+        ItemStack stack=player.getMainHandItem();expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
+        String entityId=string(args,"entityId"),dimension=string(args,"expectedDimension");
+        LivingEntity target=ThreatSense.lookup(player,entityId,dimension);ThreatSense.requireEligible(player,target);
+        if(!target.isAlive())throw error("STALE_TARGET","Threat is no longer alive");
+        double distance=bounded(args,"maxDistance",3,1,3),minHealth=bounded(args,"minHealth",8,1,20);
+        double attacksValue=bounded(args,"maxAttacks",2,1,3);
+        if(attacksValue!=Math.rint(attacksValue))throw error("INVALID_ARGUMENT","maxAttacks must be an integer");
+        int maximum=(int)attacksValue;DefenseWeaponSafety.require(stack,maximum);
+        long defenseDeadline=now()+(long)bounded(args,"timeoutMs",3000,500,5000);
+        JsonObject[] expected={stackValue(stack)};
+        NativeDefenseUse use=new NativeDefenseUse(operation,new NativeDefenseUse.View() {
+            public void guard(){
+                SurvivalActions.this.guard(operation);worldAction();
+                if(!player.serverLevel().dimension().location().toString().equals(dimension))throw error("WORLD_CHANGED","Defense dimension changed");
+                if(player.getInventory().selected!=slot||!expected[0].equals(stackValue(player.getMainHandItem())))throw error("STALE_ITEM","Defense hand changed");
+                if(!player.inventoryMenu.getCarried().isEmpty())throw error("BUSY","Defense cursor is no longer empty");
+                DefenseWeaponSafety.require(player.getMainHandItem(),maximum);
+            }
+            public String termination(){
+                if(!target.isAlive())return "target_dead";
+                if(target.isRemoved()||player.serverLevel().getEntity(target.getUUID())!=target)return "target_left";
+                ThreatSense.requireEligible(player,target);
+                if(ThreatSense.retreatRequired(player,target,minHealth)||player.isInLava())throw error("RETREAT_REQUIRED","Low health or preparing explosion requires a separately bounded safe retreat");
+                if(player.distanceToSqr(target)>distance*distance||!player.canInteractWithEntity(target,0))return "target_left";
+                if(!player.hasLineOfSight(target))return "lost_line_of_sight";
+                // Native sweep hooks can enable sweeping even for an axe. Verify the native item-extension envelope first.
+                AABB sweep=player.getMainHandItem().getSweepHitBox(player,target);
+                if(!sweep.equals(target.getBoundingBox().inflate(1,0.25,1)))throw error("UNSUPPORTED","UNVERIFIED_SWEEP_ENVELOPE");
+                double reach=player.entityInteractionRange();
+                if(!Double.isFinite(reach)||reach<=0)throw error("UNSUPPORTED","UNVERIFIED_NATIVE_ENTITY_REACH");
+                for(LivingEntity other:player.serverLevel().getEntitiesOfClass(LivingEntity.class,sweep))
+                    if(other!=player&&other!=target&&other.isAlive()&&player.distanceToSqr(other)<reach*reach)throw error("COLLATERAL_RISK","Another living entity is inside the native sweep envelope");
+                return null;
+            }
+            public boolean cooledDown(){return player.getAttackStrengthScale(0.5f)>=1f;}
+            public boolean targetAlive(){return target.isAlive();}
+            public void attack(){
+                NativeDefenseUse scope=defense;
+                if(scope==null||scope.operation!=operation)throw error("LEASE_LOST","Defense intent changed before native call");
+                NATIVE_ATTACKS.put(player,scope);
+                try {
+                look(target.getEyePosition());player.attack(target);
+                scope.requireNativeAuthorized();
+                // A synchronous native callback may cancel or revoke control. Do not emit a late swing after it.
+                if(!session.mayDrive(operation))throw error("LEASE_LOST","Control changed inside native attack");
+                player.swing(InteractionHand.MAIN_HAND,true);
+                JsonObject after=stackValue(player.getMainHandItem()),before=expected[0].deepCopy(),comparable=after.deepCopy();
+                before.getAsJsonObject("components").remove("minecraft:damage");comparable.getAsJsonObject("components").remove("minecraft:damage");
+                if(!before.equals(comparable))throw error("DEFENSE_EFFECT_UNKNOWN","Native attack changed unexpected selected item fields");
+                expected[0]=after;
+                } finally {NATIVE_ATTACKS.remove(player,scope);}
+            }
+        },nativeEffects,SurvivalActions::now,defenseDeadline,maximum,entityId);
+        // Initial eligibility failures precede any native attack. Every subsequent tick repeats these checks.
+        defense=use;lastDefenseTick=player.getServer().getTickCount();use.tick();if(!use.alive())defense=null;
+    }
+    void receiveDamage(LivingDamageEvent.Post event) {
+        NativeDefenseUse use=NATIVE_ATTACKS.get(player);
+        if(use!=null&&event.getSource().getDirectEntity()==player&&event.getSource().getEntity()==player&&event.getSource().is(DamageTypes.PLAYER_ATTACK))
+            use.receipt(event.getEntity().getUUID().toString(),event.getNewDamage());
+    }
+    static boolean nativeWriteInProgress(ServerPlayer player) {return player!=null&&NATIVE_ATTACKS.containsKey(player);}
+    static void guardNativeAttack(AttackEntityEvent event) {
+        NativeDefenseUse scope=NATIVE_ATTACKS.get(event.getEntity());
+        if(scope!=null&&!scope.allowNativeTarget(event.getTarget().getUUID().toString()))event.setCanceled(true);
+    }
+    static void guardNativeIncomingDamage(LivingIncomingDamageEvent event) {
+        NativeDefenseUse scope=NATIVE_ATTACKS.get(event.getSource().getDirectEntity());
+        if(scope==null)return;
+        boolean authorized=event.getSource().getEntity()==event.getSource().getDirectEntity()&&event.getSource().is(DamageTypes.PLAYER_ATTACK);
+        if(!authorized)scope.refuseNative(error("DEFENSE_EFFECT_UNKNOWN","Unexpected native damage source inside defense"));
+        if(!authorized||!scope.allowNativeTarget(event.getEntity().getUUID().toString()))event.setCanceled(true);
+    }
+    static void guardNativeSweep(SweepAttackEvent event) {
+        if(!NATIVE_ATTACKS.containsKey(event.getEntity()))return;
+        // Native single-target defense never authorizes an area attack, including Mod-forced axe sweeps.
+        event.setSweeping(false);event.setCanceled(true);
+    }
+    private void stopNativeFoodUse() {
+        try { if(player.isUsingItem())action(ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM,BlockPos.ZERO,Direction.DOWN); }
+        finally {player.stopUsingItem();}
+    }
+    private void abortEat(ControlSession.Operation operation) {
+        NativeFoodUse use=eating;if(use==null||use.operation!=operation)return;eating=null;use.stop();
+    }
     private Set<Integer> droppedEntities() {
         Set<Integer> ids=new HashSet<>();for(ItemEntity entity:player.serverLevel().getEntitiesOfClass(ItemEntity.class,player.getBoundingBox().inflate(8))) ids.add(entity.getId());return ids;
     }
@@ -357,7 +550,7 @@ final class SurvivalActions {
             throw error("STALE_TARGET","Recipient changed, left 1.5-block reach or is not visible");
     }
     void stop() {
-        try { abortDig(); } finally {
+        try {if(defense!=null){defense.stop();defense=null;}if(eating!=null)abortEat(eating.operation);abortDig();} finally {
             try {
                 player.stopUsingItem();
                 if(player.containerMenu!=player.inventoryMenu) player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));
@@ -365,5 +558,5 @@ final class SurvivalActions {
             finally { knownMenu=null;knownMenuState=null;guardedToken=null;guardedTarget=null;guardedMenu=null; }
         }
     }
-    void abort(ControlSession.Operation operation) { if(digging==operation) abortDig(); }
+    void abort(ControlSession.Operation operation) {if(defense!=null&&defense.operation==operation){defense.stop();defense=null;}if(eating!=null&&eating.operation==operation)abortEat(operation);if(digging==operation) abortDig();}
 }

@@ -24,6 +24,7 @@ export const CODEX_SERVER_TOOLS = Object.freeze([
   'approach-container', 'approach-player',
   'companion-mode', 'get-companion-mode',
   'discover-resources', 'gather-resources', 'collect-items',
+  'get-survival-state', 'assess-tool', 'prepare-item', 'eat-food', 'set-reflexes', 'defend-self',
 ]);
 
 // Windows 的 npm .ps1/.cmd shim 不能直接交给 spawn；用 Node 启动官方 npm 入口。
@@ -126,6 +127,11 @@ export function createCodexConnection({ write, emit, fail, conversationId = '', 
     startingTurn = false;
     if (!result.turn?.id) throw new Error('Codex 没有返回 turn.id');
     if (!finishedTurns.has(result.turn.id)) activeTurn = result.turn.id;
+    // stdout can deliver the ACK and completion in the same read before this continuation.
+    // Bind the buffered terminal notification to the acknowledged ID, never an unrelated old turn.
+    const early = turn.earlyCompletions.get(result.turn.id);
+    turn.earlyCompletions.clear();
+    if (early) finish(early);
   }
 
   function finish(turn) {
@@ -230,7 +236,11 @@ export function createCodexConnection({ write, emit, fail, conversationId = '', 
       case 'thread/tokenUsage/updated':
         if (Number.isFinite(p.tokenUsage?.last?.totalTokens)) emit({ type: 'usage', contextTokens: p.tokenUsage.last.totalTokens });
         break;
-      case 'turn/completed': finish(p.turn); break;
+      case 'turn/completed':
+        if (!activeTurn && startingTurn && pendingTurn && p.turn?.id) {
+          if (pendingTurn.earlyCompletions.size < 8) pendingTurn.earlyCompletions.set(p.turn.id, p.turn);
+        } else finish(p.turn);
+        break;
     }
   }
 
@@ -241,7 +251,7 @@ export function createCodexConnection({ write, emit, fail, conversationId = '', 
       if (pendingTurn !== null) throw new Error('Codex 上一回合尚未结束');
       let resolve;
       const done = new Promise((r) => { resolve = r; });
-      pendingTurn = { text, done, resolve, cancelled: false };
+      pendingTurn = { text, done, resolve, cancelled: false, earlyCompletions: new Map() };
       runTurn(pendingTurn).catch((e) => { if (!disposed && !stopping) fail(e); });
     },
     handleMessage,

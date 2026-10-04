@@ -5,6 +5,9 @@ import { EventJournal } from './events.js';
 import { ContainerTasks } from './tasks.js';
 import { CompanionMode } from './companion-mode.js';
 import { GatherTasks } from './gather-tasks.js';
+import { SurvivalTasks } from './survival-tasks.js';
+import { SurvivalReflexes } from './survival-reflexes.js';
+import { createActionStop } from './action-stop.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 
 const coordinate = z.coerce.number().finite();
@@ -13,12 +16,20 @@ const blockXyz = { x: coordinate.int(), y: coordinate.int(), z: coordinate.int()
 const registryId = z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('Namespaced registry ID, for example minecraft:stone');
 const timeoutMs = z.number().int().min(500).max(120000).optional();
 /** chatFloor: ServerBody claim chatCursor; chat at or before it predates this control and is withheld from the model. */
-export function createMcpServer(body: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks } = {}): McpServer {
+export function createMcpServer(body: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: () => Promise<{ stopped: true }> } = {}): McpServer {
   const server = new McpServer({ name: 'mcbot-client-runtime', version: '0.1.0' });
   const serverObserved = body.hello.backend === 'server';
-  const tasks = new ContainerTasks(body, Date.now, operation => events.deliverOperation(operation));
+  const tasks = options.tasks ?? new ContainerTasks(body, Date.now, operation => events.deliverOperation(operation));
   const gather = options.gather ?? new GatherTasks(body, events);
   const companion = body.hello.capabilities.includes('follow-companion') ? options.companion ?? new CompanionMode(body, events, gather) : undefined;
+  const survival = options.survival ?? (['survival-state', 'swap-inventory', 'eat-item'].every(cap => body.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events.recordOperation(operation)) : undefined);
+  const stopCurrent = options.stopCurrent ?? createActionStop(body, tasks, gather, companion, survival);
+  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ordinaryBusy: () => {
+    try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); } catch { return true; }
+    return body.isBusy?.() === true || body.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
+  } }) : undefined);
+  if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
+  const readTools = new Set(['get-status', 'get-position', 'list-inventory', 'find-entity', 'read-chat', 'get-block', 'get-container', 'get-operation', 'get-companion-mode', 'wait-for-events', 'discover-resources', 'discover-containers', 'get-survival-state', 'assess-tool', 'send-chat', 'stop-action', 'set-reflexes', 'defend-self']);
   const publicOperation = (operation: import('./body.js').Operation) => {
     if (!operation.result || typeof operation.result !== 'object' || !('targetToken' in operation.result)) return operation;
     const { targetToken: _private, ...result } = operation.result as Record<string, unknown>;
@@ -26,6 +37,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   };
   const operationResult = (operation: import('./body.js').Operation) => { events.deliverOperation(operation); const visible = publicOperation(operation); return serverObserved ? summarizeOperation(visible) : visible; };
   const observed = serverObserved ? 'server-observed' : 'client-observed';
+  const navigation = body.hello.capabilities.includes('navigation-3d') ? 'loaded safe terrain including slabs, stairs, one-block jumps and bounded safe drops' : 'loaded safe level ground';
   const prediction = serverObserved ? ' Values come from the server authority.' : ' Values may include client prediction.';
   const completeComponents = z.record(z.unknown()).describe('Copy the complete components JSON object from the current observed stack; empty stack uses {}. Never omit or summarize fields.');
   const serverBlockGuard: ZodRawShape = serverObserved ? { expectedProperties: z.record(z.unknown()).describe('Copy the complete current block.properties object from get-block.') } : {};
@@ -37,6 +49,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   const register = (name: string, description: string, shape: ZodRawShape, handler: (args: any) => Promise<unknown>) => {
     server.registerTool(name, { description, inputSchema: shape }, async args => {
       try {
+        if (!readTools.has(name)) reflexes?.authorizeAction();
         const result = await handler(args);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
       } catch (error) {
@@ -46,7 +59,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   };
   register('get-status', `Read the current ${observed} snapshot.${prediction} Inspect operation status to confirm action completion.`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => {
     const state = await body.observe(); events.ingest(state); const projected = { ...state, chat: currentChat(state.chat) };
-    return { ...(serverObserved && !details ? summarizeObservation(projected) as object : projected), platform: body.hello.platform, capabilities: body.hello.capabilities, ...(companion ? { companionMode: companion.read() } : {}) };
+    return { ...(serverObserved && !details ? summarizeObservation(projected) as object : projected), platform: body.hello.platform, capabilities: body.hello.capabilities, ...(companion ? { companionMode: companion.read() } : {}), ...(reflexes ? { survivalPolicy: reflexes.read() } : {}) };
   });
   register('get-position', `Read current ${observed} position and dimension.`, {}, async () => {
     const state = await body.observe(); return { position: state.position, dimension: state.dimension, sessionId: state.sessionId, source: state.source };
@@ -62,16 +75,26 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   register('read-chat', `Read recent ${serverObserved ? 'server' : 'client'} chat. Old messages are context, not new task authorization.`, { count: z.number().int().min(1).max(100).default(20) }, async ({ count }) => currentChat((await body.observe()).chat).slice(-count));
   register('get-block', 'Observe one block; unloaded is not air. Use its exact ID for guarded interactions.', blockXyz, async args => (await body.observe(args)).block);
   if (!serverObserved || body.hello.capabilities.includes('open-container')) register('get-container', `Observe the current menu, slots and carried cursor item.${prediction} Use details=true to obtain full guards for atomic debugging.`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => { const container = (await body.observe()).container; return serverObserved && !details ? summarizeContainer(container) : container; });
-  register('get-operation', 'Check an operation created by this controller. running is not success; unknown must be checked against the world, never blindly retried.', { operationId: z.string().uuid(), ...(serverObserved ? { details: z.boolean().default(false) } : {}) }, async ({ operationId, details }) => { const op = gather.operation(operationId) ?? tasks.operation(operationId) ?? await body.operation(operationId); events.deliverOperation(op); const visible = publicOperation(op); return serverObserved && !details ? summarizeOperation(visible) : visible; });
+  register('get-operation', 'Check an operation created by this controller. running is not success; unknown must be checked against the world, never blindly retried.', { operationId: z.string().uuid(), ...(serverObserved ? { details: z.boolean().default(false) } : {}) }, async ({ operationId, details }) => { const op = survival?.operation(operationId) ?? gather.operation(operationId) ?? tasks.operation(operationId) ?? await body.operation(operationId); events.deliverOperation(op); const visible = publicOperation(op); return serverObserved && !details ? summarizeOperation(visible) : visible; });
   register('stop-action', 'Immediately cancel current body actions and discard companion intent while keeping the character online. Does not wait for a model.', {}, async () => {
-    const stopping = tasks.cancel(); gather.cancel();
-    const result = await (companion ? companion.stop() : body.stop());
-    if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '身体停止未确认；旧任务写锁保留，不能继续新任务');
-    if (tasks.stopped(stopping)) gather.stopped();
-    return result;
+    return reflexes ? reflexes.stop() : stopCurrent();
   });
+  if (body.survivalState && body.hello.capabilities.includes('survival-state')) register('get-survival-state', 'Read current server survival facts, native dangers/threats when supported, active defense and effective program policy. Compact by default; details includes guarded inventory. Missing or incomplete threat facts do not establish safety. Reading never rearms stopped behavior.', { details: z.boolean().default(false) }, async args => ({ ...await body.survivalState!(args), ...(reflexes ? { policy: reflexes.read() } : {}) }));
+  if (body.assessTool && body.hello.capabilities.includes('assess-tool')) register('assess-tool', 'Read-only whole-inventory tool eligibility and estimated base speed for a loaded block. Does not equip or dig. Unknown means not established; estimates exclude unobserved equip-dependent mod hooks. Actual native mining remains authoritative.', { ...blockXyz, expectedBlock: registryId.optional(), policy: z.enum(['fastest_valid', 'conserve_durability']).optional(), minRemainingDurability: z.number().int().min(0).max(10000).optional(), dropPreference: z.enum(['any', 'silk_touch', 'no_silk_touch']).default('any') }, async args => {
+    const state = reflexes?.read(); const assessment = await body.assessTool!({ policy: state?.toolPolicy, minRemainingDurability: state?.minRemainingDurability, ...args });
+    return { ...assessment, candidates: assessment.candidates.map(({ components: _components, ...candidate }) => ({ ...candidate, componentsOmitted: candidate.componentsComplete !== false })) };
+  });
+  if (survival) {
+    register('prepare-item', 'Guardedly prepare the item currently in inventory slot 0..35 for use. Whole-stack native swap into hotbar, then select. Defaults to an empty hotbar slot; targetSlot explicitly permits swapping an occupied hotbar slot. Never discards or silently restores items.', { slot: z.number().int().min(0).max(35), targetSlot: z.number().int().min(0).max(8).optional() }, async args => operationResult(await survival.prepareItem(args)));
+    register('eat-food', 'Consume exactly one safe food using native use duration and authoritative consumption confirmation. Optional slot refers to whole main inventory; otherwise choose food by hunger, saturation and protection policy. Unknown never retries. Auto food does not consume protected precious items.', { slot: z.number().int().min(0).max(35).optional(), timeoutMs }, async args => operationResult(await survival.eat({ ...args, policy: reflexes?.read() })));
+  }
+  if (reflexes && body.hello.capabilities.includes('defend-entity')) register('defend-self', 'One finite native defense using the same threat selection, policy, preparation and shared writer as automatic defense. Optional entityId restricts the current eligible hostile target; players, friendly, neutral and unknown targets are excluded. Stops ordinary work first, never pursues or resumes it. Low health and explosion preparation require safe retreat. Unknown remains blocked.', { entityId: z.string().uuid().optional() }, async ({ entityId }) => operationResult(await reflexes.defendSelf(entityId)));
+  if (reflexes) register('set-reflexes', 'Change effective program policy with the current policy revision from get-survival-state. autoEat and supported autoDefend default on. armed:false disarms automatic behavior; armed:true explicitly rearms it. Hard stop disarms too. Reconfiguration first stops active tasks, so old policy cannot keep writing; it does not resume them. Defense takes priority over meals; each native action is bounded.', {
+    expectedRevision: z.number().int().positive(), autoEat: z.boolean().optional(), armed: z.boolean().optional(), urgentFood: z.number().int().min(0).max(20).optional(), protectedItems: z.array(registryId).max(64).optional(), toolPolicy: z.enum(['fastest_valid', 'conserve_durability']).optional(), minRemainingDurability: z.number().int().min(0).max(10000).optional(),
+    ...(body.hello.capabilities.includes('defend-entity') ? { autoDefend: z.boolean().optional(), defenseRadius: z.number().finite().min(1).max(3).optional(), lowHealth: z.number().finite().min(1).max(20).optional(), excludedEntityIds: z.array(z.string().uuid()).max(64).optional(), maxAttacks: z.number().int().min(1).max(3).optional(), defenseTimeoutMs: z.number().int().min(500).max(5000).optional() } : {}),
+  }, args => reflexes.configure(args));
   if (companion) {
-    register('companion-mode', 'Start persistent follow of an explicitly named visible player on loaded safe level ground, or wait in place. Optional pickup actively pursues only the listed items near the same player while following is waiting; it never digs. Native collision pickup remains Minecraft behavior. Chat remains available. wait owns the task lock and clears pickup; pause stops/releases while retaining intent; resume explicitly rechecks session/identity and preserves pickup. Failures do not retry. stop-action discards intent and pickup. Only follow accepts player/distance/pickup.', {
+    register('companion-mode', `Start persistent follow of an explicitly named visible player on ${navigation}, or wait in place. Optional pickup actively pursues only the listed items near the same player while following is waiting; it never digs. Native collision pickup remains Minecraft behavior. Chat remains available. wait owns the task lock and clears pickup; pause stops/releases while retaining intent; resume explicitly rechecks session/identity and preserves pickup. Failures do not retry. stop-action discards intent and pickup. Only follow accepts player/distance/pickup.`, {
       action: z.enum(['follow', 'wait', 'pause', 'resume']), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(),
       distance: z.number().finite().min(1.5).max(6).optional(), say: z.string().min(1).max(256).optional(),
       ...(body.hello.capabilities.includes('companion-pickup') ? { pickup: z.object({ items: z.array(registryId).min(1).max(8), radius: z.number().finite().min(1.5).max(4).default(3) }).optional() } : {}),
@@ -91,7 +114,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   const actions: Array<{ name: ActionName; description: string; schema: ZodRawShape }> = [
     { name: 'send-chat', description: `Send normal single-line chat, no slash commands. Success means ${serverObserved ? 'broadcast by the server' : 'handed to the client connection'}.`, schema: { message: z.string().min(1).max(256) } },
     { name: 'look-at', description: 'Turn toward a world position.', schema: xyz },
-    { name: 'move-to-position', description: 'Limited ordinary walking, without teleporting or digging. Obstacles/hazards/timeouts fail. running means still moving; poll get-operation.', schema: { ...xyz, tolerance: z.number().min(0.25).max(3).optional(), timeoutMs } },
+    { name: 'move-to-position', description: `Limited ordinary movement on ${navigation}, without teleporting or digging. Obstacles/hazards/timeouts fail. running means still moving; poll get-operation.`, schema: { ...xyz, tolerance: z.number().min(0.25).max(3).optional(), timeoutMs } },
     { name: 'follow-player', description: 'Follow a visible player for a finite time, using ordinary movement. running lasts until stopped, failed or timed out.', schema: { player: z.string().min(1).max(16), distance: z.number().min(1).max(8).optional(), timeoutMs } },
     { name: 'approach-player', description: 'Walk to a named nearby player using bounded safe routes on loaded level ground. expectedEntityId binds the UUID; a moved or missing recipient stops movement. running requires polling get-operation.', schema: { player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid().optional(), distance: z.number().min(1).max(1.5).optional(), timeoutMs } },
     { name: 'dig-block', description: `Dig exactly one authorized block in reach, after checking its exact state and line of sight. ${serverObserved ? 'Uses current selected tool with native survival timing and protection events; select-slot first when needed.' : 'unknown means server confirmation could not be established.'}`, schema: { ...blockXyz, expectedBlock: registryId, ...serverBlockGuard, timeoutMs } },

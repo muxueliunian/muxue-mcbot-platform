@@ -7,6 +7,7 @@ function stackSummary(stack: ItemStack | Container['carried']) {
     ...('slot' in stack ? { slot: stack.slot } : {}), id: stack.id, count: stack.count,
     ...(stack.count > 0 && stack.maxStackSize !== undefined ? { maxStackSize: stack.maxStackSize } : {}),
     ...('mayPickup' in stack && stack.mayPickup === false ? { mayPickup: false } : {}),
+    ...(stack.componentsComplete === false ? { componentsComplete: false, actionable: false, componentError: stack.componentError } : {}),
     hasComponents: Object.keys(components).length > 0,
     // Preserve a warning that stacks with the same registry ID need not be interchangeable.
     ...(Object.keys(components).length ? { componentsOmitted: true } : {}),

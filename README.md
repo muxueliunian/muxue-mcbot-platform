@@ -10,6 +10,10 @@ MCBOT的独立整理版：让不同Agent通过统一工具与任务接口，在M
 
 - **网页端评审：[架构评审入口](docs/review_guide.md)**
 - [交付计划](docs/delivery_plan.md)
+- [基础生存Alpha计划与剩余项](docs/survival_alpha_plan.md)
+- [第一批背包／工具／进食验收](docs/server_survival_alpha_validation.md)
+- [第二批导航／防卫验收](docs/server_navigation_defense_validation.md)
+- [基础生存试玩步骤](docs/survival_trial.md)
 - [开发与构建](docs/dev.md)
 - [部署与架构取舍](docs/architecture_reassessment.md)
 - [ServerBody协议](docs/server_body_protocol.md)
@@ -27,9 +31,11 @@ MCBOT的独立整理版：让不同Agent通过统一工具与任务接口，在M
 | 持续跟随／等待／暂停／指定物品拾取 | 已验证，程序执行重复动作，聊天并行 |
 | 有限采集、Agent自主选择数量、实际堆叠上限 | 首批已验证，资源仅部分石料与原木 |
 | 内容Mod | 仅Iron Furnaces普通未运转铁炉的有限样本 |
+| 背包到热栏、全背包工具评估、自动进食与AI策略 | 第一批已实测，速度为基础估计，特殊Mod食品／工具未普遍支持 |
+| 有限高差寻路、自动自卫及威胁决策 | 实际程序55项及Claude-b五阶段通过，已完成30分钟受控运行及独立短复验（生命值检查缺口见记录）；有明确地形／武器范围 |
 | 自动陪挖、建筑、运行机器、单机／异机、更多Agent/API、多版本 | 尚未交付 |
 
-当前仅声明MC1.21.1／NeoForge21.1.217、单Bot、本机loopback控制。33个MCP工具不代表所有参数、Mod或服务器均已支持。最新真实证据见[跟随拾取](docs/server_escort_validation.md)与[有限采集](docs/server_gather_validation.md)。
+当前仅声明MC1.21.1／NeoForge21.1.217、单Bot、本机loopback控制。39个MCP工具不代表所有Mod／服务器均已支持。最新证据见[生存第二批](docs/server_navigation_defense_validation.md)；连续验收与野外边界分别记录，不把受控短测说成通用生存能力。本机Node24.15原生退出仍待定位，本批使用Node24.19验证，启动可显式指定`-NodePath`。
 
 ## 目录
 

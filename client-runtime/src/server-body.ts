@@ -2,15 +2,26 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
-import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources } from './body.js';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions } from './body.js';
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const components = z.record(z.unknown());
 const maxStackSize = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional();
 const position = z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() });
-const stack = z.object({ slot: z.number().int().nonnegative(), id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize, source: z.enum(['container', 'player', 'unknown']).optional(), playerSlot: z.number().int().nonnegative().optional(), active: z.boolean().optional(), mayPickup: z.boolean().optional() });
+const observedStackShape = { slot: z.number().int().nonnegative(), id: z.string(), count: z.number().int().nonnegative(), components: components.optional(), componentsComplete: z.boolean().optional(), componentError: z.string().optional(), maxStackSize, source: z.enum(['container', 'player', 'unknown']).optional(), playerSlot: z.number().int().nonnegative().optional(), active: z.boolean().optional(), mayPickup: z.boolean().optional() };
+const validComponents = (value: { componentsComplete?: boolean; components?: unknown }) => value.componentsComplete === false ? value.components === undefined : value.components !== undefined;
+const stack = z.object(observedStackShape).refine(validComponents, 'Incomplete components require an explicit unavailable marker, never an invented empty object');
 const itemValue = z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize });
+const stateIdentity = { instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation };
+const threatSchema = z.object({ entityId: z.string().uuid(), type: identifier.nullable(), classification: z.enum(['hostile', 'attacking_self', 'neutral', 'friendly', 'player', 'unknown']), hostilitySource: z.enum(['vanilla_hostile_allowlist', 'native_target_self', 'native_recent_attacker', 'none', 'unknown']), targetingSelf: z.boolean().nullable(), distance: z.number().finite().nonnegative().nullable(), lineOfSight: z.boolean().nullable(), alive: z.boolean().nullable(), explosionPreparing: z.boolean().nullable(), defenseEligible: z.boolean(), defenseReason: z.string().nullable(), factsAvailable: z.boolean().optional() }).refine(threat => threat.factsAvailable !== false || threat.classification === 'unknown' && threat.hostilitySource === 'unknown' && threat.defenseEligible === false, 'Unavailable threat facts cannot declare an eligible hostile');
+const survivalSchema = z.object({ ...stateIdentity, serverTick: generation, observedAt: z.number().finite(), health: z.number().finite(), maxHealth: z.number().positive(), food: z.number().finite(), saturation: z.number().finite(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack).optional(),
+  dangers: z.object({ onFire: z.boolean(), inLava: z.boolean(), inWater: z.boolean(), air: z.number().finite(), maxAir: z.number().finite(), fallDistance: z.number().finite().nonnegative(), lowHealth: z.boolean(), retreatRecommended: z.boolean() }).optional(),
+  threats: z.object({ radius: z.number().finite().positive().max(32), complete: z.boolean(), nearby: z.array(threatSchema).max(64), serverTick: generation }).optional(),
+  foods: z.array(z.object({ slot: z.number().int().min(0).max(35), id: identifier, count: z.number().int().positive(), nutrition: z.number().nonnegative(), saturationModifier: z.number().nonnegative(), eatDurationTicks: z.number().int().nonnegative(), safe: z.boolean(), reason: z.string().optional(), metadataIncomplete: z.boolean().optional() })).max(36) });
+const toolOptionsSchema = z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int(), expectedBlock: identifier.optional(), policy: z.enum(['fastest_valid', 'conserve_durability']).optional(), minRemainingDurability: z.number().int().min(0).max(10000).optional(), dropPreference: z.enum(['any', 'silk_touch', 'no_silk_touch']).optional() });
+const toolAssessmentSchema = z.object({ ...stateIdentity, position, blockId: identifier, properties: components, requiresCorrectTool: z.boolean(), recommendedSlot: z.number().int().min(0).max(35).optional(), notes: z.array(z.string()),
+  candidates: z.array(z.object({ ...observedStackShape, eligible: z.boolean().nullable(), nativeEligible: z.boolean().optional(), eligibilityBasis: z.string().optional(), baseSpeed: z.number().finite().nonnegative().nullable(), estimatedTicks: z.number().finite().nonnegative().nullable(), remainingDurability: z.number().int().nonnegative().nullable(), reason: z.string().optional(), estimate: z.enum(['native-base', 'estimated', 'unknown']), silkTouch: z.number().int().nonnegative().optional(), fortune: z.number().int().nonnegative().optional(), dropEffectsKnown: z.boolean().optional(), recommendationEligible: z.boolean().optional(), recommendationReason: z.string().optional() }).refine(validComponents)).max(36) });
 const helloSchema = z.object({
   protocol: z.literal(2), backend: z.literal('server'), instanceId: identifier, worldId: identifier, username: identifier,
   platform: z.object({ minecraft: z.string(), loader: z.string(), loaderVersion: z.string() }),
@@ -62,8 +73,8 @@ interface ServerOptions {
   onLease?: (lease: ServerLease) => void | Promise<void>;
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
-const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item'];
-const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION']);
+const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity'];
+const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
   hello!: BodyHello;
@@ -116,7 +127,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    this.hello = { ...hello, capabilities: hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup'].includes(name)) };
+    this.hello = { ...hello, capabilities: hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name)) };
     const controllerId = this.options.controllerId ?? randomUUID();
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(controllerId)) throw new BodyError('INVALID_ARGUMENT', 'controller-id 格式无效');
     const deadline = this.now() + (this.options.claimWaitMs ?? 12000);
@@ -227,6 +238,25 @@ export class ServerBody implements Body {
     this.taskOwner = taskToken;
   }
   releaseTask(taskToken: string): void { if (this.taskOwner === taskToken) this.taskOwner = undefined; }
+  private async survivalRead<T extends { instanceId: string; sessionId: string; worldId: string; controlGeneration: number }>(method: string, args: Record<string, unknown>, schema: z.ZodType<T>): Promise<T> {
+    this.assertActive();
+    if (!this.hello.capabilities.includes(method)) throw new BodyError('UNSUPPORTED', `身体不支持 ${method}`);
+    const revision = this.revision;
+    try {
+      const result = schema.parse(await this.rpc(method, { ...this.identity(), ...args }));
+      this.assertActive();
+      if (revision !== this.revision) throw new BodyError('CANCELLED', '停止前生存评估已过期，请重新观察');
+      this.checkGeneration(result.controlGeneration);
+      if (result.instanceId !== this.lease!.instanceId || result.sessionId !== this.lease!.sessionId || result.worldId !== this.options.worldId) throw new BodyError('WORLD_CHANGED', '生存评估不属于当前角色／世界会话');
+      return result;
+    } catch (error) { throw this.invalidate(error); }
+  }
+  survivalState(options: { details?: boolean } = {}): Promise<SurvivalState> { return this.survivalRead('survival-state', { details: options.details ?? true }, survivalSchema); }
+  assessTool(options: ToolAssessmentOptions): Promise<ToolAssessment> {
+    const args = toolOptionsSchema.safeParse(options);
+    if (!args.success) throw new BodyError('INVALID_ARGUMENT', '工具评估的目标或策略无效');
+    return this.survivalRead('assess-tool', args.data, toolAssessmentSchema);
+  }
   async nearbyBlocks(options: { centerPlayer?: string; radius: number; maxResults: number }): Promise<NearbyBlocks> {
     this.assertActive();
     if (!this.hello.capabilities.includes('nearby-blocks')) throw new BodyError('UNSUPPORTED', '身体不支持附近容器发现');
@@ -249,7 +279,7 @@ export class ServerBody implements Body {
     const revision = this.revision;
     try {
       const value = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation, center: position,
-        candidates: z.array(z.object({ position, id: identifier, properties: components, targetToken: z.string().uuid(), distance: z.number().nonnegative(), visible: z.boolean(), requiresCorrectTool: z.boolean(), suitableToolSlots: z.array(z.number().int().min(0).max(8)), recommendedToolSlot: z.number().int().min(0).max(8).optional() })).max(64), truncated: z.boolean().optional(), budget: z.unknown().optional(),
+        candidates: z.array(z.object({ position, id: identifier, properties: components, targetToken: z.string().uuid(), distance: z.number().nonnegative(), visible: z.boolean(), requiresCorrectTool: z.boolean(), suitableToolSlots: z.array(z.number().int().min(0).max(8)), recommendedToolSlot: z.number().int().min(0).max(8).optional(), recommendedInventorySlot: z.number().int().min(0).max(35).optional() })).max(64), truncated: z.boolean().optional(), budget: z.unknown().optional(),
       }).parse(await this.rpc('nearby-resources', { ...this.identity(), ...args }));
       this.assertActive(); if (revision === this.revision) this.checkGeneration(value.controlGeneration);
       if (value.instanceId !== this.lease!.instanceId || value.sessionId !== this.lease!.sessionId || value.worldId !== this.options.worldId) throw new BodyError('WORLD_CHANGED', '资源观察不属于当前身体会话');
@@ -311,6 +341,10 @@ export class ServerBody implements Body {
         expectedCarriedItem: identifier, expectedCarriedCount: z.number().int().nonnegative(), expectedCarriedComponents: components, button: z.union([z.literal(0), z.literal(1)]).optional() }),
       'close-container': z.object({ containerId: identifier, expectedRevision: generation }),
       'select-slot': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize }),
+      'swap-inventory': z.object({ sourceSlot: z.number().int().min(0).max(35), hotbarSlot: z.number().int().min(0).max(8), expectedSource: itemValue, expectedTarget: itemValue }),
+      'eat-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, timeoutMs: z.number().int().min(500).max(120000).optional() }),
+      'defend-entity': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, entityId: z.string().uuid(), expectedDimension: identifier, maxDistance: z.number().finite().min(1).max(3), minHealth: z.number().finite().min(1).max(20), maxAttacks: z.number().int().min(1).max(3), timeoutMs: z.number().int().min(500).max(5000) }).strict(),
+      'retreat-from-entity': z.object({ entityId: z.string().uuid(), expectedDimension: identifier, distance: z.number().finite().min(1.5).max(6).optional(), timeoutMs: z.number().int().min(500).max(5000).optional() }).strict(),
       'drop-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, count: z.number().int().min(1).max(64), recipient: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), expectedEntityId: z.string().uuid().optional() }).refine(args => (args.recipient === undefined) === (args.expectedEntityId === undefined)),
     };
     if (schemas[name] && !schemas[name]!.safeParse(args).success) throw new BodyError('INVALID_ARGUMENT', '服务端生存动作缺少有效的状态／数量／完整组件／窗口版本前置核验');
@@ -340,6 +374,7 @@ export class ServerBody implements Body {
     } catch (error) { throw this.invalidate(error); }
   }
   pendingOperations(): readonly Operation[] { return [...this.operations.values()].filter(op => op.status === 'running' && !this.internalOperations.has(op.operationId)); }
+  isBusy(): boolean { return !!(this.taskOwner || this.exclusive || this.stopping); }
   stop(): Promise<{ stopped: true }> {
     if (this.stopping) return this.stopping;
     this.assertActive();

@@ -167,5 +167,9 @@ public final class ControlSessionTest {
         ResourcePickupTest.run();
         CompanionPickupTest.run();
         NativeActionBoundaryTest.run();
+        ToolAssessmentTest.run();
+        SurvivalAlphaTest.run();
+        NavigationTest.run();
+        DefenseAlphaTest.run();
     }
 }

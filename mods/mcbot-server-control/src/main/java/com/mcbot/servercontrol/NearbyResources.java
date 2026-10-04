@@ -48,18 +48,17 @@ final class NearbyResources {
         }
         found.sort(Comparator.comparingDouble(Candidate::distance).thenComparingInt(c->c.position().getX()).thenComparingInt(c->c.position().getY()).thenComparingInt(c->c.position().getZ()));
         JsonArray candidates=new JsonArray();
+        var inventory=ToolAssessment.inventory(body);
         for(Candidate candidate:found.subList(0,Math.min(found.size(),options.maxResults()))) {
             JsonObject properties=new JsonObject();candidate.state().getValues().forEach((property,value)->properties.addProperty(property.getName(),value.toString()));
-            JsonArray suitable=new JsonArray();int recommended=-1;float best=-1;
-            for(int slot=0;slot<9;slot++) {
-                var stack=body.getInventory().getItem(slot);
-                if(!candidate.state().requiresCorrectToolForDrops()||stack.isCorrectToolForDrops(candidate.state())) {
-                    suitable.add(slot);float speed=stack.getDestroySpeed(candidate.state());if(speed>best){best=speed;recommended=slot;}
-                }
-            }
+            var tools=ToolAssessment.evaluateSummary(inventory,candidate.state(),candidate.state().getDestroySpeed(body.serverLevel(),candidate.position()));
+            JsonArray suitable=new JsonArray();for(var tool:tools)if(tool.slot()<9&&Boolean.TRUE.equals(tool.eligible()))suitable.add(tool.slot());
+            var recommended=ToolAssessment.recommend(tools,body.getInventory().selected,ToolAssessment.Policy.defaults(),true);
+            var inventoryRecommended=ToolAssessment.recommend(tools,body.getInventory().selected,ToolAssessment.Policy.defaults(),false);
             JsonObject value=obj("position",position(Vec3.atLowerCornerOf(candidate.position())),"id",BuiltInRegistries.BLOCK.getKey(candidate.state().getBlock()).toString(),"properties",properties,
                 "targetToken",targets.issue(body,candidate.position(),candidate.state()),"distance",candidate.distance(),"visible",true,"requiresCorrectTool",candidate.state().requiresCorrectToolForDrops(),"suitableToolSlots",suitable);
-            if(recommended>=0)value.addProperty("recommendedToolSlot",recommended);
+            if(recommended!=null)value.addProperty("recommendedToolSlot",recommended.slot());
+            if(inventoryRecommended!=null)value.addProperty("recommendedInventorySlot",inventoryRecommended.slot());
             candidates.add(value);
         }
         return obj("dimension",body.serverLevel().dimension().location().toString(),"center",position(options.center()),"candidates",candidates,

@@ -70,7 +70,8 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
   for(const tool of ['approach-container','approach-player']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['companion-mode','get-companion-mode']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['discover-resources','gather-resources','collect-items']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
-  assert.equal(CODEX_SERVER_TOOLS.length,33);
+  for(const tool of ['get-survival-state','assess-tool','prepare-item','eat-food','set-reflexes','defend-self']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
+  assert.equal(CODEX_SERVER_TOOLS.length,39);
 });
 
 test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲回合',()=>{
@@ -244,16 +245,17 @@ test('crash后撤销回执在途时的新明确聊天保留，到撤销确认后
   }finally{release?.();control.close();await api.close();cleanup(dir);}
 });
 
-test('start-server-play PrepareOnly读取v2身份生成配置但不运行Agent且不写token',()=>{
+test('start-server-play PrepareOnly读取v2身份和显式Node路径但不运行Agent且不写token',()=>{
   const dir=temp();const connectionFile=path.join(dir,'connection.json');
   const unique=`Prep${process.pid}`;
   fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'prepare-test-secret',worldId:'prepare-world',username:unique}));
   const generated=path.join(ROOT,'runtime/server-play',unique);
   try{
-    const result=spawnSync('pwsh',['-NoProfile','-File',path.join(ROOT,'start-server-play.ps1'),'-ConnectionFile',connectionFile,'-PrepareOnly'],{encoding:'utf8',windowsHide:true});
+    const result=spawnSync('pwsh',['-NoProfile','-File',path.join(ROOT,'start-server-play.ps1'),'-ConnectionFile',connectionFile,'-NodePath',process.execPath,'-PrepareOnly'],{encoding:'utf8',windowsHide:true});
     assert.equal(result.status,0,result.stderr);assert.doesNotMatch(result.stdout,/prepare-test-secret/);
     const text=fs.readFileSync(path.join(generated,'mcp.json'),'utf8');assert.doesNotMatch(text,/prepare-test-secret/);
-    const args=JSON.parse(text).mcpServers.minecraft.args;assert.equal(args[args.indexOf('--body')+1],'server');assert.equal(args[args.indexOf('--username')+1],unique);assert.equal(args[args.indexOf('--world-id')+1],'prepare-world');
+    const configured=JSON.parse(text).mcpServers.minecraft;assert.equal(path.resolve(configured.command),path.resolve(process.execPath));
+    const args=configured.args;assert.equal(args[args.indexOf('--body')+1],'server');assert.equal(args[args.indexOf('--username')+1],unique);assert.equal(args[args.indexOf('--world-id')+1],'prepare-world');
   }finally{
     assert.equal(path.dirname(path.resolve(generated)),path.resolve(ROOT,'runtime/server-play'));assert.equal(path.basename(generated),unique);fs.rmSync(generated,{recursive:true,force:true});cleanup(dir);
   }

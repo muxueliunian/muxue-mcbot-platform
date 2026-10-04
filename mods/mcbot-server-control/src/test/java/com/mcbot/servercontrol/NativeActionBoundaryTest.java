@@ -45,7 +45,7 @@ final class NativeActionBoundaryTest {
         Fixture click=new Fixture();click.begin("click-slot",operation->{click.game.write();throw error("UNSUPPORTED","Injected transient component while encoding changed slot/carried receipt");});
         check(click.game.writes==1,"click native entry ran before receipt fault");
         click.outcome("unknown","UNSUPPORTED");click.duplicate();
-        for(String name:List.of("click-slot","place-block","dig-block")) {
+        for(String name:List.of("click-slot","place-block","dig-block","swap-inventory","eat-item")) {
             for(RuntimeException fault:List.of(error("UNSUPPORTED","Injected incomplete post-write component codec"),new IllegalStateException("Injected post-write codec exception"),error("STALE_TARGET","Injected post-write target replacement"))) {
                 Fixture after=new Fixture();after.begin(name,operation->{after.game.write();throw fault;});
                 check(after.game.writes==1&&after.game.cleanups==1,"post-write fault cleans active work exactly once");

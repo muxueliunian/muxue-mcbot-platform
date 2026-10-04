@@ -89,3 +89,26 @@ test('running tool result does not acknowledge a future completion', () => {
   events.notifyOperation(op);
   assert.equal(events.since(0, ['task']).length, 1);
 });
+
+test('terminal audit persists cancelled partial damage without wake or delivery, preserving later notify/deliver dedup', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-survival-audit-'));
+  t.after(() => { assert.equal(path.dirname(path.resolve(dir)), path.resolve(os.tmpdir())); fs.rmSync(dir, { recursive: true, force: true }); });
+  const events = new EventJournal(dir, 'ServerBot'), cancelled = { ...terminal(), name: 'defend-self', status: 'cancelled', summary: 'hard stop',
+    result: { stage: 'cancelled', entityId: randomUUID(), confirmedHits: 1, confirmedDamage: 9, damageConfirmation: 'native_damage_event', sideEffects: 'confirmed' } };
+  events.recordOperation({ ...cancelled, status: 'running' });
+  assert.equal(fs.existsSync(path.join(dir, 'operations-ServerBot.jsonl')), false);
+  events.recordOperation(cancelled); events.recordOperation(structuredClone(cancelled));
+  const trace = () => fs.readFileSync(path.join(dir, 'operations-ServerBot.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(trace().length, 1); assert.deepEqual(trace()[0].operation, cancelled);
+  assert.deepEqual(events.since(0), []); assert.equal(events.latestSeq(), 0);
+  assert.equal(fs.readFileSync(path.join(dir, 'events-ServerBot.jsonl'), 'utf8'), '');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'task-delivered-ServerBot.json'), 'utf8')).operationIds, []);
+  events.notifyOperation(cancelled); events.notifyOperation(cancelled);
+  assert.equal(events.since(0, ['task']).length, 1); assert.equal(trace().length, 1);
+  events.deliverOperation(cancelled); events.notifyOperation(cancelled);
+  assert.equal(events.since(0, ['task']).length, 0);
+  const delivered = { ...terminal(), name: 'eat', result: { consumedCount: 1, consumption: 'confirmed' } };
+  events.recordOperation(delivered); events.deliverOperation(delivered); events.notifyOperation(delivered);
+  assert.equal(events.since(0, ['task']).length, 0); assert.equal(trace().length, 2);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'task-delivered-ServerBot.json'), 'utf8')).operationIds, [cancelled.operationId, delivered.operationId]);
+});

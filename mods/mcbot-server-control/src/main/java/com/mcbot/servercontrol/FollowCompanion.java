@@ -26,6 +26,10 @@ final class FollowCompanion {
         List<Vec3> plan(Vec3 target,double distance);
         void move(Vec3 delta);
         void stop();
+        default boolean nativeNavigation(){return false;}
+        default boolean navigate(Vec3 target,double distance){throw new UnsupportedOperationException();}
+        default void cancelNavigation(){}
+        default JsonObject navigationDetails(){return null;}
     }
     private final ControlSession.Operation operation;
     private final View view;
@@ -59,7 +63,7 @@ final class FollowCompanion {
             actual.identity()!=bound.identity()||actual.dimension()!=view.dimension()||actual.dimension()!=bound.dimension())
             throw error("STALE_TARGET","Companion player left, changed identity, or changed dimension");
         if(actual.position().distanceTo(view.position())>32) throw error("STALE_TARGET","Companion player moved beyond 32 blocks");
-        if(Math.abs(actual.position().y-view.position().y)>1.2) throw error("BLOCKED","Companion left supported flat-ground range");
+        if(!view.nativeNavigation()&&Math.abs(actual.position().y-view.position().y)>1.2) throw error("BLOCKED","Companion left supported flat-ground range");
     }
     void tick() {
         if(stopped||!operation.status.equals("running")) {stop();return;}
@@ -70,6 +74,9 @@ final class FollowCompanion {
             if(view.health()<health) throw error("BLOCKED","Body took damage during continuous follow");
             health=view.health();
             Vec3 feet=view.position();
+            if(view.nativeNavigation()){
+                boolean arrived=view.navigate(actual.position(),distance);publish(arrived?"waiting":"following");return;
+            }
             if(!view.safe(feet,feet)) throw error("BLOCKED","Body is no longer on safe loaded flat ground");
             long now=clock.getAsLong();
             if(view.reached(feet,actual.position(),distance)) {
@@ -123,6 +130,7 @@ final class FollowCompanion {
         Vec3 feet=view.position();
         JsonObject result=obj("state",state==null?"following":state,"player",name,"expectedEntityId",expected.toString(),
             "distance",distance,"position",obj("x",feet.x,"y",feet.y,"z",feet.z));
+        if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());
         if(code!=null) result.addProperty("code",code);
         return result;
     }
@@ -130,19 +138,18 @@ final class FollowCompanion {
         if(!Objects.equals(state,next)) operation.summary=next.equals("waiting")?"Waiting near companion":"Following companion";
         state=next;operation.result=result(null);
     }
-    void stop() {stopped=true;route=null;view.stop();}
+    void stop() {stopped=true;route=null;view.cancelNavigation();view.stop();}
 
     static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server) {
         View view=new View() {
             FlatApproach geometry;
+            final NativeNavigation navigation=new NativeNavigation(body,session,operation);
             public boolean mayDrive() {return session.mayDrive(operation);}
-            public void refresh() {
-                if(body.containerMenu!=body.inventoryMenu) throw error("BUSY","Close the container before following");
-                if(!body.onGround()||body.isInWater()||body.isInLava()||body.isPassenger()||body.isFallFlying()||
-                    body.isSleeping()||body.getPose()!=Pose.STANDING||body.isOnFire()||body.getTicksFrozen()>0)
-                    throw error("BLOCKED","Body cannot safely walk during continuous follow");
-                geometry=new FlatApproach(body);
-            }
+            public void refresh() {NativeNavigation.conditions(body);geometry=new FlatApproach(body);}
+            public boolean nativeNavigation(){return true;}
+            public boolean navigate(Vec3 target,double distance){return navigation.tick(target,feet->geometry.playerReach(feet,server.getPlayerList().getPlayerByName(string(operation.args,"player")),distance));}
+            public void cancelNavigation(){navigation.stop();}
+            public JsonObject navigationDetails(){return navigation.diagnostics();}
             public Vec3 position() {return body.position();}
             public Object dimension() {return body.serverLevel();}
             public float health() {return body.getHealth();}

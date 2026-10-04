@@ -8,6 +8,8 @@
 
 ## 阅读顺序
 
+2026-10-03最新增量先看[生存第二批](server_navigation_defense_validation.md)：有限高差导航、防卫／退让与AI策略，39工具。227／732／55与Claude短测分别是运行端、Java、真实程序与实际模型证据；连续聊天和野外边界另列，不替代原评审问题追踪。
+
 1. `delivery_plan.md`：当前完成范围与未交付项。
 2. `architecture_reassessment.md`、`agent_integration_plan.md`：身体／Agent／部署边界与长期目标。
 3. `server_body_protocol.md`：租约、代次、动作结果、能力门控、原生组件与拾取收据。

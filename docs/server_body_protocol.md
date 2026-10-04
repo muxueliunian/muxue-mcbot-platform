@@ -18,6 +18,8 @@
 | observe | `{instanceId,sessionId,leaseId,block?}` | 现有 Observation 字段，`source:"server-observed"`，另含 instanceId/controlGeneration；未加载区块不隐式加载，空 container 必须为 null |
 | nearby-blocks | `{instanceId,sessionId,leaseId,centerPlayer?,radius?,maxResults?}` | 只读发现普通容器方块，不读取内容；返回 instanceId/sessionId/worldId/controlGeneration/dimension、center、candidates、truncated 和 budget。需 `nearby-blocks` 能力；radius 1–8（默认4）、maxResults 1–16（默认8）、y±2，仅已加载区块。指定玩家须同维度、Bot 32格内且视线通过 |
 | nearby-resources | `{instanceId,sessionId,leaseId,blockIds,radius?,maxResults?,center?}` | 只读有限资源发现；blockIds为1–8个明确目录ID，radius 1–6（默认4）、maxResults 1–64（默认32）。center为`{x,y,z}`，默认Bot位置且距Bot不得超过8格；返回完整控制上下文、center、candidates、truncated、budget，详见有限采集边界 |
+| survival-state | `{instanceId,sessionId,leaseId,details?}` | 只读当前维度／控制上下文、serverTick/observedAt、生命／饥饿／饱和、选槽及foods；默认details:true含自身inventory，false省略完整库存。safe表示食品语义已核验，不代表省略的栈守卫可以用于写入 |
+| assess-tool | `{instanceId,sessionId,leaseId,x,y,z,expectedBlock?,policy?,minRemainingDurability?,dropPreference?}` | 32格内已加载目标；完整上下文含dimension，返回36槽候选、基础资格／估算／耐久／掉落偏好、推荐及原因；未知不推荐，禁止临时装备来执行只读评估 |
 | act | `{instanceId,sessionId,leaseId,controlGeneration,operationId,name,args}` | 现有 Operation 字段，另含 controlGeneration；同 ID 同内容返回原结果，异内容拒绝。动作按原生字段比较，不哈希；结果缓存淘汰后同 ID 也不能重新执行 |
 | operation | `{instanceId,sessionId,leaseId,operationId}` | 对应当前租约的 Operation；不以查询续租 |
 | stop | `{instanceId,sessionId,leaseId}` | `{stopped:true,controlGeneration}`；取消当前操作、推进代次、角色保持在线，旧代次 act 拒绝；同一租约后续明确新动作可执行 |
@@ -28,7 +30,7 @@
 
 B 基线已有11个动作：send-chat、look-at、move-to-position、follow-player、dig-block、place-block、open-container、click-slot、close-container、select-slot、drop-item。参数见 `client-runtime/src/body.ts` 与下面的服务端必填核验；stdio MCP 只发布实际 capabilities 允许的动作。B另有10个观察／控制工具，合计21个：get-status、get-position、list-inventory、find-entity、read-chat、get-block、get-container、get-operation、stop-action、wait-for-events。respawn不发布为模型可调用的MCP工具；最新增量见下段。
 
-交互增量另声明只读 `nearby-blocks` 及两个走近动作。Node 在所需原子能力齐备时提供 `discover-containers`、`container-list`、`container-withdraw`、`give-item`、`fetch-and-give`，再加 `approach-container`／`approach-player`，该历史批次合计28个MCP工具。持续陪伴另声明内部动作 `follow-companion`，Node增加`companion-mode`／`get-companion-mode`，该历史批次为30个工具。当前有限采集再声明`nearby-resources`／`approach-resource`／`pickup-item`能力，Node增加`discover-resources`／`gather-resources`／`collect-items`，完整能力集为 **33 个 MCP 工具**；持续跟随与新增采集原子动作由任务层内部使用，不直接发布给模型。工具仍按实际capabilities裁剪。任务在 Agent 主机组合原子动作，不新增服务器模型或第二个 MC 客户端。容器HTTP候选为 `{position,id,properties,targetToken,distance,visible,visibility}`；MCP保留私有targetToken，仅返回本地containerRef。可见性相对 center，可能为 visible／occluded／unknown。发现不代表菜单一定受支持，空结果不代表未加载区域或更远处不存在箱子。
+交互增量另声明只读 `nearby-blocks` 及两个走近动作。Node 在所需原子能力齐备时提供 `discover-containers`、`container-list`、`container-withdraw`、`give-item`、`fetch-and-give`，再加 `approach-container`／`approach-player`，该历史批次合计28个MCP工具。持续陪伴另声明内部动作 `follow-companion`，Node增加`companion-mode`／`get-companion-mode`，该历史批次为30个工具。此前有限采集再声明`nearby-resources`／`approach-resource`／`pickup-item`能力，Node增加`discover-resources`／`gather-resources`／`collect-items`，该批完整能力集为 **33 个 MCP 工具**；持续跟随与新增采集原子动作由任务层内部使用，不直接发布给模型。工具仍按实际capabilities裁剪。任务在 Agent 主机组合原子动作，不新增服务器模型或第二个 MC 客户端。容器HTTP候选为 `{position,id,properties,targetToken,distance,visible,visibility}`；MCP保留私有targetToken，仅返回本地containerRef。可见性相对 center，可能为 visible／occluded／unknown。发现不代表菜单一定受支持，空结果不代表未加载区域或更远处不存在箱子。
 
 有限平地移动／跟随遇障碍或危险停止；不寻路挖墙、不传送完成移动。角色生成位置使用服务端配置或安全出生点；客户端不能借 claim 任意传送。单格生存动作通过原版玩家交互路径执行，检查生存模式、普通距离／视线、世界边界和原版／NeoForge 保护，不因身体是服务端角色而绕过规则。非 OP 约束覆盖角色存活可控判定、接管与重生，不能先接管再加 OP 绕过生存规则。
 
@@ -50,7 +52,7 @@ act 通过身份与操作去重核验后，动作级失败可返回 `ok:true` �
 
 任务用短期随机 `containerRef`（30秒供提交）绑定身体／实例／世界／维度／控制代次、位置及方块状态。新服务端另签发固定120秒有效、最多保留256个的随机targetToken，绑定实际BlockEntity身份；双箱绑定两半，不读取内容，不使用哈希。同坐标同状态替换、卸载重载或会话变化拒绝旧引用。带token开箱后，菜单在自身生命周期内持续校验来源实例与状态，不因发现缓存淘汰而误失效；每次点击仍核验菜单版本和完整组件。旧服务端无此能力时明确返回state-only保护及近距限制。
 
-任务写互斥贯穿走近、开取关、返回交物，内部步骤不会逐个唤醒Agent。走近仅同脚底高度的已加载平地，4方向、有界32格搜索（2048节点、8192边、96路径点、150000地形读取）；这些是上限，不保证任意32格位置都有路。真实碰撞形状、扫掠身体、整脚底支撑、危险及实体占位逐tick复核；无路或预算用尽明确失败，不挖路／搭桥／传送／隐式生成路线区块。接收者开始时绑定UUID；行走中移动超过0.5格停止，最后丢出前再次校验身份、可见及1.5格距离。仍只从一个足量源栈取物，要求空快捷栏；同 ID 多组件变体拒绝，variant编号尚不是可授权选择句柄。结果区分 withdrawn／held／dropped 与 pickup unconfirmed，不自动重试 unknown 或补丢物品。
+任务写互斥贯穿走近、开取关、返回交物，内部步骤不会逐个唤醒Agent。走近复用第二批统一原生高差导航，限已加载地形、32格搜索半径，预算见文末第二批契约；这些是上限，不保证任意32格位置都有路。真实碰撞形状、扫掠身体、整脚底支撑、危险及实体占位逐tick复核；无路或预算用尽明确失败，不挖路／搭桥／传送／隐式生成路线区块。接收者开始时绑定UUID；行走中移动超过0.5格停止，最后丢出前再次校验身份、可见及1.5格距离。仍只从一个足量源栈取物，要求空快捷栏；同 ID 多组件变体拒绝，variant编号尚不是可授权选择句柄。结果区分 withdrawn／held／dropped 与 pickup unconfirmed，不自动重试 unknown 或补丢物品。
 
 资源／容器／玩家走近及指定掉落物拾取的路线规划站位，要求中心与水平`x/z±0.2`四角均满足各自原有reach／LOS或拾取碰撞条件，为`<0.15`格的路点到达容差留裕量。实际到达与原生交互范围不放宽；狭窄区域没有合格网格站位仍可返回NO_PATH。
 
@@ -81,9 +83,9 @@ NBT 类型为 end／byte／short／int／long／float／double／byte_array／st
 | open-container | `{x,y,z,expectedBlock,expectedProperties,timeoutMs?}`；普通距离／视线下原生交互，要求至少一个空快捷栏槽以避免物品使用回退 |
 | approach-container | `{targetToken,timeoutMs?}`；仅走到当前实例绑定容器的原版可触及／可见站位，不打开菜单。MCP用本地`containerRef`转换，模型不传私有token。running须查询，取消复用控制代次 |
 | approach-player | `{player,expectedEntityId?,distance?,timeoutMs?}`；distance默认1.3，范围1–1.5；同维度真实玩家，任务内部必带UUID。行走中目标位移超过0.5格返回TARGET_MOVED；到达后由任务重新核验 |
-| approach-resource | `{targetToken,timeoutMs?}`；仅走向引用资源的原版block reach／LOS站位，不挖掘。开始时目标距Bot最多16格，默认15秒、timeoutMs 500–120000；复用已加载安全平地路线与资源引用／支撑保护 |
-| pickup-item | `{entityId,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?,timeoutMs?,companionGuard?}`；完整UUID必需、expectedCount为正整数。绑定真实ItemEntity实例与完整栈，距Bot须保持8格内；相对开始位置移动超过0.75格停止，无进展2.5秒停止。默认15秒、timeoutMs 500–30000。可选companionGuard另限制实时玩家范围，未携带时保持原有限拾取语义。普通物理碰撞拾取，不调用虚拟touch、塞库存或传送；原生Post才确认获得量，详见下节 |
-| follow-companion | `{player,expectedEntityId,distance?}`；UUID必需，distance默认2.5、范围1.5–6。持续运行，无总时长自然结束；距离及LOS满足时waiting，玩家离开站位后following。绑定真实玩家实例／UUID／维度，已加载安全平地内有界重规划；受阻、离线、受伤等失败后不自动恢复。原follow-player有限语义不变 |
+| approach-resource | `{targetToken,timeoutMs?}`；仅走向引用资源的原版block reach／LOS站位，不挖掘。开始时目标距Bot最多16格，默认15秒、timeoutMs 500–120000；复用已加载安全高差路线与资源引用／支撑保护 |
+| pickup-item | `{entityId,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?,timeoutMs?,companionGuard?}`；完整UUID必需、expectedCount为正整数。绑定真实ItemEntity实例与完整栈，距Bot须保持8格内；相对开始位置移动超过0.75格停止；统一导航行走无进展3秒进入有限重规划，预算耗尽停止。默认15秒、timeoutMs 500–30000。可选companionGuard另限制实时玩家范围，未携带时保持原有限拾取语义。普通物理碰撞拾取，不调用虚拟touch、塞库存或传送；原生Post才确认获得量，详见下节 |
+| follow-companion | `{player,expectedEntityId,distance?}`；UUID必需，distance默认2.5、范围1.5–6。持续运行，无总时长自然结束；距离及LOS满足时waiting，玩家离开站位后following。绑定真实玩家实例／UUID／维度，已加载安全高差地形内有界重规划；受阻、离线、受伤等失败后不自动恢复。原follow-player有限语义不变 |
 | click-slot | `{containerId,expectedRevision,slot,expectedItem,expectedCount,expectedComponents,expectedCarriedItem,expectedCarriedCount,expectedCarriedComponents,button?}`；仅普通 PICKUP，button 0／1。每次点击后重读菜单，确认实际槽位／carried 变化 |
 | close-container | `{containerId,expectedRevision}`；检查当前窗口与版本，走原生关闭／carried 归还或掉落路径 |
 | select-slot | `{slot,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?}`；slot 0–8，匹配完整当前栈后选择，不搬移库存。可选上限在原生写入前比较实际getMaxStackSize，旧API兼容 |
@@ -129,7 +131,7 @@ guard只阻止后续驾驶，不能回滚普通物理已经发生的碰撞拾取
 
 `get-companion-mode` 与 `get-status.companionMode` 给出 `{state,intent?,player?,distance?,stage?,operationId?,code?,reason?}`。state为idle／following／waiting／paused／blocked／stopped；intent为follow／wait，stage为starting／active。受理不代表已开始移动。后台500ms监视更新状态，不让模型循环发起有限跟随；靠近／走远的正常切换不唤醒模型，受阻后给一次companion事件。显式切换记录companion_state供后续上下文，非唤醒事件；已向模型交付的终态按session／operationId去重，查询和异步通知不会各触发一轮。
 
-stop-action立即清除陪伴意图并推进身体控制代次；确认停止后无需等待旧动作HTTP回执才允许新任务，迟到回执由本地epoch及身体代次共同丢弃。后台观察也携观察开始时的epoch，暂停／切换前开始的旧观察不能误判新意图失控，转换中不启动新后台观察。失租约、宿主／Agent退出、身体会话变化终止意图且不保存为可恢复任务，重启只接受新的明确请求。持续路线沿用平地预算，重规划最少间隔500ms、2.5秒无进展停止；默认跟随只跟随，可选拾取由Node在原生follow与受保护pickup-item之间调度，见上节已验边界，不加入自动采矿／陪挖。显式有限采集另走以下入口。
+stop-action立即清除陪伴意图并推进身体控制代次；确认停止后无需等待旧动作HTTP回执才允许新任务，迟到回执由本地epoch及身体代次共同丢弃。后台观察也携观察开始时的epoch，暂停／切换前开始的旧观察不能误判新意图失控，转换中不启动新后台观察。失租约、宿主／Agent退出、身体会话变化终止意图且不保存为可恢复任务，重启只接受新的明确请求。持续路线采用文末统一导航预算；目标移动的重规划最少间隔500ms，行走3秒无进展触发有限重规划，搜索停驻另计；默认跟随只跟随，可选拾取由Node在原生follow与受保护pickup-item之间调度，见上节已验边界，不加入自动采矿／陪挖。显式有限采集另走以下入口。
 
 follow的可选pickup仅在companion-pickup能力存在时发布，`items`明确1–8个物品ID、`radius`默认3且1.5–4，distance≤radius。靠近玩家waiting时选择当前可见白名单掉落，全程持外层token，单UUID子任务不另占锁或释放父锁、不发逐物品task事件。停止换代必须同一instance／session／world／dimension的下一代；观察revision独立防旧读穿越转换。暂停／恢复保留配置，wait／stop清除；范围越界复核同一玩家后回跟随，其他失败先确认停止再blocked。状态增加activity与pickup统计，格式见[运行端说明](../client-runtime/README.md)；外层按原生游标分组件变体累计，子任务不重复加数，自然收取其他UUID不导致单件任务误停，缺口标最后确认量。
 
@@ -170,3 +172,36 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 2026-10-03再补撤销请求在途竞态：开始revoke即保留新明确消息，等待撤销结束再尝试投递，不因stopped状态尚未收到回执而推进游标丢失。回执暂停的可控测试先失败后通过；并发Driver回归另行通过。
 
 测试必须包含旧控制者、丢心跳、MCP 进程退出／卡住、迟到 act、同 ID 重试、角色保留与明确重新接管。RCON 只准备夹具和独立核对，产品请求不能调用 RCON。
+
+## 生存Alpha第一批增量（2026-10-03）
+
+新增原子能力`swap-inventory`／`eat-item`和只读`survival-state`／`assess-tool`。Node按能力提供`get-survival-state`、`assess-tool`、`prepare-item`、`eat-food`、`set-reflexes`，该批完整38个MCP工具。策略是运行端状态，不是服务端另起的控制者；游戏端不自发抢占或推进generation。
+
+- `swap-inventory`：`{sourceSlot:0..35,hotbarSlot:0..8,expectedSource:{id,count,components,maxStackSize?},expectedTarget:{...}}`。不同逻辑槽，必须当前自身库存菜单、空carried，按真实backing identity映射原生槽，核验双向mayPickup/mayPlace和实际容量；使用原生SWAP，不直接赋值库存。成功核对完整交换；原生发出后的回执异常unknown，不重放。
+- `eat-item`：`{slot:0..8,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?,timeoutMs?}`。原生主手使用与原生时长，绑定槽位、完整初始栈、本次Finish和最终结果；成功`consumedCount:1,consumption:"confirmed"`。已确认部分结果保留`lastConfirmedConsumedCount`，取消／错误不能改成无消费。停止撤销关联并结束原生use，旧Finish不能启动新动作。
+- 自身库存观察的`componentsComplete:false`必须省略components并给出原因；已编码完整物品仍含精确components。未知不能伪造`{}`；涉及该栈的写入拒绝。当前未放宽容器／地面实体的完整快照要求。
+- 工具policy为`fastest_valid|conserve_durability`，默认保留2耐久；dropPreference为`any|silk_touch|no_silk_touch`。返回eligible true/false/null及基础资格依据，预计ticks不含所有玩家／Mod钩子，原生执行重查。nearby-resources保留0..8的recommendedToolSlot，另可带0..35的recommendedInventorySlot。
+- `set-reflexes`使用预期revision避免旧决策覆盖；策略改变先阻断／取消旧任务并确认停写。默认自动进食，默认防卫仍未实现且公开supported:false。硬停清armed，查询不复活。普通进食借父token只在安全间隙执行，未知结果向同一仲裁器上报并解除自动授权；停止确认也不代表允许自动重试该未知动作。
+
+该批实际证据和限制见[第一批验收](server_survival_alpha_validation.md)；下节记录第二批新增合同，其实服验收另行记录。
+
+## 生存Alpha第二批：导航与防卫合同
+
+`navigation-3d`是能力标记，不是可执行原子动作。move／follow／approach／pickup复用同一个原生导航器。只读已加载地形，使用实际碰撞形状、站立支撑、身体扫掠和实体阻挡；以原生前进和跳跃输入执行，不传送、不挖路、不搭桥。半砖、楼梯、一格跳上与最多2.5格的有界下落分别经过起跳净空和落地核验。任意离地不等于获授权跳跃；硬停止清除前进和跳跃，已有惯性与重力仍按原版继续。
+
+搜索分tick续算，单片最多64次展开，2ms是软时间目标（单次地形核验不可中途暂停），另有4096节点、32768候选边、192路点和地形读预算。有限动作总期限与行走无进展计时分开；搜索时停驻不触发行走卡住判定。实际预算诊断在完整动作回执的`navigation`中，不能把软目标说成硬实时保证。动态地形执行时重查，卡住／障碍仅有限重算。游泳、梯子、开门、跨沟跑酷和有伤下落未交付。
+
+`survival-state`增加`dangers`及`threats`。前者包含火焰、液体、氧气、下落和默认低血事实；后者包含服务端tick、8格范围、complete标志及最多24个实体的UUID、类型、分类、敌对依据、是否锁定自己、距离、视线、存活、爆炸准备和防卫资格。未知Mod实体不能按名字猜敌对；当前原版明确敌对清单或原生攻击自身证据可获得资格，玩家及友军始终排除。单实体事实读取异常返回明确null、unknown、factsAvailable:false，整体complete:false，不能当作安全或拖垮全部观察。
+
+- `defend-entity`：`{entityId,expectedDimension,slot,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?,maxDistance:1..3,minHealth:1..20,maxAttacks:1..3,timeoutMs:500..5000}`。只做近身有限防卫，不追击。当前手持、身份、维度、资格、视线、原生触及范围、攻击冷却、潜在群伤、生命阈值和租约在每次挥击前核验。未知Mod武器、未验证的附魔／行为组件拒绝；当前仅验证裸手与普通原版剑斧。
+- 防卫回执分开返回`attemptedAttacks`、`confirmedHits`与`confirmedDamage`。伤害仅从绑定本次同步原生攻击的直接玩家伤害事件确认；挥击或目标血量净变化不能替代收据。取消保留可靠部分结果；原生调用后的未知副作用不得降级为确定失败。尚未终结时用unknown；已取消的终态保持cancelled并携sideEffects:unknown及可靠部分量，均禁止重放。
+- 同步原生攻击scope保持到调用真正返回，撤销执行意图不能提前清掉它。攻击／伤害原生事件入口再查同一操作授权，并关闭本有限防卫scope的横扫。若Mod回调在原生调用内部重入stop／revoke等，先撤销授权但返回`STOP_UNCONFIRMED`，调用栈结束前不能确认停写或接新控制。同期已经发生的伤害Post仍可记入旧操作的可靠部分结果，scope结束后的迟到事件不计入；这类只读记账不恢复任何动作。
+- `retreat-from-entity`：`{entityId,expectedDimension,distance?,timeoutMs?}`。默认目标敌我距离4格，允许1.5–6；自身从起点水平移动最多4格、高差最多2.5格，仍走同一导航和安全检查。每步核验同一威胁，禁止向其明显靠近。成功返回实际位置、距离、requestedDistance及travelLimit；无安全路或超时失败，不声称一定逃生。
+
+有`defend-entity`能力时，MCP新增`defend-self({entityId?})`，完整工具数39；低层attack／retreat不额外发布给模型。显式与自动防卫共用威胁选择、背包准备、任务锁和原生回执。低血或点燃苦力怕先尝试安全退让；战斗中明确RETREAT_REQUIRED可转入一次重读后的退让，unknown不能借此继续执行。
+
+`set-reflexes`新增autoDefend、defenseRadius（1–3，默认3）、lowHealth（1–20，默认8）、excludedEntityIds（最多64个UUID）、maxAttacks（1–3，默认2）和defenseTimeoutMs（500–5000，默认3000）。有效策略公开defenseSupported；旧身体没有该能力时autoDefend为false。变更仍带expectedRevision，先确认旧活动动作停止，再应用新策略，不恢复旧任务。
+
+同一仲裁器在普通观察之外独立采样紧凑生存状态；模式切换、慢普通观察与原生战斗等待不能挤掉感知。防卫抢占前阻断新普通写入，撤销容器／采集／陪伴／进食后等待身体停止确认，再获得写锁；不新增第二个控制者或偷偷接纳外部generation。人工停止解除armed，读状态与危险仍存在都不能重新授权。危险事件只按有意义的状态变化生成，不因距离微调、每次挥击、空气补回或跳跃下落数值变化反复唤醒模型。
+
+分段时间字段sensedAt、stopRequestedAt、stopConfirmedAt、actionRequestedAt、actionAcceptedAt记录运行端时间；actionAcceptedAt是收到回执的时刻，不是服务器最后实际写入tick。真实反应延迟与更长运行的结果须看本批验收，工具数量不代表通用Mod、任意武器或全地形支持。

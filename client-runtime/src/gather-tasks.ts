@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { BodyError, type Body, type Observation, type Operation, type ItemValue, type Position, type NearbyResources, type ActionName, type ActionArguments, type GroundItem, type CompanionGuard } from './body.js';
 import type { EventJournal } from './events.js';
+import { selectFood, type SurvivalTasks } from './survival-tasks.js';
+import type { SurvivalPolicy } from './survival-reflexes.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
 type Request = { resourceRef?: string; item: string; count?: number; stacks?: number; radius?: number; say?: string; maxSteps?: number; timeoutMs?: number };
@@ -9,7 +11,7 @@ type Name = 'gather-resources' | 'collect-items';
 export interface BorrowedPickup { taskToken: string; context: Context; entityId: string; source: GroundItem; center: Position; companionGuard: CompanionGuard; check: () => void; priorPicked: (state: Observation) => number }
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
 type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string };
-type Active = { id: string; taskToken: string; borrowed?: BorrowedPickup; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean };
+type Active = { id: string; taskToken: string; borrowed?: BorrowedPickup; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
 
@@ -19,10 +21,13 @@ export class GatherTasks {
   private readonly operations = new Map<string, Operation>();
   private active?: Active;
   private epoch = 0;
+  private survival?: SurvivalTasks;
+  private survivalPolicy?: () => SurvivalPolicy & { armed: boolean; revision: number };
   constructor(private readonly body: Body, private readonly events: EventJournal, private readonly now = Date.now) {}
+  useSurvival(tasks: SurvivalTasks, policy: () => SurvivalPolicy & { armed: boolean; revision: number }): void { this.survival = tasks; this.survivalPolicy = policy; }
   operation(id: string): Operation | undefined { const op = this.operations.get(id); return op && structuredClone(op); }
   assertIdle(): void { if (this.active) throw new BodyError('BUSY', '有限采集任务正在运行，请先完成或叫停'); }
-  cancel(): void { ++this.epoch; this.references.clear(); if (this.active) this.active.cancelled = true; }
+  cancel(): void { ++this.epoch; this.references.clear(); if (this.active) { this.active.cancelled = true; this.active.stopPending = true; } }
   /** Only release the shared write token after the independent body stop was confirmed. */
   stopped(): void {
     if (!this.active?.cancelled) return;
@@ -255,10 +260,41 @@ export class GatherTasks {
       await this.pickups(task);
       for (const candidate of candidates) {
         if (this.done(task)) break;
-        const state = await this.observe(task);
+        let state = await this.observe(task);
         this.capacity(task, state);
-        const slot = candidate.recommendedToolSlot;
-        if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
+        const policy = this.survivalPolicy?.();
+        const borrowed = { taskToken: task.taskToken, context: task.context, check: () => {
+          this.check(task);
+          if (policy && policy.revision !== this.survivalPolicy?.().revision) throw new BodyError('CANCELLED', '工具／本能策略已变化，旧子步骤未继续');
+        } };
+        if (this.survival && policy?.armed && policy.autoEat && this.body.survivalState) {
+          const needs = await this.body.survivalState(); this.check(task);
+          if (selectFood(needs, policy).slot !== undefined) {
+            task.progress.stage = 'eating-between-blocks';
+            const meal = await this.survival.eat({ policy }, borrowed); this.check(task);
+            if (meal.status !== 'succeeded') throw new BodyError(meal.status === 'unknown' ? 'UNKNOWN' : 'MEAL_FAILED', meal.summary);
+            state = await this.observe(task);
+          }
+        }
+        let slot = candidate.recommendedToolSlot;
+        if (this.survival && this.body.assessTool) {
+          const assessed = await this.body.assessTool({ ...candidate.position, expectedBlock: candidate.id, policy: policy?.toolPolicy, minRemainingDurability: policy?.minRemainingDurability,
+            dropPreference: ['minecraft:stone', 'minecraft:deepslate'].includes(candidate.id) && task.request.item !== candidate.id ? 'no_silk_touch' : 'any' });
+          this.check(task);
+          if (!isDeepStrictEqual(contextOf(assessed), task.context)) throw new BodyError('WORLD_CHANGED', '工具评估不属于采集授权代次');
+          const choice = assessed.candidates.find(tool => tool.slot === assessed.recommendedSlot);
+          if (!choice || choice.eligible !== true || choice.componentsComplete === false || choice.components === undefined) throw new BodyError('WRONG_TOOL', '没有已核验且满足掉落／耐久策略的工具');
+          task.progress.stage = 'preparing-tool';
+          if (choice.count === 0 && choice.id === 'minecraft:air' && choice.slot <= 8) {
+            await this.step(task, 'select-slot', { slot: choice.slot, expectedItem: choice.id, expectedCount: 0, expectedComponents: choice.components });
+          } else {
+            const prepared = await this.survival.prepareItem({ slot: choice.slot, expected: choice, ...(choice.slot > 8 ? { targetSlot: state.selectedSlot ?? 0 } : {}) }, borrowed);
+            this.check(task);
+            if (prepared.status !== 'succeeded') throw new BodyError(prepared.status === 'unknown' ? 'UNKNOWN' : 'WRONG_TOOL', prepared.summary);
+          }
+          state = await this.observe(task); slot = state.selectedSlot;
+        } else if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
+        if (slot === undefined) throw new BodyError('WRONG_TOOL', '准备工具后没有权威选槽状态');
         const tool = state.inventory.find(item => item.slot === slot);
         if (!tool || tool.components === undefined) throw new BodyError('WRONG_TOOL', '缺少完整原生工具快照，未挖掘');
         task.progress.stage = 'selecting-tool';
@@ -276,10 +312,20 @@ export class GatherTasks {
       const code = error instanceof BodyError ? error.code : 'UNKNOWN';
       if (code === 'TARGET_REACHED') this.finish(task, 'succeeded', '实际原生拾取数量已达到明确目标');
       else {
-        if (!task.borrowed && task.epoch === this.epoch && (unknownCodes.has(code) || code === 'STEP_BUDGET')) { try { await this.body.stop(); } catch {} }
+        if (!task.borrowed && task.epoch === this.epoch && (unknownCodes.has(code) || code === 'STEP_BUDGET')) {
+          task.stopPending = true;
+          const mealStop = this.survival?.cancel();
+          try {
+            const stopped = await this.body.stop();
+            if (stopped.stopped === true && task.epoch === this.epoch) { task.stopPending = false; if (mealStop) this.survival!.stopped(mealStop); }
+          } catch {}
+        }
         this.finish(task, code === 'CANCELLED' ? 'cancelled' : unknownCodes.has(code) ? 'unknown' : 'failed', (error as Error).message, code);
       }
-    } finally { if (!task.borrowed) this.body.releaseTask?.(task.taskToken); if (this.active?.id === task.id) this.active = undefined; }
+    } finally {
+      // A settled JS runner is not proof that the native writer stopped.
+      if (!task.stopPending) { if (!task.borrowed) this.body.releaseTask?.(task.taskToken); if (this.active?.id === task.id) this.active = undefined; }
+    }
   }
   private remember(task: Active, status: Operation['status'], summary: string): Operation {
     const op = { operationId: task.id, name: task.name, sessionId: task.context.sessionId ?? '', controlGeneration: task.context.controlGeneration, status, summary, result: structuredClone(task.progress) };

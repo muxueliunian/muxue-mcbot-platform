@@ -60,6 +60,11 @@ export class EventJournal {
     this.remember(this.deliveredOperations, operation.operationId);
     this.writeTaskReceipts();
   }
+  /** Local terminal audit only: no model wake and no claim that a tool delivered this result. */
+  recordOperation(operation: Operation): void {
+    if (operation.status === 'running') return;
+    this.traceOperation(operation);
+  }
   private traceOperation(operation: Operation): void {
     if (this.tracedOperations.has(operation.operationId)) return;
     this.remember(this.tracedOperations, operation.operationId);

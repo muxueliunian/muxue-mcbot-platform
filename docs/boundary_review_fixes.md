@@ -37,7 +37,7 @@ R3 仅适用于 `--agent claude --body server`。旧 Mineflayer／ClientBody 权
 - `client-runtime npm test`：150 通过；Java `gradlew.bat build --console=plain`：524 项检查通过；`mcp-server npm test`：317 项，316 通过／1 跳过真实窗口截图／0 失败。[从实际日志提取的计数](review_evidence/boundary_checks.json)与历史整理版结果分别保留。
 - [Claude 离线权限探针](../scripts/claude-game-permissions-probe.mjs)使用真实 CLI，临时配置目录和假 API Key，全部模型请求指向本机 loopback 模拟接口。最终 **11 条断言通过**，含自身 MCP 退出和临时目录清理；[脱敏执行输出](review_evidence/claude_game_permissions.jsonl)保留。实际 init 与两轮 API schema 只含夹具的 `mcp__minecraft__get-status`；模拟模型强行请求 Write／Edit／Bash／PowerShell 均被拒绝，测试哨兵逐字节未变，正常 MCP 工具执行成功。它证明该版本 CLI 执行了工具限制，不证明真实账号／真实游戏全套 33 工具复验。
 - 本轮未启动 Minecraft、未更改或安装服务器 Mod、未改存档、未调用在线 Claude／Codex 账号。
-- 历史实服与真人试玩仍是历史证据；当前修复尚未完成新的真实游戏混合故障回归。
+- 本修复批次结束时尚未完成新的真实游戏混合故障回归；后续已完成[混合回归](server_mixed_validation.md)，实际模型、故障注入与未验证边界分别以该记录为准。
 - Java `controlTest` 是实际检查入口；不能用标准 `test SKIPPED` 判断没有检查，也不能把三个层级的数量相加当覆盖率。
 - 整理前的无原因进程退出尚未定位，后续重跑通过不能替代根因记录。
 
@@ -55,11 +55,11 @@ node scripts/claude-game-permissions-probe.mjs --allow-local-cli
 | --- | --- | --- |
 | R4：共享任务锁、stop 完成与旧异步收尾 | 后续[混合批次](server_mixed_validation.md)已修两处确定缺口 | 容器须有完整共享锁；cancel保锁至最新stop确认，旧回执不释放新锁；已补确定性错序和真实首新任务验证，不称统一workflow完成 |
 | R5：Mod Adapter 分派与语义能力 | 登记，未修改 | 第二个不同菜单语义的 Mod 前形成薄分派入口；未知 Mod 继续默认拒绝 |
-| R6：不可序列化物品导致整体观察失败 | 登记，未修改；R2 只修结果分类 | Mod 专项需区分可观察摘要与可用于写入的完整前置条件，不能把缺失组件当 `{}` |
+| R6：不可序列化物品导致整体观察失败 | 后续[生存第一批](server_survival_alpha_validation.md)已完成自身库存降级；未全部关闭 | 容器／地面物品仍待扩展；可观察摘要与写入完整前置条件分开，不能把缺失组件当 `{}` |
 | R7：Agent 会话入口与公共工具执行入口 | 登记，未修改 | 下一个 Agent／原生 API 样本驱动提取，不复制任务执行策略 |
 | R8：逐件取物、总期限、租约操作额度 | 登记，未修改 | 长时间混合回归前评估整栈到已验证空槽优化；保留去重，不无限延长租约操作历史 |
 
-近期顺序调整为：**边界修复与离线验证 → 现有功能混合故障回归 → 一个扩展样本验证接口 → 再安排持续陪挖／建筑**。混合回归覆盖跟随、拾取、容器、聊天、停止、失联与 Agent 异常退出；保留退出码和脱敏尾日志。计时分别记录首次游戏回应、动作受理、任务完成、停止确认和最后一次实际写入。
+本修复批次提出的顺序为：**边界修复与离线验证 → 现有功能混合故障回归 → 一个扩展样本验证接口 → 再安排持续陪挖／建筑**。后续用户将基础生存列为前置，且两批核心已完成；当前顺序以[交付计划](delivery_plan.md)为准。混合回归覆盖范围和缺口以实际记录为准；计时分别记录首次游戏回应、动作受理、任务完成、停止确认和最后一次实际写入。
 
 扩展样本在“第二个实质不同的 Mod”和“新 Agent／原生 API”中选一个。通过标准是复用任务执行逻辑、保留权威核验，不在通用任务层继续加具体 Mod／Agent 判断。不要同时启动两条扩展线。
 

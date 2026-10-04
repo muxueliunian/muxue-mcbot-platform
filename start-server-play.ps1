@@ -5,6 +5,7 @@ param(
     [string]$Nickname = '',
     [string]$ConfigDir = '',
     [string]$Model = '',
+    [string]$NodePath = '',
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort = 'low',
     [switch]$Headless,
     [switch]$PrepareOnly
@@ -24,6 +25,10 @@ if ($endpoint.Scheme -ne 'http' -or $endpoint.Host -notin @('127.0.0.1', '[::1]'
     throw '当前仅支持本机 http 控制口 /v2；远程部署需后续独立验收'
 }
 if ($ConfigDir) { $ConfigDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ConfigDir) }
+if ($NodePath) {
+    $NodePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($NodePath)
+    if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) { throw 'NodePath 必须指向可用的 Node 可执行文件' }
+} else { $NodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source }
 Set-Location $PSScriptRoot
 $Name = [string]$connection.username
 $WorldId = [string]$connection.worldId
@@ -34,7 +39,7 @@ $entry = Join-Path $PSScriptRoot 'client-runtime/dist/main.js'
 if (-not $PrepareOnly -and -not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw '请先在 client-runtime 目录运行 npm install 和 npm run build' }
 New-Item -ItemType Directory -Path $playDir -Force | Out-Null
 $config = @{ mcpServers = @{ minecraft = @{
-    command = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+    command = $NodePath
     args = @($entry, '--body', 'server', '--connection-file', $connectionPath,
         '--username', $Name, '--nickname', $Nickname, '--world-id', $WorldId)
 } } }
@@ -49,5 +54,5 @@ $driverArgs = @('scripts/companion.mjs', '--agent', $Agent, '--body', 'server', 
 if ($ConfigDir) { $driverArgs += @('--config-dir', $ConfigDir) }
 if ($Model) { $driverArgs += @('--model', $Model) }
 if ($Headless) { $driverArgs += '--headless' }
-node @driverArgs
+& $NodePath @driverArgs
 exit $LASTEXITCODE

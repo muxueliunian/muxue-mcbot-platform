@@ -101,3 +101,23 @@ test('Codex 完成通知先于 RPC 回应时只完成一次；用量取 last，�
     assert.equal(h.wire.filter((m) => m.method === 'turn/start').length, 2);
   } finally { h.connection.dispose(); }
 });
+
+test('Codex同一读取批次的启动回执和完成通知不丢失，未匹配旧通知不解除新轮', async () => {
+  const h = harness();
+  try {
+    await h.initialize();h.connection.sendTurn('第一轮');await tick();
+    // 实际stdout可在一次data回调里解码多行；Promise continuation尚未执行。
+    h.reply('turn/start', {turn:{id:'fast-1',status:'inProgress'}});
+    h.notify('turn/completed',{turn:{id:'unrelated-old',status:'completed'}});
+    h.notify('turn/completed',{turn:{id:'fast-1',status:'completed'}});
+    await tick();
+    assert.equal(h.events.filter(e=>e.type==='completed').length,1);
+    h.connection.sendTurn('第二轮');await tick();
+    h.notify('turn/completed',{turn:{id:'unrelated-old',status:'completed'}});
+    h.reply('turn/start',{turn:{id:'fast-2',status:'inProgress'}});await tick();
+    assert.equal(h.events.filter(e=>e.type==='completed').length,1,'不相关的旧回合不能结束当前请求');
+    h.notify('turn/completed',{turn:{id:'fast-2',status:'failed',error:{message:'expected fixture failure'}}});
+    assert.equal(h.events.filter(e=>e.type==='completed').length,2);
+    assert.equal(h.events.filter(e=>e.type==='completed').at(-1).error,'expected fixture failure');
+  } finally {h.connection.dispose();}
+});

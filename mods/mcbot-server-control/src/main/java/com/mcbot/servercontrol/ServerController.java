@@ -12,6 +12,9 @@ import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
+import net.neoforged.neoforge.event.entity.living.LivingEntityUseItemEvent;
+import net.neoforged.bus.api.EventPriority;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
@@ -22,10 +25,11 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -39,23 +43,36 @@ final class ServerController implements ControlSession.Game {
     private boolean wasConnected;
     private String lastDimension;
     private ControlSession.Operation active;
-    private long actionDeadline, lastProgress;
-    private Vec3 progressPosition;
-    private List<Vec3> route;
-    private int routeIndex;
+    private long actionDeadline;
     private ServerPlayer approachPlayer;
     private Vec3 approachPlayerStart;
     private FollowCompanion companion;
     private PickupItem pickup;
+    private NativeNavigation navigation;
+    private ServerPlayer followedPlayer;
+    private net.minecraft.world.entity.LivingEntity retreatTarget;
+    private Vec3 retreatOrigin;
+    private double retreatInitialDistance;
+    private int lastDriveTick=Integer.MIN_VALUE;
+    private final Consumer<net.neoforged.neoforge.event.entity.living.LivingDamageEvent.Post> damageListener=this::receiveDamage;
+    private final Consumer<net.neoforged.neoforge.event.entity.player.AttackEntityEvent> attackGuard=SurvivalActions::guardNativeAttack;
+    private final Consumer<net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent> incomingDamageGuard=SurvivalActions::guardNativeIncomingDamage;
+    private final Consumer<net.neoforged.neoforge.event.entity.player.SweepAttackEvent> sweepGuard=SurvivalActions::guardNativeSweep;
     private final ArrayDeque<JsonObject> chat=new ArrayDeque<>();
     private long chatSequence;
     private ServerChatEvent outgoingChatEvent;
+    private final Consumer<LivingEntityUseItemEvent.Finish> foodFinishListener=this::receiveFoodFinish;
     ServerController(MinecraftServer server,ServerConfig config) {
         this.server=server; this.config=config;
         session=new ControlSession(this,()->System.nanoTime()/1_000_000,config.worldId(),config.username());
         targets=new TargetTokens(session);
         resources=new ResourceTargets(session);
         validationProtection=new ValidationProtection(config.uuid());
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,foodFinishListener);
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,damageListener);
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,attackGuard);
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,incomingDamageGuard);
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,sweepGuard);
     }
     JsonObject call(String method,JsonObject params) { reconcile();return session.call(method,params); }
     @Override public boolean connected() { return player!=null&&player.isAlive()&&!player.isRemoved()&&sink!=null&&sink.isConnected()&&server.getPlayerList().getPlayer(config.uuid())==player&&player.gameMode.getGameModeForPlayer()==GameType.SURVIVAL&&!server.getPlayerList().isOp(player.getGameProfile()); }
@@ -124,7 +141,7 @@ final class ServerController implements ControlSession.Game {
     }
     @Override public JsonObject observe(JsonObject params) {
         JsonArray inventory=new JsonArray(),entities=new JsonArray();
-        for(int i=0;i<player.getInventory().getContainerSize();i++) inventory.add(survival.stack(i,player.getInventory().getItem(i)));
+        for(int i=0;i<player.getInventory().getContainerSize();i++) inventory.add(survival.observedStack(i,player.getInventory().getItem(i)));
         for(Entity entity:player.serverLevel().getEntities(player,player.getBoundingBox().inflate(32))) {
             if(entity.distanceToSqr(player)>32*32) continue;
             entities.add(obj("id",entity.getUUID().toString(),"type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),"name",entity instanceof Player p?p.getGameProfile().getName():entity.getName().getString(),"position",position(entity.position())));
@@ -156,6 +173,11 @@ final class ServerController implements ControlSession.Game {
         return NearbyBlocks.discover(player,center,options,targets);
     }
     @Override public JsonObject nearbyResources(JsonObject params) {return NearbyResources.discover(player,params,resources);}
+    @Override public JsonObject survivalState(JsonObject params) {return survival.survivalState(params);}
+    @Override public JsonObject assessTool(JsonObject params) {return ToolAssessment.assess(player,params);}
+    private void receiveFoodFinish(LivingEntityUseItemEvent.Finish event) {
+        if(player==event.getEntity()&&survival!=null)survival.receiveFoodFinish(event.getHand()==InteractionHand.MAIN_HAND,event.getItem(),event.getResultStack());
+    }
     private JsonObject groundItems() {
         List<ItemEntity> items=player.serverLevel().getEntitiesOfClass(ItemEntity.class,player.getBoundingBox().inflate(8),e->e.isAlive()&&!e.isRemoved()&&e.distanceToSqr(player)<=64&&!e.getItem().isEmpty());
         items.sort(Comparator.comparingDouble((ItemEntity e)->e.distanceToSqr(player)).thenComparing(e->e.getUUID().toString()));
@@ -192,6 +214,9 @@ final class ServerController implements ControlSession.Game {
         chat.addLast(obj("seq",++chatSequence,"time",System.currentTimeMillis(),"username",username,"message",message));
         while(chat.size()>100) chat.removeFirst();
     }
+    private void receiveDamage(net.neoforged.neoforge.event.entity.living.LivingDamageEvent.Post event){
+        if(survival!=null)survival.receiveDamage(event);
+    }
     @Override public void begin(ControlSession.Operation operation) {
         if(!atomicAction(operation.name)) throw error("UNSUPPORTED","Action is not available");
         if(!session.mayDrive(operation)) throw error("LEASE_LOST","Body lease expired before action");
@@ -217,20 +242,27 @@ final class ServerController implements ControlSession.Game {
             companion=FollowCompanion.create(operation,player,session,server);active=operation;
             companion.tick();if(!operation.status.equals("running")) stop();return;
         }
+        if(operation.name.equals("retreat-from-entity")){beginRetreat(operation);return;}
         long timeout=(long)bounded(args,"timeoutMs",operation.name.equals("follow-player")?60_000:15_000,500,120_000);
         if(operation.name.equals("move-to-position")) {
             Vec3 target=point(args); if(target.distanceTo(player.position())>32) throw error("INVALID_ARGUMENT","Movement limited to 32 blocks");
             bounded(args,"tolerance",0.7,0.25,3);
         } else {
             String name=string(args,"player"); bounded(args,"distance",2.5,1,8);
-            if(findPlayer(name)==null) throw error("INVALID_ARGUMENT","Target player is not within 32 blocks in this dimension");
+            followedPlayer=findPlayer(name);
+            if(followedPlayer==null) throw error("INVALID_ARGUMENT","Target player is not within 32 blocks in this dimension");
         }
-        requireWalkable(); active=operation; actionDeadline=now()+timeout; lastProgress=now(); progressPosition=player.position();
+        requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;
     }
-    static boolean atomicAction(String name){return CAPABILITIES.contains(name)&&!Set.of("nearby-blocks","nearby-resources","companion-pickup").contains(name);}
+    static boolean atomicAction(String name){return CAPABILITIES.contains(name)&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","survival-state","assess-tool","navigation-3d").contains(name);}
+    @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }
         reconcile();
+        if(lastDriveTick==server.getTickCount()){
+            if(active==null||!session.mayDrive(active))body.stopInput();return;
+        }
+        lastDriveTick=server.getTickCount();
         if(survival!=null) survival.tick();
         if(active==null) { body.stopInput(); return; }
         if(!session.mayDrive(active)) { stop(); return; }
@@ -240,32 +272,17 @@ final class ServerController implements ControlSession.Game {
         if(pickup!=null){pickup.tick();if(active!=null&&!active.status.equals("running"))stop();return;}
         try {
             if(active.name.equals("approach-container")||active.name.equals("approach-player")||active.name.equals("approach-resource")) {tickApproach();return;}
+            if(active.name.equals("retreat-from-entity")){tickRetreat();return;}
             if(now()>=actionDeadline) { finish(active.name.equals("follow-player")?"succeeded":"failed","Movement time limit reached"); return; }
-            requireWalkable();
-            Vec3 target;
-            double tolerance;
+            Vec3 target;double tolerance;
             if(active.name.equals("follow-player")) {
                 ServerPlayer followed=findPlayer(string(active.args,"player"));
-                if(followed==null) throw error("INVALID_ARGUMENT","Followed player left local range or dimension");
-                target=followed.position(); tolerance=bounded(active.args,"distance",2.5,1,8);
-            } else { target=point(active.args); tolerance=bounded(active.args,"tolerance",0.7,0.25,3); }
-            Vec3 delta=target.subtract(player.position());
-            if(Math.abs(delta.y)>1.2) throw error("INVALID_ARGUMENT","Only level-ground movement is supported");
-            if(delta.horizontalDistance()<=tolerance) {
-                player.stopInput(); lastProgress=now(); progressPosition=player.position();
-                if(active.name.equals("move-to-position")) finish("succeeded","Reached server-observed target");
-                return;
-            }
-            if(delta.horizontalDistance()>32) throw error("INVALID_ARGUMENT","Target moved beyond 32 blocks");
-            if(player.position().distanceToSqr(progressPosition)>0.04) { lastProgress=now(); progressPosition=player.position(); }
-            if(now()-lastProgress>1500) throw error("BLOCKED","Movement made no progress");
-            Vec3 step=new Vec3(delta.x,0,delta.z).normalize().scale(0.6);
-            AABB ahead=player.getBoundingBox().move(step);
-            BlockPos support=BlockPos.containing(player.position().add(step).add(0,-0.1,0));
-            BlockPos foot=BlockPos.containing(player.position().add(step)), head=foot.above();
-            if(!player.serverLevel().hasChunkAt(support)||!player.serverLevel().hasChunkAt(foot)||!player.serverLevel().hasChunkAt(head)||!player.serverLevel().noCollision(player,ahead)||player.serverLevel().getBlockState(support).getCollisionShape(player.serverLevel(),support).isEmpty()||hazard(support)||hazard(foot)||hazard(head)) throw error("BLOCKED","Obstacle, missing support, danger, liquid, or unloaded terrain");
-            if(!session.mayDrive(active)) { stop(); return; }
-            player.moveInput(delta.x,delta.z);
+                if(followed==null||followed!=followedPlayer)throw error("STALE_TARGET","Followed player left or changed identity/dimension");
+                target=followed.position();tolerance=bounded(active.args,"distance",2.5,1,8);
+            } else {target=point(active.args);tolerance=bounded(active.args,"tolerance",0.7,0.25,3);}
+            if(target.distanceTo(player.position())>32)throw error("OUT_OF_REACH","Target moved beyond navigation range");
+            boolean arrived=navigation.tick(target,feet->feet.distanceTo(target)<=tolerance);
+            if(arrived&&active.name.equals("move-to-position"))finish("succeeded","Reached server-observed target");
         } catch(Protocol.Error e) { finish("failed",e.code+": "+e.getMessage(),obj("code",e.code,"position",position(player.position()))); }
         catch(RuntimeException e) { finish("failed","Movement failed: "+e.getClass().getSimpleName()); }
     }
@@ -285,24 +302,8 @@ final class ServerController implements ControlSession.Game {
             if(recipient==null) throw error("STALE_TARGET","Recipient left local range or dimension");
             if(operation.args.has("expectedEntityId")&&!recipient.getUUID().toString().equals(string(operation.args,"expectedEntityId"))) throw error("STALE_TARGET","Recipient entity identity changed");
         }
-        FlatApproach geometry=new FlatApproach(player);
-        if(!geometry.safe(player.position(),player.position())) throw error("BLOCKED","Current full body/sole is not on safe loaded flat ground");
-        final BlockPos targetBlock=container;final ServerPlayer targetPlayer=recipient;
-        java.util.function.Predicate<Vec3> goal=feet->targetBlock!=null?geometry.containerReach(feet,targetBlock):geometry.playerReach(feet,targetPlayer,bounded(operation.args,"distance",1.3,1,1.5));
-        if(goal.test(player.position())) {
-            operation.finish("succeeded","Already at a verified interaction position",approachResult(operation,recipient));return;
-        }
-        FlatRoute.Cell origin=new FlatRoute.Cell(player.blockPosition().getX(),player.blockPosition().getZ());
-        Vec3 center=geometry.point(origin);
-        if(!geometry.safe(player.position(),center)) throw error("BLOCKED","Cannot safely enter the flat route grid");
-        List<FlatRoute.Cell> cells=FlatRoute.plan(origin,new FlatRoute.View() {
-            public boolean edge(FlatRoute.Cell from,FlatRoute.Cell to) {return geometry.safe(geometry.point(from),geometry.point(to));}
-            public boolean goal(FlatRoute.Cell cell) {return FlatApproach.arrivalStand(geometry.point(cell),goal);}
-        });
-        if(!session.mayDrive(operation)) throw error("LEASE_LOST","Control expired while planning route");
-        route=cells.stream().map(geometry::point).toList();routeIndex=0;
         approachPlayer=recipient;approachPlayerStart=recipient==null?null:recipient.position();
-        active=operation;actionDeadline=now()+timeout;lastProgress=now();progressPosition=player.position();
+        active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;
     }
     private JsonObject approachResult(ControlSession.Operation operation,ServerPlayer recipient) {
         JsonObject result=obj("position",position(player.position()));
@@ -311,46 +312,46 @@ final class ServerController implements ControlSession.Game {
         return result;
     }
     private void tickApproach() {
-        requireWalkable();
-        if(now()>=actionDeadline) throw error("TIMEOUT","Approach time limit reached");
-        FlatApproach geometry=new FlatApproach(player);
-        if(!geometry.safe(player.position(),player.position())) throw error("BLOCKED","Current swept body/whole sole is no longer safe loaded ground");
-        boolean reached;
+        if(now()>=actionDeadline)throw error("TIMEOUT","Approach time limit reached");
+        FlatApproach geometry=new FlatApproach(player);Vec3 destination;
+        java.util.function.Predicate<Vec3> goal;
         if(active.name.equals("approach-container")||active.name.equals("approach-resource")) {
             BlockPos pos=active.name.equals("approach-resource")?resources.require(player,string(active.args,"targetToken")).position():targets.require(player,string(active.args,"targetToken")).position();
-            reached=geometry.containerReach(player.position(),pos);
+            destination=Vec3.atCenterOf(pos);goal=feet->geometry.containerReach(feet,pos);
         } else {
             ServerPlayer actual=findPlayer(string(active.args,"player"));
-            if(actual!=approachPlayer) throw error("STALE_TARGET","Recipient entity changed or left local range/dimension");
-            if(actual.position().distanceTo(approachPlayerStart)>0.5) throw error("TARGET_MOVED","Recipient moved during approach; request a new bounded approach");
-            reached=geometry.playerReach(player.position(),actual,bounded(active.args,"distance",1.3,1,1.5));
+            if(actual!=approachPlayer)throw error("STALE_TARGET","Recipient entity changed or left local range/dimension");
+            if(actual.position().distanceTo(approachPlayerStart)>0.5)throw error("TARGET_MOVED","Recipient moved during bounded approach");
+            destination=actual.position();goal=feet->geometry.playerReach(feet,actual,bounded(active.args,"distance",1.3,1,1.5));
         }
-        if(reached) {JsonObject result=approachResult(active,approachPlayer);finish("succeeded","Reached verified interaction position",result);return;}
-        while(routeIndex<route.size()&&player.position().subtract(route.get(routeIndex)).horizontalDistance()<0.15) routeIndex++;
-        if(routeIndex>=route.size()) throw error("BLOCKED","Route ended without authoritative interaction reach");
-        Vec3 next=route.get(routeIndex),delta=next.subtract(player.position());
-        // Recheck the remaining route every tick, including its swept body and full sole.
-        Vec3 start=player.position();
-        for(int i=routeIndex;i<route.size();i++) {
-            Vec3 end=route.get(i);
-            if(!geometry.safe(start,end)) throw error("BLOCKED","Route changed: collision, missing full support, danger or unloaded terrain");
-            start=end;
-        }
-        if(player.position().distanceToSqr(progressPosition)>0.04) {lastProgress=now();progressPosition=player.position();}
-        if(now()-lastProgress>1500) throw error("BLOCKED","Approach made no progress");
-        Vec3 step=new Vec3(delta.x,0,delta.z).normalize().scale(Math.min(0.6,delta.horizontalDistance()));
-        if(!geometry.safe(player.position(),player.position().add(step))) throw error("BLOCKED","Next physical step is no longer safe");
-        if(!session.mayDrive(active)) {stop();return;}
-        player.moveInput(delta.x,delta.z);
+        if(navigation.tick(destination,goal))finish("succeeded","Reached verified interaction position",approachResult(active,approachPlayer));
     }
     private void requireWalkable() {
-        if(player.containerMenu!=player.inventoryMenu) throw error("BUSY","Close the container before moving");
-        if(!connected()||player.isInWater()||player.isInLava()||player.isPassenger()||player.isFallFlying()) throw error("BLOCKED","Body cannot safely walk");
-        if(!player.onGround()) throw error("BLOCKED","Body is airborne; flat-ground prototype stopped");
+        NativeNavigation.conditions(player);
+        if(!connected())throw error("BLOCKED","Body is not connected in authorized survival state");
+        if(!player.onGround())throw error("BLOCKED","Start navigation from supported ground");
     }
-    private boolean hazard(BlockPos position) {
-        var state=player.serverLevel().getBlockState(position);
-        return !player.serverLevel().getFluidState(position).isEmpty()||state.is(Blocks.MAGMA_BLOCK)||state.is(Blocks.CACTUS)||state.is(Blocks.FIRE)||state.is(Blocks.SOUL_FIRE)||state.is(Blocks.SWEET_BERRY_BUSH)||state.is(Blocks.POWDER_SNOW)||state.is(Blocks.WITHER_ROSE)||state.is(Blocks.CAMPFIRE)||state.is(Blocks.SOUL_CAMPFIRE);
+    private void beginRetreat(ControlSession.Operation operation) {
+        requireWalkable();bounded(operation.args,"distance",4,1.5,6);
+        retreatTarget=ThreatSense.lookup(player,string(operation.args,"entityId"),string(operation.args,"expectedDimension"));
+        ThreatSense.requireEligible(player,retreatTarget);
+        retreatInitialDistance=retreatTarget.distanceTo(player);
+        if(retreatInitialDistance>8)throw error("OUT_OF_REACH","Retreat threat must start within eight blocks");
+        retreatOrigin=player.position();active=operation;navigation=new NativeNavigation(player,session,operation);
+        actionDeadline=now()+(long)bounded(operation.args,"timeoutMs",3000,500,5000);
+    }
+    private void tickRetreat() {
+        if(now()>=actionDeadline)throw error("TIMEOUT","Safe retreat time limit reached");
+        var current=ThreatSense.lookup(player,string(active.args,"entityId"),string(active.args,"expectedDimension"));
+        if(current!=retreatTarget)throw error("STALE_TARGET","Retreat threat identity changed");
+        ThreatSense.requireEligible(player,current);
+        Vec3 enemy=current.position(),away=retreatOrigin.subtract(enemy);double requested=bounded(active.args,"distance",4,1.5,6);
+        if(away.horizontalDistance()<0.001)away=new Vec3(1,0,0);
+        Vec3 destination=retreatOrigin.add(new Vec3(away.x,0,away.z).normalize().scale(4));
+        double wanted=Math.max(requested,retreatInitialDistance+1),currentDistance=player.position().distanceTo(enemy);
+        java.util.function.Predicate<Vec3> allowed=feet->feet.subtract(retreatOrigin).horizontalDistance()<=4&&Math.abs(feet.y-retreatOrigin.y)<=2.5&&feet.distanceTo(enemy)>=currentDistance-0.3;
+        if(navigation.tick(destination,feet->feet.distanceTo(enemy)>=wanted,allowed))
+            finish("succeeded","Reached a verified safer retreat position",obj("entityId",current.getUUID().toString(),"position",position(player.position()),"distance",player.position().distanceTo(enemy),"requestedDistance",requested,"travelLimit",4));
     }
     private ServerPlayer findPlayer(String name) {
         ServerPlayer target=server.getPlayerList().getPlayerByName(name);
@@ -360,10 +361,11 @@ final class ServerController implements ControlSession.Game {
         finish(status,summary,obj("position",position(player.position())));
     }
     private void finish(String status,String summary,JsonObject result) {
+        if(navigation!=null)result.add("navigation",navigation.diagnostics());
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;route=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { active=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     void remove() {
         session.revokeCurrent("Server body removed");
@@ -377,7 +379,7 @@ final class ServerController implements ControlSession.Game {
         if(oldSink!=null) oldSink.closeSink();
         wasConnected=false; lastDimension=null;
     }
-    void close() { remove();validationProtection.close(); }
+    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);}}
     private void look(Vec3 target) {
         Vec3 delta=target.subtract(player.getEyePosition());
         float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));

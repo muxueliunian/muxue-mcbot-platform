@@ -10,6 +10,10 @@ import { acquireRuntimeLock, RuntimeMonitor, hostedHeartbeatFresh } from './life
 import { createMcpServer } from './mcp.js';
 import { CompanionMode } from './companion-mode.js';
 import { GatherTasks } from './gather-tasks.js';
+import { ContainerTasks } from './tasks.js';
+import { SurvivalTasks } from './survival-tasks.js';
+import { SurvivalReflexes } from './survival-reflexes.js';
+import { createActionStop } from './action-stop.js';
 import { BodyError, type Body } from './body.js';
 
 async function main(): Promise<void> {
@@ -91,10 +95,20 @@ async function main(): Promise<void> {
     events.ingest(await body.observe());
     const gather = new GatherTasks(body, events);
     if (body.hello.capabilities.includes('follow-companion')) companion = new CompanionMode(body, events, gather);
-    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather });
+    const tasks = new ContainerTasks(body, Date.now, operation => events!.deliverOperation(operation));
+    const survival = ['survival-state', 'swap-inventory', 'eat-item'].every(cap => body!.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events!.recordOperation(operation)) : undefined;
+    const stopCurrent = createActionStop(body, tasks, gather, companion, survival);
+    const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ordinaryBusy: () => {
+      try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); }
+      catch { return true; }
+      return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
+    } }) : undefined;
+    if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
+    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent });
     monitor = new RuntimeMonitor(body, events, {
       ...(values.hosted ? { heartbeatFile } : {}),
       companion,
+      reflexes,
       onFatal: error => { if (error instanceof BodyError && error.code === 'HOST_LOST') void shutdown(error); else loseControl(error); },
     });
     const transport = new StdioServerTransport();

@@ -30,6 +30,10 @@ final class Protocol {
         if(!Double.isFinite(value)) throw error("INVALID_ARGUMENT",key+" must be finite");
         return value;
     }
+    static boolean bool(JsonObject o,String key) {
+        if(!o.has(key)||!o.get(key).isJsonPrimitive()||!o.getAsJsonPrimitive(key).isBoolean())throw error("INVALID_ARGUMENT",key+" must be boolean");
+        return o.get(key).getAsBoolean();
+    }
     static long generation(JsonObject o) {
         double value=number(o,"controlGeneration");
         if(value<0||value!=Math.rint(value)||value>9_007_199_254_740_991d) throw error("INVALID_ARGUMENT","Invalid controlGeneration");

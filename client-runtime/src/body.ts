@@ -67,6 +67,8 @@ export interface BodyHello {
   capabilities: string[]; connected: boolean; username: string | null; sessionId: string | null;
   /** Registered held-item interaction IDs; only these may be sent with use-item-on-block / use-item. */
   interactions?: string[];
+  /** Mod container adapters the server has installed (e.g. ironfurnaces:iron_furnace); informational. */
+  adapters?: string[];
 }
 export interface ActionArguments {
   'send-chat': { message: string };

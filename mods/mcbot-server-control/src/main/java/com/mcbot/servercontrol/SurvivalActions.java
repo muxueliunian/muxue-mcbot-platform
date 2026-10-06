@@ -24,6 +24,8 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.*;
+import com.mcbot.servercontrol.api.ContainerAdapter;
+import com.mcbot.servercontrol.api.ItemInteraction;
 import com.mcbot.servercontrol.mixin.ServerPlayerGameModeAccessor;
 import java.util.*;
 import static com.mcbot.servercontrol.Protocol.*;
@@ -167,7 +169,7 @@ final class SurvivalActions {
     private void action(ServerboundPlayerActionPacket.Action action,BlockPos position,Direction face) {
         player.connection.handlePlayerAction(new ServerboundPlayerActionPacket(action,position,face,++sequence));
     }
-    private boolean standard(AbstractContainerMenu menu) { return menu instanceof ChestMenu||menu instanceof HopperMenu||menu instanceof DispenserMenu||menu instanceof ShulkerBoxMenu||menu instanceof AbstractFurnaceMenu||IronFurnaceAdapter.menu(menu); }
+    private boolean standard(AbstractContainerMenu menu) { return MenuSlotSources.vanilla(menu)||ModAdapters.menu(menu)!=null; }
     JsonElement container() {
         AbstractContainerMenu menu=player.containerMenu;
         if(menu==player.inventoryMenu) { knownMenu=null;knownMenuState=null;guardedToken=null;guardedTarget=null;guardedMenu=null;return JsonNull.INSTANCE; }
@@ -175,12 +177,12 @@ final class SurvivalActions {
         if(!standard(menu)) throw error("UNSUPPORTED","Only ordinary storage/furnace menus are supported");
         menu.broadcastChanges();
         if(menu!=knownMenu) { knownMenu=menu;knownMenuState=null;menuGeneration++;revision=0; }
-        var storage=MenuSlotSources.storage(menu,player.getInventory());
-        boolean ironFurnace=IronFurnaceAdapter.menu(menu);
-        if(ironFurnace&&storage==null) throw error("UNSUPPORTED","Iron furnace native slot contract changed");
+        ContainerAdapter adapter=ModAdapters.menu(menu);
+        var storage=ModAdapters.storage(menu,player.getInventory());
+        if(adapter!=null&&storage==null) throw error("UNSUPPORTED","Native slot contract of adapter "+adapter.id()+" changed");
         JsonArray slots=new JsonArray();for(int i=0;i<menu.slots.size();i++) {
             Slot slot=menu.getSlot(i);
-            JsonObject observed=MenuSlotSources.annotate(stack(i,slot.getItem()),slot,player.getInventory(),storage,ironFurnace);
+            JsonObject observed=MenuSlotSources.annotate(stack(i,slot.getItem()),slot,player.getInventory(),storage,adapter);
             observed.addProperty("active",slot.isActive());observed.addProperty("mayPickup",slot.mayPickup(player));slots.add(observed);
         }
         ItemStack carried=menu.getCarried();
@@ -328,22 +330,24 @@ final class SurvivalActions {
         else if(actual.isAir()&&after.getCount()==before&&itemId(after).equals(string(args,"expectedItem"))&&components(after).equals(object(args,"expectedComponents"))) operation.finish("failed","FORBIDDEN: Native placement refused without block or inventory change",obj("code","FORBIDDEN","block",blockSnapshot(target),"inventory",inventory()));
         else operation.finish("unknown","Placement produced a different authoritative state; do not replay",result);
     }
-    private JsonObject interactionSnapshot(BlockPos position,ItemInteractions.Interaction interaction) {
+    private JsonObject interactionSnapshot(BlockPos position,ItemInteraction interaction,boolean afterNativeCall) {
         JsonArray drops=new JsonArray();
         AABB area=position==null?player.getBoundingBox().inflate(2):new AABB(position).inflate(2);
         for(ItemEntity entity:player.serverLevel().getEntitiesOfClass(ItemEntity.class,area)) drops.add(obj("entityId",entity.getUUID().toString(),"stack",stackValue(entity.getItem())));
         AbstractContainerMenu menu=player.containerMenu;
         String menuType=menu==player.inventoryMenu?"none":menu.getType()==null?menu.getClass().getName():String.valueOf(BuiltInRegistries.MENU.getKey(menu.getType()));
         JsonObject block=position==null?null:obj("id",BuiltInRegistries.BLOCK.getKey(player.serverLevel().getBlockState(position).getBlock()).toString(),"properties",properties(player.serverLevel().getBlockState(position)));
-        JsonObject snapshot=obj("summary",interaction.summary(player,position),"inventory",inventory(),"menu",menuType,"drops",drops);
+        JsonObject snapshot=obj("summary",ItemInteractions.summary(interaction,player,position,afterNativeCall),"inventory",inventory(),"menu",menuType,"drops",drops);
         snapshot.add("block",block==null?JsonNull.INSTANCE:block);
         return snapshot;
     }
-    private void finishInteraction(ControlSession.Operation operation,ItemInteractions.Interaction interaction,JsonObject before,int heldSlot,BlockPos position,String forcedUnknown) {
-        JsonObject after=interactionSnapshot(position,interaction);
+    private void finishInteraction(ControlSession.Operation operation,ItemInteraction interaction,JsonObject before,int heldSlot,BlockPos position,String forcedUnknown) {
+        JsonObject after=interactionSnapshot(position,interaction,true);
         boolean menuOpened=player.containerMenu!=player.inventoryMenu;
-        boolean menuVerified=menuOpened&&interaction.expected().opensMenu()&&interaction.menu(player.containerMenu);
-        ItemInteractions.Verdict verdict=ItemInteractions.judge(before,after,heldSlot,interaction.expected(),interaction::consistent);
+        boolean menuVerified;
+        try { menuVerified=menuOpened&&interaction.expected().opensMenu()&&interaction.menu(player.containerMenu); }
+        catch(RuntimeException | LinkageError broken) { menuVerified=false; }
+        ItemInteractions.Verdict verdict=ItemInteractions.judge(before,after,heldSlot,interaction.expected(),(b,a)->ItemInteractions.consistent(interaction,b,a));
         if(menuOpened&&!menuVerified) {
             // Never leave an unverified menu open; the receipt still reports that it opened.
             player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));
@@ -365,8 +369,10 @@ final class SurvivalActions {
         worldAction();JsonObject args=operation.args;
         if(args.has("targetToken")) throw error("INVALID_ARGUMENT","targetToken is not supported for item interactions yet");
         BlockPos position=block(args);BlockState state=expectedBlock(args,position);
-        ItemInteractions.Interaction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.BLOCK);
-        if(!interaction.block(state)) throw error("UNSUPPORTED","Interaction does not apply to this block");
+        ItemInteraction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.BLOCK);
+        boolean applies;
+        try { applies=interaction.block(state); } catch(RuntimeException | LinkageError broken) { applies=false; }
+        if(!applies) throw error("UNSUPPORTED","Interaction does not apply to this block");
         boolean emptyHand=args.has("emptyHand")&&bool(args,"emptyHand");
         int slot;ItemStack held;
         if(emptyHand) {
@@ -379,11 +385,11 @@ final class SurvivalActions {
             expectedItem(args,"expectedItem","expectedCount","expectedComponents",held);
         }
         ItemInteractions.requireHeld(emptyHand,interaction,held);
-        interaction.precondition(player,position,state,held);
+        ItemInteractions.precondition(interaction,player,position,state,held);
         Direction face=null;
         if(args.has("face")) { face=Direction.byName(string(args,"face"));if(face==null) throw error("INVALID_ARGUMENT","Invalid block face"); }
         BlockHitResult hit=hit(position,face);
-        JsonObject before=interactionSnapshot(position,interaction);
+        JsonObject before=interactionSnapshot(position,interaction,false);
         int previous=player.getInventory().selected;
         nativeEffects.sent();select(slot);look(hit.getLocation());guard(operation);
         try {
@@ -393,13 +399,13 @@ final class SurvivalActions {
     }
     private void useItem(ControlSession.Operation operation) {
         worldAction();JsonObject args=operation.args;
-        ItemInteractions.Interaction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.ITEM);
+        ItemInteraction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.ITEM);
         int slot=hotbar(args);ItemStack held=player.getInventory().getItem(slot);
         expectedItem(args,"expectedItem","expectedCount","expectedComponents",held);
         ItemInteractions.requireHeld(false,interaction,held);
-        interaction.precondition(player,null,null,held);
+        ItemInteractions.precondition(interaction,player,null,null,held);
         if(!player.inventoryMenu.getCarried().isEmpty()) throw error("BUSY","Item use requires an empty own inventory cursor");
-        JsonObject before=interactionSnapshot(null,interaction);
+        JsonObject before=interactionSnapshot(null,interaction,false);
         nativeEffects.sent();select(slot);guard(operation);
         nativeEffects.sent();player.connection.handleUseItem(new ServerboundUseItemPacket(InteractionHand.MAIN_HAND,++sequence,player.getYRot(),player.getXRot()));
         // Held-use items (bows, shields, food) are outside this contract; never leave one in progress.
@@ -414,7 +420,7 @@ final class SurvivalActions {
         if(target!=null&&!target.position().equals(position)) throw error("STALE_TARGET","Token position does not match requested block");
         Block type=state.getBlock();
         if(!NearbyBlocks.ordinaryContainer(state)) throw error("UNSUPPORTED","Only supported storage/furnace blocks may be opened");
-        if(state.getMenuProvider(player.serverLevel(),position)==null&&IronFurnaceAdapter.provider(player,position,state)==null) throw error("UNSUPPORTED","Block exposes no supported native menu provider");
+        if(state.getMenuProvider(player.serverLevel(),position)==null&&ModAdapters.provider(player,position,state)==null) throw error("UNSUPPORTED","Block exposes no supported native menu provider");
         int empty=-1;for(int i=0;i<9;i++) if(player.getInventory().getItem(i).isEmpty()) {empty=i;break;}
         if(empty<0) throw error("EMPTY_HAND_REQUIRED","An empty hotbar slot is needed to avoid item-use fallback");
         BlockHitResult hit=hit(position,null);int previous=player.getInventory().selected;look(hit.getLocation());guard(operation);

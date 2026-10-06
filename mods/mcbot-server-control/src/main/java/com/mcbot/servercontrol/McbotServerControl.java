@@ -13,6 +13,7 @@ import java.io.IOException;
 
 @Mod("mcbot_server_control")
 public final class McbotServerControl {
+    private static final org.slf4j.Logger LOGGER=com.mojang.logging.LogUtils.getLogger();
     private ServerController controller;
     private LocalHttpBridge bridge;
     private CommandFileFixture fixture;
@@ -32,6 +33,11 @@ public final class McbotServerControl {
             var server=event.getServer();
             ServerConfig loaded=ServerConfig.load(directory,server.isDedicatedServer());
             ServerConfig config=loaded.withWorldId(HostingRules.worldId(loaded.worldId(),server.isDedicatedServer(),server.getWorldPath(LevelResource.ROOT)));
+            // Add-on registration closes here; JSON interactions are read from config/mcbot-server-control/interactions.
+            var adapters=ModAdapters.load(directory);
+            for(String problem:adapters.problems()) LOGGER.warn("MCBOT adapter: {}",problem);
+            LOGGER.info("MCBOT adapters: containers {}, interactions {}",adapters.containers().stream().map(a->a.id()).toList(),
+                ItemInteractions.ids(ItemInteractions.installed()));
             controller=new ServerController(event.getServer(),config);
             bridge=new LocalHttpBridge(directory,config,event.getServer()::execute,controller::call);
             fixture=CommandFileFixture.start(server);

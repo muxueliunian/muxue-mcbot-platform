@@ -145,10 +145,11 @@ final class ServerController implements ControlSession.Game {
         player.stopInput();player.pumpLocalTransport();wasConnected=connected();lastDimension=player.serverLevel().dimension().location().toString();
     }
     @Override public JsonObject hello() {
-        List<ItemInteractions.Interaction> interactions=ItemInteractions.installed();
+        List<com.mcbot.servercontrol.api.ItemInteraction> interactions=ItemInteractions.installed();
         List<String> capabilities=new ArrayList<>(CAPABILITIES);capabilities.addAll(ItemInteractions.capabilities(interactions));
         JsonObject hello=obj("platform",obj("minecraft","1.21.1","loader","neoforge","loaderVersion","21.1.217"),"capabilities",capabilities);
         hello.add("interactions",ItemInteractions.ids(interactions));
+        hello.add("adapters",ModAdapters.containerIds());
         if(validationProtection.enabled()) hello.add("validationFixture",validationProtection.json());
         return hello;
     }

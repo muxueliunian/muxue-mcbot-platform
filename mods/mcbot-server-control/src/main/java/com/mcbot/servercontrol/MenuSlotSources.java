@@ -1,6 +1,7 @@
 package com.mcbot.servercontrol;
 
 import com.google.gson.JsonObject;
+import com.mcbot.servercontrol.api.ContainerAdapter;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.*;
@@ -13,9 +14,13 @@ final class MenuSlotSources {
     record Source(String source,Integer playerSlot) {}
     private MenuSlotSources() {}
 
+    /** Vanilla storage menus keep their built-in contracts; adapters cannot claim them. */
+    static boolean vanilla(AbstractContainerMenu menu) {
+        return menu instanceof ChestMenu||menu instanceof HopperMenu||menu instanceof DispenserMenu||menu instanceof ShulkerBoxMenu||menu instanceof AbstractFurnaceMenu;
+    }
+    /** Vanilla menus only; adapted mod menus go through {@link ModAdapters#storage}. */
     static Container storage(AbstractContainerMenu menu, Inventory inventory) {
         if(menu instanceof ChestMenu chest) return chest.getContainer();
-        if(IronFurnaceAdapter.menu(menu)) return IronFurnaceAdapter.storage(menu,inventory);
         // These version-pinned native constructors put their real storage in slots 0..N-1.
         // Validate both identity and native indices; a changed adapter contract stays unknown.
         int count=menu instanceof HopperMenu?5:menu instanceof DispenserMenu?9:
@@ -44,9 +49,9 @@ final class MenuSlotSources {
         return new Source("unknown",null);
     }
 
-    static JsonObject annotate(JsonObject stack,Slot slot,Inventory inventory,Container storage,boolean ironFurnace) {
+    static JsonObject annotate(JsonObject stack,Slot slot,Inventory inventory,Container storage,ContainerAdapter adapter) {
         Source source=classify(new BackingSlot(slot.container,slot.getContainerSlot(),slot.container.getContainerSize()),inventory,inventory.getContainerSize(),storage);
-        if(ironFurnace&&source.source().equals("unknown")) source=IronFurnaceAdapter.playerSource(slot,inventory);
+        if(adapter!=null&&source.source().equals("unknown")) source=ModAdapters.playerSource(adapter,slot,inventory);
         stack.addProperty("source",source.source());
         if(source.playerSlot()!=null) stack.addProperty("playerSlot",source.playerSlot());
         return stack;

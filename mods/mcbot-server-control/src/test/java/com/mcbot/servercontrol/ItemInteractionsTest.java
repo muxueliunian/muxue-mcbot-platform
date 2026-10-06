@@ -1,6 +1,7 @@
 package com.mcbot.servercontrol;
 
 import com.google.gson.*;
+import com.mcbot.servercontrol.api.ItemInteraction;
 import java.util.*;
 import net.minecraft.world.item.ItemStack;
 import static com.mcbot.servercontrol.Protocol.*;
@@ -19,12 +20,12 @@ final class ItemInteractionsTest {
         result.add("block",obj("id","minecraft:composter","properties",obj("level",level)));
         return result;
     }
-    private record Fake(String id,String kind,boolean installed,boolean emptyHand) implements ItemInteractions.Interaction {
+    private record Fake(String id,String kind,boolean installed,boolean emptyHand) implements ItemInteraction {
         public boolean accepts(ItemStack held){return true;}
-        public ItemInteractions.Expected expected(){return new ItemInteractions.Expected(0,0,false,Set.of(),Set.of(),Set.of(),false);}
+        public ItemInteraction.Expected expected(){return new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),false);}
     }
     static void run() {
-        ItemInteractions.Expected composter=ItemInteractions.COMPOSTER.expected();
+        ItemInteraction.Expected composter=ItemInteractions.COMPOSTER.expected();
         var consistent=(java.util.function.BiPredicate<JsonObject,JsonObject>)ItemInteractions::composterLevelStep;
         JsonObject seeds=stack(2,"minecraft:wheat_seeds",5,obj()),other=stack(3,"minecraft:dirt",1,obj());
 
@@ -58,15 +59,15 @@ final class ItemInteractionsTest {
         // Declared gains, damage and menus for adapter interactions
         JsonObject shovel=stack(0,"example:shovel",1,obj("minecraft:damage",obj("type","int","value",0)));
         JsonObject worn=stack(0,"example:shovel",1,obj("minecraft:damage",obj("type","int","value",1)));
-        var stir=new ItemInteractions.Expected(0,0,true,Set.of(),Set.of("stirs"),Set.of(),false);
+        var stir=new ItemInteraction.Expected(0,0,true,Set.of(),Set.of("stirs"),Set.of(),false);
         JsonObject b=snapshot("0",shovel),a=snapshot("0",worn);b.add("summary",obj("stirs",1));a.add("summary",obj("stirs",2));
         check(ItemInteractions.judge(b,a,0,stir,(x,y)->true).status().equals("succeeded"),"declared tool damage and summary change are confirmed");
-        var noDamage=new ItemInteractions.Expected(0,0,false,Set.of(),Set.of("stirs"),Set.of(),false);
+        var noDamage=new ItemInteraction.Expected(0,0,false,Set.of(),Set.of("stirs"),Set.of(),false);
         check(ItemInteractions.judge(b,a,0,noDamage,(x,y)->true).status().equals("unknown"),"undeclared tool damage is unknown");
-        var takeOut=new ItemInteractions.Expected(0,0,false,Set.of(),Set.of(),Set.of("example:dish"),false);
+        var takeOut=new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of("example:dish"),false);
         var gainedDish=ItemInteractions.judge(snapshot("0",stack(0,"minecraft:air",0,obj())),snapshot("0",stack(0,"example:dish",1,obj())),0,takeOut,(x,y)->true);
         check(gainedDish.status().equals("succeeded")&&gainedDish.gained().size()==1,"declared product gain into the empty hand is confirmed");
-        var menu=new ItemInteractions.Expected(0,0,false,Set.of(),Set.of(),Set.of(),true);
+        var menu=new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),true);
         JsonObject menuAfter=snapshot("0",shovel);menuAfter.addProperty("menu","example:backpack");
         check(ItemInteractions.judge(snapshot("0",shovel),menuAfter,0,menu,(x,y)->true).status().equals("succeeded"),"declared menu opening is within the envelope (menu contract checked separately)");
 
@@ -80,16 +81,16 @@ final class ItemInteractionsTest {
         errorCode("STALE_ITEM",()->ItemInteractions.requireHeld(true,true,false,false));
 
         // Registration and advertised capabilities
-        List<ItemInteractions.Interaction> base=ItemInteractions.installed(List.of(ItemInteractions.COMPOSTER));
+        List<ItemInteraction> base=ItemInteractions.installed(List.of(ItemInteractions.COMPOSTER));
         check(ItemInteractions.capabilities(base).equals(List.of("use-item-on-block")),"vanilla composter advertises block use only");
         check(ItemInteractions.ids(base).toString().equals("[\"minecraft:composter/add\"]"),"advertised interaction IDs");
         Fake absent=new Fake("example:pot/add","block",false,false),bag=new Fake("example:backpack/open","item",true,false);
-        ItemInteractions.Interaction broken=new ItemInteractions.Interaction(){
+        ItemInteraction broken=new ItemInteraction(){
             public String id(){return "example:broken";} public String kind(){return "block";} public boolean emptyHand(){return false;}
-            public boolean accepts(ItemStack held){return true;} public ItemInteractions.Expected expected(){return absent.expected();}
+            public boolean accepts(ItemStack held){return true;} public ItemInteraction.Expected expected(){return absent.expected();}
             public boolean installed(){throw new LinkageError("changed mod");}
         };
-        List<ItemInteractions.Interaction> mixed=ItemInteractions.installed(List.of(ItemInteractions.COMPOSTER,absent,bag,broken));
+        List<ItemInteraction> mixed=ItemInteractions.installed(List.of(ItemInteractions.COMPOSTER,absent,bag,broken));
         check(mixed.size()==2&&ItemInteractions.capabilities(mixed).equals(List.of("use-item-on-block","use-item")),"absent or broken mods are excluded; item kind adds use-item");
         check(ItemInteractions.capabilities(List.of()).isEmpty(),"no interactions means no capability");
         errorCode("UNSUPPORTED",()->ItemInteractions.require(mixed,"example:pot/add","block"));

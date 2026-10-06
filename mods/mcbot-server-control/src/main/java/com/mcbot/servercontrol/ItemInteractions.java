@@ -1,6 +1,8 @@
 package com.mcbot.servercontrol;
 
 import com.google.gson.*;
+import com.mcbot.servercontrol.api.ItemInteraction;
+import com.mcbot.servercontrol.api.McbotApi;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -17,31 +19,10 @@ import static com.mcbot.servercontrol.Protocol.*;
  */
 final class ItemInteractions {
     private ItemInteractions() {}
-    static final String BLOCK="block",ITEM="item";
-    /** Effects that a succeeded interaction may produce. Anything else makes the receipt unknown. */
-    record Expected(int minConsumed,int maxConsumed,boolean heldDamageAllowed,Set<String> properties,Set<String> summaryFields,Set<String> gainedItems,boolean opensMenu) {}
-    interface Interaction {
-        String id();
-        String kind();
-        boolean installed();
-        /** Block interactions only; item interactions are never matched against a block. */
-        default boolean block(BlockState state) {return false;}
-        /** True when this interaction must be performed with an empty main hand. Empty hand is never a fallback. */
-        boolean emptyHand();
-        boolean accepts(ItemStack held);
-        /** Read-only check before any native packet; throws a protocol error when the target is not ready. */
-        default void precondition(ServerPlayer player,BlockPos position,BlockState state,ItemStack held) {}
-        /** Read-only adapter facts taken before and after the native call. */
-        default JsonObject summary(ServerPlayer player,BlockPos position) {return new JsonObject();}
-        Expected expected();
-        /** Adapter-specific value check on the two snapshots, in addition to the generic effect envelope. */
-        default boolean consistent(JsonObject before,JsonObject after) {return true;}
-        /** Item interactions that open a menu must verify it with an adapter-owned menu contract. */
-        default boolean menu(AbstractContainerMenu menu) {return false;}
-    }
+    static final String BLOCK=ItemInteraction.BLOCK,ITEM=ItemInteraction.ITEM;
     record Verdict(String status,String code,String summary,int consumed,JsonArray gained,JsonArray unexpected) {}
 
-    static final Interaction COMPOSTER=new Interaction() {
+    static final ItemInteraction COMPOSTER=new ItemInteraction() {
         public String id() {return "minecraft:composter/add";}
         public String kind() {return BLOCK;}
         public boolean installed() {return true;}
@@ -54,40 +35,61 @@ final class ItemInteractions {
         public Expected expected() {return new Expected(1,1,false,Set.of("level"),Set.of(),Set.of(),false);}
         public boolean consistent(JsonObject before,JsonObject after) {return composterLevelStep(before,after);}
     };
-    private static final List<Interaction> ALL=List.of(COMPOSTER);
 
-    static List<Interaction> installed(List<Interaction> candidates) {
-        List<Interaction> result=new ArrayList<>();
-        for(Interaction interaction:candidates) {
+    static List<ItemInteraction> installed(List<ItemInteraction> candidates) {
+        List<ItemInteraction> result=new ArrayList<>();
+        for(ItemInteraction interaction:candidates) {
             try { if(interaction.installed()) result.add(interaction); }
             catch(RuntimeException | LinkageError unavailable) { /* A changed optional mod is treated as absent. */ }
         }
         return result;
     }
-    static List<Interaction> installed() {return installed(ALL);}
+    /** Built-in, JSON-configured and add-on interactions whose mods are present at the verified versions. */
+    static List<ItemInteraction> installed() {return installed(ModAdapters.interactions());}
     /** Capabilities are advertised only when at least one interaction of that kind is actually available. */
-    static List<String> capabilities(List<Interaction> available) {
+    static List<String> capabilities(List<ItemInteraction> available) {
         List<String> result=new ArrayList<>();
         if(available.stream().anyMatch(i->i.kind().equals(BLOCK))) result.add("use-item-on-block");
         if(available.stream().anyMatch(i->i.kind().equals(ITEM))) result.add("use-item");
         return result;
     }
     static List<String> capabilities() {return capabilities(installed());}
-    static JsonArray ids(List<Interaction> available) {
-        JsonArray result=new JsonArray();for(Interaction interaction:available) result.add(interaction.id());return result;
+    static JsonArray ids(List<ItemInteraction> available) {
+        JsonArray result=new JsonArray();for(ItemInteraction interaction:available) result.add(interaction.id());return result;
     }
     static JsonArray ids() {return ids(installed());}
-    static Interaction require(List<Interaction> available,String id,String kind) {
-        for(Interaction interaction:available) if(interaction.id().equals(id)) {
+    static ItemInteraction require(List<ItemInteraction> available,String id,String kind) {
+        for(ItemInteraction interaction:available) if(interaction.id().equals(id)) {
             if(!interaction.kind().equals(kind)) throw error("UNSUPPORTED","Interaction "+id+" is not a "+kind+" interaction");
             return interaction;
         }
         throw error("UNSUPPORTED","Interaction is not registered or its mod version is not verified: "+id);
     }
-    static Interaction require(String id,String kind) {return require(installed(),id,kind);}
+    static ItemInteraction require(String id,String kind) {return require(installed(),id,kind);}
     /** Empty hand only when the interaction itself requires it; an item interaction never falls back to an empty hand. */
-    static void requireHeld(boolean emptyHandRequested,Interaction interaction,ItemStack held) {
-        requireHeld(emptyHandRequested,interaction.emptyHand(),held.isEmpty(),!held.isEmpty()&&interaction.accepts(held));
+    static void requireHeld(boolean emptyHandRequested,ItemInteraction interaction,ItemStack held) {
+        boolean accepted;
+        try { accepted=!held.isEmpty()&&interaction.accepts(held); }
+        catch(RuntimeException | LinkageError broken) { throw error("UNSUPPORTED","Interaction adapter failed while checking the held item"); }
+        requireHeld(emptyHandRequested,interaction.emptyHand(),held.isEmpty(),accepted);
+    }
+    /** Adapter precondition; add-on refusals keep their code only when it is one the agent understands. */
+    static void precondition(ItemInteraction interaction,ServerPlayer player,BlockPos position,BlockState state,ItemStack held) {
+        try { interaction.precondition(player,position,state,held); }
+        catch(Protocol.Error refused) { throw refused; }
+        catch(McbotApi.Refused refused) { throw error(Set.of("INTERACTION_NOT_READY","UNSUPPORTED").contains(refused.code)?refused.code:"INTERACTION_NOT_READY",String.valueOf(refused.getMessage())); }
+        catch(RuntimeException | LinkageError broken) { throw error("UNSUPPORTED","Interaction adapter failed its precondition check"); }
+    }
+    /** Adapter summary; a broken adapter before the native call refuses, after it the receipt must become unknown. */
+    static JsonObject summary(ItemInteraction interaction,ServerPlayer player,BlockPos position,boolean afterNativeCall) {
+        try { JsonObject summary=interaction.summary(player,position);return summary==null?new JsonObject():summary; }
+        catch(RuntimeException | LinkageError broken) {
+            if(!afterNativeCall) throw error("UNSUPPORTED","Interaction adapter failed to observe its target");
+            return obj("adapterError","summary failed after the native call");
+        }
+    }
+    static boolean consistent(ItemInteraction interaction,JsonObject before,JsonObject after) {
+        try { return interaction.consistent(before,after); } catch(RuntimeException | LinkageError broken) { return false; }
     }
     static void requireHeld(boolean emptyHandRequested,boolean ruleEmptyHand,boolean heldEmpty,boolean accepted) {
         if(emptyHandRequested!=ruleEmptyHand) throw error("UNSUPPORTED",ruleEmptyHand?"This interaction requires an empty hand":"This interaction requires a declared held item; empty hand is not a fallback");
@@ -125,7 +127,7 @@ final class ItemInteractions {
      * Pure receipt classification. failed only when nothing at all changed; succeeded only when every
      * difference lies inside the declared envelope and held consumption is within range; otherwise unknown.
      */
-    static Verdict judge(JsonObject before,JsonObject after,int heldSlot,Expected expected,java.util.function.BiPredicate<JsonObject,JsonObject> consistent) {
+    static Verdict judge(JsonObject before,JsonObject after,int heldSlot,ItemInteraction.Expected expected,java.util.function.BiPredicate<JsonObject,JsonObject> consistent) {
         JsonArray unexpected=new JsonArray(),gained=new JsonArray();
         if(before.equals(after)) return new Verdict("failed","NO_EFFECT","Native interaction produced no observable change",0,gained,unexpected);
         JsonElement blockBefore=before.get("block"),blockAfter=after.get("block");

@@ -30,9 +30,13 @@ final class NearbyBlocks {
         return (int)value;
     }
     static boolean ordinaryContainer(BlockState state) {
+        return vanillaContainer(state)||ModAdapters.container(state)!=null;
+    }
+    /** Vanilla storage blocks keep their built-in contracts; adapters cannot claim them. */
+    static boolean vanillaContainer(BlockState state) {
         Block block=state.getBlock();
         return block instanceof ChestBlock||block instanceof BarrelBlock||block instanceof HopperBlock||
-            block instanceof DispenserBlock||block instanceof ShulkerBoxBlock||block instanceof AbstractFurnaceBlock||IronFurnaceAdapter.block(state);
+            block instanceof DispenserBlock||block instanceof ShulkerBoxBlock||block instanceof AbstractFurnaceBlock;
     }
     static JsonObject discover(ServerPlayer bot,ServerPlayer center,Options options,TargetTokens tokens) {
         LoadedView view=new LoadedView(bot);

@@ -1,0 +1,55 @@
+package com.mcbot.servercontrol.api;
+
+import com.google.gson.JsonObject;
+import java.util.Set;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.state.BlockState;
+
+/**
+ * A right-click the bot may perform with its held item, on a block ({@link #BLOCK}) or in the air ({@link #ITEM}).
+ *
+ * <p>MCBOT snapshots the block, the bot's inventory, its open menu, nearby drops and {@link #summary} before and after
+ * the native click. The receipt is "succeeded" only when every difference lies inside {@link #expected} and
+ * {@link #consistent} agrees, "failed" when nothing changed, and "unknown" otherwise (the agent is told not to replay).</p>
+ */
+public interface ItemInteraction {
+    String BLOCK = "block", ITEM = "item";
+
+    /** Effects a succeeded interaction may produce; anything else makes the receipt unknown. */
+    record Expected(int minConsumed, int maxConsumed, boolean heldDamageAllowed, Set<String> properties,
+                    Set<String> summaryFields, Set<String> gainedItems, boolean opensMenu) {}
+
+    /** Stable id the agent passes back, e.g. {@code minecraft:composter/add}. */
+    String id();
+
+    /** {@link #BLOCK} or {@link #ITEM}. */
+    String kind();
+
+    /** True only when the adapted mod is present at exactly the verified version ({@link McbotApi#versionsMatch}). */
+    boolean installed();
+
+    /** Block interactions only; item interactions are never matched against a block. */
+    default boolean block(BlockState state) { return false; }
+
+    /** True when this interaction must be performed with an empty main hand. Empty hand is never a fallback. */
+    boolean emptyHand();
+
+    boolean accepts(ItemStack held);
+
+    /** Read-only check before any native packet; throw {@link McbotApi#refuse} when the target is not ready. */
+    default void precondition(ServerPlayer player, BlockPos position, BlockState state, ItemStack held) {}
+
+    /** Read-only adapter facts taken before and after the native call (e.g. contents of a cooking pot). */
+    default JsonObject summary(ServerPlayer player, BlockPos position) { return new JsonObject(); }
+
+    Expected expected();
+
+    /** Adapter-specific value check on the two snapshots, in addition to the generic effect envelope. */
+    default boolean consistent(JsonObject before, JsonObject after) { return true; }
+
+    /** Item interactions that open a menu must verify it here. */
+    default boolean menu(AbstractContainerMenu menu) { return false; }
+}

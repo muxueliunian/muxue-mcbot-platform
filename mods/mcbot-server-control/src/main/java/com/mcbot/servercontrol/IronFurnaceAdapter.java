@@ -1,7 +1,8 @@
 package com.mcbot.servercontrol;
 
+import com.mcbot.servercontrol.api.ContainerAdapter;
+import com.mcbot.servercontrol.api.McbotApi;
 import java.util.*;
-import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.items.SlotItemHandler;
 import net.neoforged.neoforge.items.wrapper.InvWrapper;
 import net.minecraft.core.BlockPos;
@@ -27,15 +28,25 @@ final class IronFurnaceAdapter {
         "SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory",
         "SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory");
     private IronFurnaceAdapter() {}
+    /** Built-in adapter, dispatched through {@link ModAdapters} like any add-on adapter. */
+    static final ContainerAdapter INSTANCE=new ContainerAdapter() {
+        public String id() {return ID;}
+        public boolean installed() {return IronFurnaceAdapter.installed();}
+        public boolean block(BlockState state) {return IronFurnaceAdapter.block(state);}
+        public boolean entity(BlockEntity entity) {return IronFurnaceAdapter.entity(entity);}
+        public MenuProvider provider(ServerPlayer player,BlockPos pos,BlockState state) {return IronFurnaceAdapter.provider(player,pos,state);}
+        public boolean menu(AbstractContainerMenu menu) {return IronFurnaceAdapter.menu(menu);}
+        public Container storage(AbstractContainerMenu menu,Inventory inventory) {return IronFurnaceAdapter.storage(menu,inventory);}
+        public OptionalInt playerSlot(Slot slot,Inventory inventory) {
+            Integer index=playerSource(slot,inventory).playerSlot();return index==null?OptionalInt.empty():OptionalInt.of(index);
+        }
+    };
     static boolean supportedIdentity(String version,String id,String blockClass) {return VERSION.equals(version)&&ID.equals(id)&&BLOCK.equals(blockClass);}
     static boolean supportedMode(boolean lit,int type,boolean furnace,boolean factory,boolean generator,boolean augmentGUI) {
         return !lit&&type==0&&furnace&&!factory&&!generator&&!augmentGUI;
     }
-    private static String version(String mod) {
-        ModList list=ModList.get();
-        return list==null?"":list.getModContainerById(mod).map(c->c.getModInfo().getVersion().toString()).orElse("");
-    }
-    private static boolean installed() {return VERSION.equals(version("ironfurnaces"))&&"1.21.1".equals(version("minecraft"))&&"21.1.217".equals(version("neoforge"));}
+    private static String version(String mod) {return McbotApi.modVersion(mod);}
+    private static boolean installed() {return McbotApi.versionsMatch("ironfurnaces",VERSION);}
     private static Object property(BlockState state,String name) {
         return state.getValues().entrySet().stream().filter(e->e.getKey().getName().equals(name)).map(Map.Entry::getValue).findFirst().orElse(null);
     }

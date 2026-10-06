@@ -65,7 +65,7 @@ final class TargetTokens {
         return true;
     }
     void requireMenu(ServerPlayer player,Target target,AbstractContainerMenu menu) {
-        Container storage=MenuSlotSources.storage(menu,player.getInventory());
+        Container storage=ModAdapters.storage(menu,player.getInventory());
         if(storage==null) throw error("STALE_TARGET","Opened menu storage source is unknown");
         if(target.parts().size()==1) {
             if(storage!=target.parts().getFirst().entity()) throw error("STALE_TARGET","Menu does not use the discovered block entity");
@@ -90,7 +90,8 @@ final class TargetTokens {
         if(!NearbyBlocks.ordinaryContainer(state)) throw error("STALE_TARGET","Target no longer a supported container");
         BlockEntity entity=chunk.getBlockEntity(pos);
         if(entity==null||entity.isRemoved()) throw error("STALE_TARGET","Container block entity unavailable");
-        if(IronFurnaceAdapter.block(state)&&!IronFurnaceAdapter.entity(entity)) throw error("STALE_TARGET","Iron furnace entity does not match its pinned adapter");
+        var adapter=ModAdapters.container(state);
+        if(adapter!=null&&!ModAdapters.entityMatches(adapter,entity)) throw error("STALE_TARGET","Block entity does not match its pinned adapter "+adapter.id());
         return new Part(pos.immutable(),state,entity);
     }
     private static String dimension(ServerPlayer player) {return player.serverLevel().dimension().location().toString();}

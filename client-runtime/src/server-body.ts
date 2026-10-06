@@ -29,6 +29,7 @@ const helloSchema = z.object({
   platform: z.object({ minecraft: z.string(), loader: z.string(), loaderVersion: z.string() }),
   capabilities: z.array(z.string()), connected: z.boolean(), sessionId: identifier.nullable(),
   interactions: z.array(z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).max(256).optional(),
+  adapters: z.array(z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).max(256).optional(),
 });
 const observationSchema = z.object({
   instanceId: identifier, controlGeneration: generation,

@@ -98,7 +98,7 @@
 
 ## 6. 适配器接口（首批，放在核心模组里）
 
-先放在 `mcbot-server-control` 内部，第 7 步（R5）再拆成可以独立打包的附属模组和 JSON 配置。
+先放在 `mcbot-server-control` 内部，第 7 步（R5）再拆成可以独立打包的附属模组和 JSON 配置。10-06 已完成：交互接口移到公开包 `com.mcbot.servercontrol.api.ItemInteraction`，见 [Mod 适配接口](mod_adapters.md)。
 
 ```java
 interface InteractionAdapter {

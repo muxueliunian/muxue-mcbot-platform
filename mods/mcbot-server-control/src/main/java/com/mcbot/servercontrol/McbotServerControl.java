@@ -1,5 +1,6 @@
 package com.mcbot.servercontrol;
 
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.NeoForge;
@@ -14,6 +15,7 @@ import java.io.IOException;
 public final class McbotServerControl {
     private ServerController controller;
     private LocalHttpBridge bridge;
+    private CommandFileFixture fixture;
     public McbotServerControl() {
         NeoForge.EVENT_BUS.addListener(this::started);
         NeoForge.EVENT_BUS.addListener(this::stopping);
@@ -27,9 +29,12 @@ public final class McbotServerControl {
     private void started(ServerStartedEvent event) {
         var directory=FMLPaths.CONFIGDIR.get().resolve("mcbot-server-control");
         try {
-            ServerConfig config=ServerConfig.load(directory);
+            var server=event.getServer();
+            ServerConfig loaded=ServerConfig.load(directory,server.isDedicatedServer());
+            ServerConfig config=loaded.withWorldId(HostingRules.worldId(loaded.worldId(),server.isDedicatedServer(),server.getWorldPath(LevelResource.ROOT)));
             controller=new ServerController(event.getServer(),config);
             bridge=new LocalHttpBridge(directory,config,event.getServer()::execute,controller::call);
+            fixture=CommandFileFixture.start(server);
         } catch(IOException|RuntimeException e) {
             controller=null;
             throw new IllegalStateException("MCBOT local server control could not start (check server.json or port)",e);
@@ -39,6 +44,7 @@ public final class McbotServerControl {
     private void chat(ServerChatEvent event) { if(controller!=null) controller.receiveChat(event); }
     private void pickup(ItemEntityPickupEvent.Post event) {if(controller!=null)controller.receivePickup(event);}
     private void stopping(ServerStoppingEvent event) {
+        if(fixture!=null) fixture.close(); fixture=null;
         if(bridge!=null) bridge.close(); bridge=null;
         if(controller!=null) controller.close(); controller=null;
     }

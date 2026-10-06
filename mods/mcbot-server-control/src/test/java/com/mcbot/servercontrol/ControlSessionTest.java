@@ -208,6 +208,6 @@ public final class ControlSessionTest {
         SurvivalAlphaTest.run();
         NavigationTest.run();
         DefenseAlphaTest.run();
-        ItemInteractionsTest.run();
+        ItemInteractionsTest.run();HostingRulesTest.run();
     }
 }

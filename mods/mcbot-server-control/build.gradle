@@ -12,6 +12,15 @@ neoForge {
     version = project.neo_version
     parchment { mappingsVersion = '2024.11.17'; minecraftVersion = '1.21.1' }
     mods { mcbot_server_control { sourceSet(sourceSets.main) } }
+    // Dev client for single-player (LAN) tests; game files stay in run/client, never the user's launcher instance.
+    runs {
+        client {
+            client()
+            gameDirectory = file('run/client')
+            if (project.hasProperty('quickPlay')) programArguments.addAll('--quickPlaySingleplayer', project.property('quickPlay').toString())
+            if (project.hasProperty('commandFixture')) systemProperty 'mcbot.commandFixture', project.property('commandFixture').toString()
+        }
+    }
 }
 var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
     inputs.property 'mod_version', mod_version

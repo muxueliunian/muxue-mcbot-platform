@@ -18,7 +18,7 @@
 
 ## 现在能做什么
 
-范围：MC 1.21.1 / NeoForge 21.1.217、独立服务器、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收（[验收记录](docs/archive/server_alpha_release_validation.md)）。
+范围：MC 1.21.1 / NeoForge 21.1.217、独立服务器或开了局域网的单人世界（[单人模式](docs/singleplayer_design.md)）、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收（[验收记录](docs/archive/server_alpha_release_validation.md)）。
 
 - 跟随、等待、跟随时捡指定物品，可以边做边聊天，随时叫停
 - 单格挖放、标准容器、走近取物再交还
@@ -27,7 +27,7 @@
 - 手持物品右键方块（`interact-block`），按登记的交互放行，首批只有原版堆肥桶
 - 内容 Mod 只验过 Iron Furnaces 的普通铁炉
 
-还没有：持续陪挖（程序矩阵已通过，待真实模型和用户验收）、建筑、单人模式、DeepSeek Harness 和原生 API、Mod 适配接口、多版本。详见[交付计划](docs/delivery_plan.md)。
+还没有：持续陪挖（程序矩阵已通过，待真实模型和用户验收）、建筑、DeepSeek Harness 和原生 API、Mod 适配接口、多版本。详见[交付计划](docs/delivery_plan.md)。
 
 用 `start-server-play.ps1` 启动。40 个 MCP 工具不代表所有 Mod 或服务器都能用。
 

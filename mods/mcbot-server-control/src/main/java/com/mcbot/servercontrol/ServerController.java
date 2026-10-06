@@ -74,8 +74,18 @@ final class ServerController implements ControlSession.Game {
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,incomingDamageGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,sweepGuard);
     }
-    JsonObject call(String method,JsonObject params) { reconcile();return session.call(method,params); }
-    @Override public boolean connected() { return player!=null&&player.isAlive()&&!player.isRemoved()&&sink!=null&&sink.isConnected()&&server.getPlayerList().getPlayer(config.uuid())==player&&player.gameMode.getGameModeForPlayer()==GameType.SURVIVAL&&!server.getPlayerList().isOp(player.getGameProfile()); }
+    JsonObject call(String method,JsonObject params) {
+        reconcile();
+        if(Set.of("claim","respawn","act").contains(method))HostingRules.requireRunnable(host());
+        return session.call(method,params);
+    }
+    private HostingRules.Host host() {
+        return new HostingRules.Host(server.isDedicatedServer(),server.isPublished(),server.isPaused(),server.getPlayerList().isAllowCommandsForAllPlayers());
+    }
+    private boolean forbiddenOp(GameProfile profile) {
+        return HostingRules.forbiddenOp(host(),server.getPlayerList().isOp(profile),server.getPlayerList().getOps().get(profile)!=null);
+    }
+    @Override public boolean connected() { return player!=null&&player.isAlive()&&!player.isRemoved()&&sink!=null&&sink.isConnected()&&server.getPlayerList().getPlayer(config.uuid())==player&&player.gameMode.getGameModeForPlayer()==GameType.SURVIVAL&&!forbiddenOp(player.getGameProfile()); }
     void reconcile() {
         boolean live=connected();
         String dimension=player==null?null:player.serverLevel().dimension().location().toString();
@@ -92,14 +102,14 @@ final class ServerController implements ControlSession.Game {
     @Override public void ensureBody() {
         if(connected()) return;
         if(player!=null&&!player.isRemoved()&&sink!=null&&sink.isConnected()&&server.getPlayerList().getPlayer(config.uuid())==player) {
-            if(server.getPlayerList().isOp(player.getGameProfile())) throw error("FORBIDDEN","Server body refuses an OP identity");
+            if(forbiddenOp(player.getGameProfile())) throw error("FORBIDDEN","Server body refuses an OP identity");
             if(!player.isAlive()) throw error("DEAD_BODY","Body is dead; use explicit native respawn before claiming control");
             throw error("FORBIDDEN","Existing body is not in survival mode; no automatic game-mode change");
         }
         if(player!=null) remove();
         if(server.getPlayerList().getPlayer(config.uuid())!=null||server.getPlayerList().getPlayerByName(config.username())!=null) throw error("WRONG_PLAYER","Configured player identity is already occupied");
         GameProfile profile=new GameProfile(config.uuid(),config.username());
-        if(server.getPlayerList().isOp(profile)) throw error("FORBIDDEN","Server body refuses an OP identity");
+        if(forbiddenOp(profile)) throw error("FORBIDDEN","Server body refuses an OP identity");
         boolean persisted=Files.exists(server.getWorldPath(LevelResource.PLAYER_DATA_DIR).resolve(config.uuid()+".dat"));
         sink=new VirtualConnection(); player=new BodyPlayer(server,server.overworld(),profile,this);
         CommonListenerCookie cookie=CommonListenerCookie.createInitial(profile,false);
@@ -124,7 +134,7 @@ final class ServerController implements ControlSession.Game {
         catch(RuntimeException failure) { remove(); throw failure; }
     }
     @Override public void respawn() {
-        if(server.getPlayerList().isOp(new GameProfile(config.uuid(),config.username()))) throw error("FORBIDDEN","Server body refuses an OP identity");
+        if(forbiddenOp(new GameProfile(config.uuid(),config.username()))) throw error("FORBIDDEN","Server body refuses an OP identity");
         if(player!=null&&(player.isRemoved()||sink==null||!sink.isConnected()||server.getPlayerList().getPlayer(config.uuid())!=player)) remove();
         if(player==null) {
             NativeRespawn.requireDeadSave(server,config.uuid());

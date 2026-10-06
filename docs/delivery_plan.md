@@ -10,7 +10,7 @@
 
 ## 现在有什么
 
-范围：MC 1.21.1 / NeoForge 21.1.217、独立服务器、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收，见 [首版验收](archive/server_alpha_release_validation.md)。
+范围：MC 1.21.1 / NeoForge 21.1.217、独立服务器或开了局域网的单人世界、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收，见 [首版验收](archive/server_alpha_release_validation.md)。
 
 | 能力 | 状态 |
 | --- | --- |
@@ -30,7 +30,7 @@
 - **Node 24.15**：在 Windows 上有一次没定位的原生退出（0xC0000409），目前用 Node 24.19 加 `-NodePath` 绕开。
 - **评审遗留**（见 [评审修复记录](archive/boundary_review_fixes.md)）：R5 Mod 适配器分派入口、R6 容器和地面物品的观察降级、R7 Agent 会话入口和公共工具执行入口的拆分。
 - **建筑**：设计资产还在，ServerBody 没有建筑执行入口。先拿 3×3 小亭验证，见 [生存 Alpha 计划](archive/survival_alpha_plan.md) 第 5 节。
-- **单人模式（内置服务器）**：没验收（暂停时控制怎么处理等）。观众大多玩单人，排在下一步第 2 步。
+- **单人模式**：10-06 定为「开局域网后才能接管」，绕开暂停问题，开发客户端实测通过，见[单人模式](singleplayer_design.md)。待用户在自己的实例里验收；不开局域网的暂停处理没做。
 - **许可证**：仓库还没有统一许可证，别人要自己写适配前得先定，建议 Apache-2.0。
 
 ## 下一步
@@ -40,7 +40,7 @@
 | 顺序 | 内容 | 完成标准 |
 | --- | --- | --- |
 | 1 | ✅ **通用能力：手持物品使用**（[设计](use_item_design.md)、[验收](archive/use_item_validation.md)，2026-10-06 完成：对方块使用已实服验收，对空使用只有离线测试，等 SB 背包再实测） | 两个新能力：①对方块使用（右键方块，沿用 `place-block` 已经在走的原版 `handleUseItemOn` 路径）；②对空使用（打开物品自带的菜单，比如背包）。结果按「方块状态/方块实体变化、物品消耗、打开的菜单」核验，确认不了就报 unknown，不重试；未知方块默认拒绝，适配器登记过的才放行；复用现有写权、叫停和回执 |
-| 2 | **完善陪玩** | ✅ 查清陪挖 `COMPANION_OUT_OF_RANGE`（10-06，[验收](archive/companion_mining_validation.md)）；单人模式（内置服务器）的暂停和恢复生命周期；试玩中发现的陪玩体验问题 |
+| 2 | **完善陪玩** | ✅ 查清陪挖 `COMPANION_OUT_OF_RANGE`（10-06，[验收](archive/companion_mining_validation.md)）；✅ 单人模式：开局域网后接管（10-06，[设计与验收](singleplayer_design.md)）；试玩中发现的陪玩体验问题 |
 | 3 | **请用户验收** | 陪挖、单人模式分别实测；需要用户恢复服务器、确认 Claude 账号 |
 | 4 | **R7：拆出 Agent 适配接口** | Claude Code、Codex 走同一个接口，任务执行策略不复制；现有回归通过 |
 | 5 | **dsh 接入** | 锁定一个 dsh 版本；用它官方的插件机制接 MCBOT；能启动、注入工具、事件唤醒、判断回合结束、取消、恢复；先过模拟协议，再做实机短试玩 |

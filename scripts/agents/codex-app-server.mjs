@@ -24,7 +24,7 @@ export const CODEX_SERVER_TOOLS = Object.freeze([
   'discover-containers', 'container-list', 'container-withdraw', 'give-item', 'fetch-and-give',
   'approach-container', 'approach-player',
   'companion-mode', 'get-companion-mode',
-  'discover-resources', 'gather-resources', 'collect-items', 'look-around',
+  'discover-resources', 'gather-resources', 'collect-items', 'look-around', 'pillar-up', 'pillar-down',
   'get-survival-state', 'assess-tool', 'prepare-item', 'eat-food', 'set-reflexes', 'defend-self',
   'interact-block',
 ]);

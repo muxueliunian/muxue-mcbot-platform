@@ -96,6 +96,7 @@ export interface ActionArguments {
   'use-item-on-block': Position & { interaction: string; expectedBlock: string; expectedProperties: Components; face?: 'up' | 'down' | 'north' | 'south' | 'east' | 'west'; timeoutMs?: number }
     & ({ emptyHand: true } | { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components });
   'use-item': { interaction: string; slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; timeoutMs?: number };
+  'pillar-up': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components };
 }
 export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';

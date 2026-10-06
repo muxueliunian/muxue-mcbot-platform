@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { BodyError, type Body, type Observation, type Operation, type ItemValue, type Position, type NearbyResources, type ActionName, type ActionArguments, type GroundItem, type CompanionGuard } from './body.js';
 import type { EventJournal } from './events.js';
 import { selectFood, type SurvivalTasks } from './survival-tasks.js';
+import { isLogItem, pillarBlockCount, pillarDown, pillarUp, type PillarBlock, type PillarHost, type PillarPurpose } from './pillar.js';
 import type { SurvivalPolicy } from './survival-reflexes.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
@@ -15,8 +16,8 @@ type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
-type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number> };
-type Active = { id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean };
+type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number };
+type Active = { id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
 // Fixed vanilla ordinary outputs authorize targets, never predict actual loot/yield or stack limits.
@@ -42,6 +43,18 @@ const inReach = (feet: Position, block: Position) => eyeDistance(feet, block) <=
 const reachRefusals = new Set(['OUT_OF_REACH', 'NO_LINE_OF_SIGHT']);
 /** Least items one block drops without Fortune (raw copper drops 2..5); everything else gathered drops at least one. */
 const leastYield: Record<string, number> = { 'minecraft:raw_copper': 2 };
+/**
+ * A candidate this many blocks above the feet is climbed to on a pillar (an arm reaches about five up from
+ * beside it, but leaves and the trunk usually block that line of sight). The climb stays on candidates within
+ * CLIMB_SPREAD of its column (one tree), rises at most MAX_PILLAR blocks, and only breaks leaves in its way.
+ */
+const CLIMB_ABOVE = 4, CLIMB_SPREAD = 2.5, MAX_PILLAR = 20;
+const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air', 'minecraft:short_grass', 'minecraft:tall_grass', 'minecraft:fern', 'minecraft:large_fern']);
+const isLeaves = (id: string | undefined) => !!id && /^minecraft:[a-z_]+_leaves$/.test(id);
+const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
+const nearest = (list: Candidate[], feet: Position) => [...list].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
+/** Stops that mean nobody may act for the task any more: the pillar stays where it is. */
+const haltCodes = new Set(['CANCELLED', 'LEASE_LOST', 'WORLD_CHANGED', 'STALE_CONTROL', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'CLOSED']);
 /** Finite goals on a frozen candidate set; native pickup receipts, never mined blocks or net inventory, determine quantity. */
 export class GatherTasks {
   private readonly references = new Map<string, Reference>();
@@ -100,8 +113,9 @@ export class GatherTasks {
     // player radius; the body still has to stay inside it, and the server also bounds the drop to its source ore.
     if (miningOwner(task.borrowed)) return Math.hypot(position.x - task.center.x, position.y - task.center.y, position.z - task.center.z) <= task.radius + MINING_DROP_MARGIN;
     // The catalog scans block cells from 2 below to 4 above the centre; drops may spawn inside their outer half-cell.
-    const dy = position.y - Math.floor(task.center.y);
-    return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && dy >= -3 && dy <= 5;
+    // A whole tree reaches above that band: up to its highest frozen log (plus the drop's spawn cell).
+    const dy = position.y - Math.floor(task.center.y), top = Math.max(5, (task.top ?? -Infinity) - Math.floor(task.center.y) + 2);
+    return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && dy >= -3 && dy <= top;
   }
   private done(task: Active): boolean { return !miningOwner(task.borrowed) && task.progress.targetCount !== undefined && (task.progress.pickedUpCount ?? 0) >= task.progress.targetCount; }
   private capacity(task: Active, state: Observation): void {
@@ -240,20 +254,21 @@ export class GatherTasks {
       if (!borrowed && !task?.stopPending) this.body.releaseTask(id); throw error;
     }
   }
-  private async step<N extends ActionName>(task: Active, name: N, args: ActionArguments[N]): Promise<void> {
-    const state = await this.observe(task); if (this.done(task)) throw new BodyError('TARGET_REACHED', '实际拾取数量已经达到目标');
+  /** One guarded native action; force (coming down a pillar) still runs once the goal is reached or the step budget is spent. */
+  private async step<N extends ActionName>(task: Active, name: N, args: ActionArguments[N], force = false): Promise<Operation> {
+    const state = await this.observe(task); if (!force && this.done(task)) throw new BodyError('TARGET_REACHED', '实际拾取数量已经达到目标');
     if (name === 'pickup-item' && 'entityId' in args && !state.groundItems?.some(item => item.entityId === args.entityId)) {
-      if (task.collectedEntities.has(args.entityId)) return;
+      if (task.collectedEntities.has(args.entityId)) return { operationId: '', sessionId: task.context.sessionId ?? '', name, status: 'succeeded', summary: '目标已由原生拾取收取' };
       throw new BodyError('STALE_TARGET', '目标掉落实体消失，没有对应原生收据，未发送拾取');
     }
-    if (task.progress.steps >= task.progress.maxSteps) throw new BodyError('STEP_BUDGET', '独立动作预算用尽；未追加候选或数量');
+    if (!force && task.progress.steps >= task.progress.maxSteps) throw new BodyError('STEP_BUDGET', '独立动作预算用尽；未追加候选或数量');
     task.progress.steps++; this.check(task);
     const targetId = name === 'pickup-item' && 'entityId' in args ? args.entityId : undefined;
     const beforePicked = targetId ? task.collectedEntities.get(targetId) ?? 0 : 0;
     let op = await this.body.act(name, args, task.taskToken); this.check(task);
     while (op.status === 'running') { await new Promise(resolve => setTimeout(resolve, 50)); this.check(task); op = await this.body.operation(op.operationId); this.check(task); }
     if (op.sessionId !== task.context.sessionId || op.controlGeneration !== task.context.controlGeneration || op.name !== name) throw new BodyError('WORLD_CHANGED', '动作回执不属于当前任务');
-    if (name === 'dig-block' && op.status === 'succeeded') { task.progress.minedBlocks++; this.remember(task, 'running', '原生方块挖除已确认；拾取仍按独立收据核验'); }
+    if (name === 'dig-block' && op.status === 'succeeded' && 'targetToken' in args && args.targetToken) { task.progress.minedBlocks++; this.remember(task, 'running', '原生方块挖除已确认；拾取仍按独立收据核验'); }
     const after = await this.observe(task);
     const code = (op.result as { code?: string } | undefined)?.code;
     // Only fully validated new native receipts for this exact UUID can win a known pickup movement race.
@@ -266,17 +281,20 @@ export class GatherTasks {
         task.progress.pickupMovementRaces = (task.progress.pickupMovementRaces ?? 0) + 1;
         task.progress.lastPickupMovementCode = code;
         task.progress.lastPickupMovementSummary = op.summary;
-        this.remember(task, 'running', '同一目标原生拾取已确认；移动竞争诊断已保留'); return;
+        this.remember(task, 'running', '同一目标原生拾取已确认；移动竞争诊断已保留'); return op;
       }
     }
     if (op.status !== 'succeeded') throw new BodyError(op.status === 'unknown' ? 'UNKNOWN' : op.status === 'cancelled' ? 'CANCELLED' : (op.result as { code?: string } | undefined)?.code ?? 'STEP_FAILED', op.summary);
+    return op;
   }
   private async pickups(task: Active): Promise<void> {
     pickupLoop: for (;;) {
       const state = await this.observe(task); if (this.done(task)) return;
       const items = state.groundItems ?? [];
       if (miningOwner(task.borrowed) && state.groundItemsTruncated) throw new BodyError('PICKUP_UNKNOWN', '采矿后的地面观察已截断，未声称掉落已完整收取');
-      let item = items.find(item => item.stack.id === task.request.item && !task.oldGround?.has(item.entityId) && this.inside(task, item.position) && (task.name === 'gather-resources' || task.allowed.has(item.entityId)) && item.visibility === 'visible');
+      // A gathered drop caught high in leaves cannot be walked to: leave it rather than fail the whole goal.
+      let item = items.find(item => item.stack.id === task.request.item && !task.oldGround?.has(item.entityId) && this.inside(task, item.position) && (task.name === 'gather-resources' || task.allowed.has(item.entityId)) && item.visibility === 'visible'
+        && (task.name !== 'gather-resources' || miningOwner(task.borrowed) || item.position.y <= state.position.y + 2));
       if (!item) return;
       this.capacity(task, state);
       // Newly mined drops may still be falling. Wait within a fixed budget before binding a movement guard.
@@ -365,6 +383,125 @@ export class GatherTasks {
     return target === undefined ? pending >= 1 : pending * (leastYield[task.request.item] ?? 1) >= target - (task.progress.pickedUpCount ?? 0);
   }
   /**
+   * Dig every frozen candidate reachable from where the body stands, nearest first, until the dug blocks
+   * cover the goal. A block the native reach or line-of-sight check refuses is skipped from this spot.
+   */
+  private async digReachable(task: Active, remaining: Candidate[], skipped: Set<string>, already: number): Promise<number> {
+    let dug = 0;
+    for (;;) {
+      if (this.done(task) || already + dug > 0 && this.covered(task, already + dug)) return dug;
+      let state = await this.observe(task);
+      const feet = state.position;
+      const candidate = remaining.filter(next => !skipped.has(next.targetToken) && inReach(feet, next.position))
+        .sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
+      if (!candidate) return dug;
+      state = await this.prepareFor(task, candidate, state);
+      task.progress.stage = 'digging';
+      try {
+        await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+      } catch (error) {
+        if (error instanceof BodyError && reachRefusals.has(error.code)) { skipped.add(candidate.targetToken); continue; }
+        throw error;
+      }
+      remaining.splice(remaining.indexOf(candidate), 1); dug++;
+    }
+  }
+  private climbable(): boolean { return ['pillar-up', 'move-to-position', 'swap-inventory'].every(cap => this.body.hello.capabilities.includes(cap)); }
+  private async cell(task: Active, position: Position): Promise<{ id?: string; properties?: Record<string, unknown> } | undefined> {
+    const state = await this.body.observe(position); this.check(task); this.ingest(task, state);
+    return state.block?.state === 'loaded' ? { id: state.block.id, properties: state.block.properties } : undefined;
+  }
+  /**
+   * Where to stand to climb to a high candidate: under it when its own column is open down to a floor at
+   * the current level (a trunk whose lower logs are already cut), otherwise beside it. Undefined: no spot.
+   */
+  private async pillarSpot(task: Active, target: Candidate): Promise<Position | undefined> {
+    const state = await this.observe(task), ground = feetLevel(state.position), t = target.position;
+    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => ({ x: t.x + dx, z: t.z + dz, own: false }))
+      .sort((a, b) => Math.hypot(a.x + 0.5 - state.position.x, a.z + 0.5 - state.position.z) - Math.hypot(b.x + 0.5 - state.position.x, b.z + 0.5 - state.position.z));
+    for (const column of [{ x: t.x, z: t.z, own: true }, ...sides]) {
+      const top = column.own ? t.y - 1 : t.y;
+      let floor: number | undefined;
+      for (let y = top; y >= ground - 2; y--) {
+        const cell = await this.cell(task, { x: column.x, y, z: column.z });
+        if (!cell) break;
+        if (!openCells.has(cell.id ?? '')) { floor = y; break; }
+      }
+      if (floor === undefined || top - floor < 2 || Math.abs(floor + 1 - ground) > 1) continue;
+      const footing = await this.cell(task, { x: column.x, y: floor, z: column.z });
+      if (!footing?.id || /lava|water|magma|cactus|fire|powder_snow/.test(footing.id)) continue;
+      return { x: column.x, y: floor + 1, z: column.z };
+    }
+    return undefined;
+  }
+  /** Room to rise one block: the cell above the head is open, or leaves in the way are broken (and not gathered). */
+  private async headroom(task: Active, feet: Position): Promise<boolean> {
+    const above = { x: Math.floor(feet.x), y: feetLevel(feet) + 2, z: Math.floor(feet.z) };
+    const cell = await this.cell(task, above);
+    if (!cell) return false;
+    if (openCells.has(cell.id ?? '')) return true;
+    if (!isLeaves(cell.id)) return false;
+    task.progress.stage = 'clearing-leaves';
+    await this.step(task, 'dig-block', { ...above, expectedBlock: cell.id!, expectedProperties: cell.properties ?? {}, timeoutMs: 10000 }, true);
+    return true;
+  }
+  /** Select the recommended hotbar tool for digging a pillar block back out; the bare hand also works. */
+  private async pillarTool(task: Active, position: Position, block: string): Promise<void> {
+    if (!this.body.assessTool) return;
+    const policy = this.survivalPolicy?.();
+    const assessed = await this.body.assessTool({ ...position, expectedBlock: block, policy: policy?.toolPolicy, minRemainingDurability: policy?.minRemainingDurability, dropPreference: 'any' });
+    this.check(task);
+    const choice = assessed.candidates.find(tool => tool.slot === assessed.recommendedSlot);
+    if (!choice || choice.eligible !== true || choice.slot > 8 || choice.components === undefined) return;
+    await this.step(task, 'select-slot', { slot: choice.slot, expectedItem: choice.id, expectedCount: choice.count, expectedComponents: choice.components }, true);
+  }
+  private pillarHost(task: Active): PillarHost {
+    return {
+      observe: async block => { const state = await this.body.observe(block); this.check(task); this.ingest(task, state); return state; },
+      run: async (name, args) => (await this.step(task, name, args, true)).result,
+      prepareDig: (position, block) => this.pillarTool(task, position, block),
+    };
+  }
+  /**
+   * Climb to a candidate too high to reach from the ground: stand under or beside it, then repeatedly dig
+   * every candidate in reach and rise one block on a pillar while more of this tree (candidates near the
+   * column) is above. Coming down digs the pillar back out top first, also after an early stop, unless
+   * the task was halted. Returns the candidates dug, whose drops still need collecting.
+   */
+  private async climb(task: Active, remaining: Candidate[], target: Candidate): Promise<number> {
+    task.progress.stage = 'finding-pillar-spot';
+    const spot = await this.pillarSpot(task, target);
+    if (!spot) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; return 0; }
+    task.progress.stage = 'walking-to-pillar-spot';
+    await this.step(task, 'move-to-position', { x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5, tolerance: 0.3, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
+    const purpose: PillarPurpose = isLogItem(task.request.item) ? 'log' : 'other';
+    const host = this.pillarHost(task), placed: PillarBlock[] = [];
+    let dug = 0, failure: unknown;
+    try {
+      for (;;) {
+        dug += await this.digReachable(task, remaining, new Set(), dug);
+        if (this.done(task) || dug > 0 && this.covered(task, dug) || placed.length >= MAX_PILLAR) break;
+        const state = await this.observe(task), level = feetLevel(state.position);
+        const above = remaining.filter(next => next.position.y > level && Math.hypot(next.position.x - spot.x, next.position.z - spot.z) <= CLIMB_SPREAD);
+        if (above.length === 0) break;
+        if (pillarBlockCount(state, purpose) === 0) { task.progress.limitation = '背包里没有能垫脚的方块，够不着的部分没有砍／挖'; break; }
+        if (!(await this.headroom(task, state.position))) break;
+        task.progress.stage = 'pillaring-up';
+        const block = await pillarUp(host, purpose);
+        placed.push(block); task.progress.pillarPlaced = (task.progress.pillarPlaced ?? 0) + 1;
+        // Standing on a gathered log spends it; digging the pillar back out picks it up again.
+        if (block.item === task.request.item) task.progress.pickedUpCount = (task.progress.pickedUpCount ?? 0) - 1;
+      }
+    } catch (error) { failure = error; }
+    if (!(failure instanceof BodyError && haltCodes.has(failure.code))) {
+      task.progress.stage = 'pillaring-down';
+      for (const block of [...placed].reverse()) { await pillarDown(host, block); task.progress.pillarRecovered = (task.progress.pillarRecovered ?? 0) + 1; }
+    }
+    if (failure) throw failure;
+    if (dug === 0 && remaining.includes(target)) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; }
+    return dug;
+  }
+  /**
    * Dig every frozen candidate reachable from where the body stands (nearest first) before collecting the
    * drops in one pass, then walk to the nearest remaining candidate. A reachable-looking block that the
    * native reach or line-of-sight check refuses is left for a later approach, never retried from the same spot.
@@ -373,34 +510,36 @@ export class GatherTasks {
     try {
       if (!miningOwner(task.borrowed)) await this.pickups(task);
       const remaining = [...candidates], skipped = new Set<string>();
+      if (candidates.length) task.top = Math.max(...candidates.map(candidate => candidate.position.y));
       let pending = 0;
       while (remaining.length > 0 && !this.done(task)) {
         let state = await this.observe(task);
         if (this.done(task)) break;
         this.capacity(task, state);
         if (pending > 0 && this.covered(task, pending)) { await this.pickups(task); pending = 0; continue; }
-        const feet = state.position;
         // Companion mining approaches its single block first: the approach also enforces the live companion radius.
-        let candidate = remaining.filter(next => !miningOwner(task.borrowed) && !skipped.has(next.targetToken) && inReach(feet, next.position))
-          .sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
-        const approach = !candidate;
-        if (approach) {
-          if (pending > 0) { await this.pickups(task); pending = 0; continue; }
-          candidate = [...remaining].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
+        if (!miningOwner(task.borrowed)) {
+          const dug = await this.digReachable(task, remaining, skipped, pending);
+          pending += dug; if (dug > 0) continue;
         }
+        if (remaining.length === 0 || this.done(task)) break;
+        if (pending > 0) { await this.pickups(task); pending = 0; continue; }
+        state = await this.observe(task);
+        const candidate = nearest(remaining, state.position);
+        const high = !miningOwner(task.borrowed) && this.climbable() && candidate.position.y - feetLevel(state.position) >= CLIMB_ABOVE;
+        // A tree is climbed straight away; anything else high may sit on a slope, so walk up first and climb when no spot reaches it.
+        if (high && isLogItem(task.request.item)) { pending += await this.climb(task, remaining, candidate); continue; }
         state = await this.prepareFor(task, candidate, state);
-        if (approach) {
-          task.progress.stage = 'approaching-resource';
-          await this.step(task, 'approach-resource', { targetToken: candidate.targetToken, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
-          skipped.clear();
-        }
-        task.progress.stage = 'digging';
+        task.progress.stage = 'approaching-resource';
         try {
-          await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+          await this.step(task, 'approach-resource', { targetToken: candidate.targetToken, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
         } catch (error) {
-          if (!approach && error instanceof BodyError && reachRefusals.has(error.code)) { skipped.add(candidate.targetToken); continue; }
+          if (high && error instanceof BodyError && !haltCodes.has(error.code) && !unknownCodes.has(error.code)) { pending += await this.climb(task, remaining, candidate); continue; }
           throw error;
         }
+        skipped.clear();
+        task.progress.stage = 'digging';
+        await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
         remaining.splice(remaining.indexOf(candidate), 1); pending++;
       }
       if (pending > 0) await this.pickups(task);

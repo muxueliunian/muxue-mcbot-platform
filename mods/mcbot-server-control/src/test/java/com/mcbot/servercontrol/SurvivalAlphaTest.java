@@ -34,6 +34,12 @@ final class SurvivalAlphaTest {
         void finish(JsonObject after){use.finished(true,2,view.hand(),after);view.hand=after.deepCopy();view.using=false;view.food=14;view.saturation=5;}
     }
     static void run(){
+        // Mining hand: pickups filling an empty hand or growing the held stack are not a tool change
+        check(SurvivalActions.sameHand(stack("minecraft:air",0),stack("minecraft:oak_log",1)),"An empty hand may pick up the log it is chopping");
+        check(SurvivalActions.sameHand(stack("minecraft:oak_log",3),stack("minecraft:oak_log",5)),"The held stack growing from pickup is the same hand");
+        check(!SurvivalActions.sameHand(stack("minecraft:iron_axe",1),stack("minecraft:stone_axe",1)),"Another tool in the slot is a hand change");
+        JsonObject damaged=stack("minecraft:iron_axe",1);damaged.add("components",obj("minecraft:damage",3));
+        check(!SurvivalActions.sameHand(stack("minecraft:iron_axe",1),damaged),"Changed tool components are a hand change");
         JsonObject observed=StackObservation.value("minecraft:apple",3,()->stack("minecraft:apple",3));
         check(observed.get("componentsComplete").getAsBoolean()&&observed.has("components"),"complete read preserves full component guard");
         for(RuntimeException failure:List.of(error("UNSUPPORTED","Transient component"),new IllegalStateException("Codec failed"))){

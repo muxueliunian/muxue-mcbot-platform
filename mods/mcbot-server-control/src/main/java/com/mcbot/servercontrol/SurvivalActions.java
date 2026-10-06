@@ -282,7 +282,7 @@ final class SurvivalActions {
             if(operation.args.has("targetToken"))resources.require(player,string(operation.args,"targetToken"));
             if(now()>=deadline) throw error("TIMEOUT","Mining time limit reached");
             if(!player.serverLevel().hasChunkAt(digPosition)||!player.serverLevel().getBlockState(digPosition).equals(digState)) throw error("STALE_BLOCK","Block changed during mining");
-            if(player.getInventory().selected!=digSlot||!hand().equals(digHand)) throw error("STALE_ITEM","Main hand changed during mining");
+            if(player.getInventory().selected!=digSlot||!sameHand(digHand,hand())) throw error("STALE_ITEM","Main hand changed during mining");
             if(operation.args.has("targetToken")) {
                 if(!player.hasCorrectToolForDrops(digState,player.serverLevel(),digPosition))throw error("MISSING_TOOL","Native resource harvest eligibility changed during mining");
                 requireOrdinaryOreTool(digState,digPosition);
@@ -302,6 +302,15 @@ final class SurvivalActions {
             } else player.swing(InteractionHand.MAIN_HAND,true);
             },this::abortDig);
         } finally { session.expire(); }
+    }
+    /**
+     * The mining hand is the same tool: same slot (checked by the caller), item and components. Native pickup
+     * may fill an empty hand or grow the held stack while digging (a log chopped overhead lands on the body);
+     * that is not a tool change, so the count is ignored and an empty starting hand accepts what it picks up.
+     */
+    static boolean sameHand(JsonObject before,JsonObject now) {
+        if(before.get("id").getAsString().equals("minecraft:air")) return true;
+        return before.get("id").equals(now.get("id"))&&before.get("components").equals(now.get("components"));
     }
     private void requireOrdinaryOreTool(BlockState state,BlockPos position) {
         String id=BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();

@@ -8,6 +8,7 @@ import { GatherTasks } from './gather-tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop } from './action-stop.js';
+import { PillarTasks } from './pillar.js';
 import { interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 
@@ -150,6 +151,11 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
       register('discover-resources', 'Freeze a finite loaded visible catalog of explicitly authorized vanilla stone/log blocks, plus coal_ore, iron_ore, copper_ore and their deepslate variants. Does not distinguish buildings from natural terrain; Agent must choose the authorized area. No arbitrary mod ores. One resourceRef represents this candidate set; no automatic rescan.', { blockIds: z.array(registryId).min(1).max(8), radius: z.number().int().min(1).max(16).default(4).describe('Up to 16 blocks around, 2 below and 4 above; gather-resources then walks to the candidates.'), maxResults: z.number().int().min(1).max(64).default(32) }, args => gather.discover(args));
       register('gather-resources', 'Finite newly picked item goal on one discovered candidate set: collect matching ground items in the authorized area, guarded select/approach/dig, then collect native drops. Coal/iron/copper ores target coal/raw_iron/raw_copper respectively; ore gathering requires a verified non-Silk-Touch tool. Fortune may produce honest overage. Actual picked count is distinct from blocks mined. No rescan beyond initial candidates. Requires exactly count or stacks; stacks binds an actual variant/max, possibly from the first authorized native drop. Chat continues; stop cancels, unknown never retries.', { ...quantity, resourceRef: z.string().uuid() }, async args => { tasks.assertIdle(); return operationResult(await gather.start('gather-resources', args)); });
     }
+  }
+  if (serverObserved && ['pillar-up', 'dig-block', 'swap-inventory'].every(cap => body.hello.capabilities.includes(cap))) {
+    const pillar = new PillarTasks(body, () => { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); });
+    register('pillar-up', 'Climb straight up 1-12 blocks to reach a block overhead: jump and place a block from the inventory under the feet each time (dirt, planks or logs first, stone last). Needs headroom; stops early when blocks or room run out. Remembers the pillar: after dig-block up there, call pillar-down. gather-resources climbs trees and high resources by itself.', { blocks: z.number().int().min(1).max(12) }, async ({ blocks }) => pillar.up(blocks));
+    register('pillar-down', 'Come back down the pillar built with pillar-up, digging its blocks out one by one from the top (they drop and are picked up). Only digs blocks it placed itself.', {}, async () => pillar.down());
   }
   if (serverObserved && body.hello.capabilities.includes('nearby-blocks')) {
     if (body.hello.capabilities.includes('approach-container')) register('approach-container', 'Walk to a discovered container using its short-lived local reference and bounded safe routes on loaded level ground. Replacement or expiration fails. running requires polling get-operation.', { containerRef: z.string().uuid(), timeoutMs }, async ({ containerRef, timeoutMs }) => operationResult(await tasks.approachContainer(containerRef, timeoutMs)));

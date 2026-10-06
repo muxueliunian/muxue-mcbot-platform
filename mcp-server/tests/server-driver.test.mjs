@@ -70,10 +70,10 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
   for(const tool of ['discover-containers','container-list','container-withdraw','give-item','fetch-and-give']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['approach-container','approach-player']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['companion-mode','get-companion-mode']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
-  for(const tool of ['discover-resources','gather-resources','collect-items','look-around']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
+  for(const tool of ['discover-resources','gather-resources','collect-items','look-around','pillar-up','pillar-down']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['get-survival-state','assess-tool','prepare-item','eat-food','set-reflexes','defend-self']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   assert.equal(CODEX_SERVER_TOOLS.includes('interact-block'),true);
-  assert.equal(CODEX_SERVER_TOOLS.length,41);
+  assert.equal(CODEX_SERVER_TOOLS.length,43);
 });
 
 test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲回合',()=>{

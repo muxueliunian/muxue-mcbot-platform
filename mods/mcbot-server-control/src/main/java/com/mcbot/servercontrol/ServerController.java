@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -49,6 +49,7 @@ final class ServerController implements ControlSession.Game {
     private FollowCompanion companion;
     private PickupItem pickup;
     private NativeNavigation navigation;
+    private NativePillar pillar;
     private ServerPlayer followedPlayer;
     private net.minecraft.world.entity.LivingEntity retreatTarget;
     private Vec3 retreatOrigin;
@@ -299,6 +300,7 @@ final class ServerController implements ControlSession.Game {
             companion.tick();if(!operation.status.equals("running")) stop();return;
         }
         if(operation.name.equals("retreat-from-entity")){beginRetreat(operation);return;}
+        if(operation.name.equals("pillar-up")){requireWalkable();pillar=NativePillar.begin(operation,player,session,survival);active=operation;return;}
         long timeout=(long)bounded(args,"timeoutMs",operation.name.equals("follow-player")?60_000:15_000,500,120_000);
         if(operation.name.equals("move-to-position")) {
             Vec3 target=point(args); if(target.distanceTo(player.position())>32) throw error("INVALID_ARGUMENT","Movement limited to 32 blocks");
@@ -328,6 +330,12 @@ final class ServerController implements ControlSession.Game {
             return;
         }
         if(pickup!=null){pickup.tick();if(active!=null&&!active.status.equals("running"))stop();return;}
+        if(pillar!=null){
+            try{pillar.tick();}
+            catch(Protocol.Error e){finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),obj("code",e.code,"position",position(player.position())));return;}
+            if(active!=null&&!active.status.equals("running"))stop();
+            return;
+        }
         try {
             if(active.name.equals("approach-container")||active.name.equals("approach-player")||active.name.equals("approach-resource")) {tickApproach();return;}
             if(active.name.equals("retreat-from-entity")){tickRetreat();return;}
@@ -438,7 +446,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { active=null;pillar=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     void remove() {
         session.revokeCurrent("Server body removed");

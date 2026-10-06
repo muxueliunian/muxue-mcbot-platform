@@ -138,7 +138,8 @@ export function createDshConnection({ write, emit, fail, conversationId = '', ro
       settle(turn, result?.stopReason);
     } catch (error) {
       if (!error.rpcError) throw error;
-      settle(turn, '', error.message);
+      settle(turn, '', /no API key|MISSING_CREDENTIAL/i.test(error.message)
+        ? `没有配置 DeepSeek API Key：请在启动前设置环境变量 DEEPSEEK_API_KEY，或在 dsh 网页的模型设置里填写（${error.message}）` : error.message);
     }
   }
 

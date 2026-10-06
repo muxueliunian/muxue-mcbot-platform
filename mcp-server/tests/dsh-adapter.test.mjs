@@ -137,7 +137,10 @@ test('一轮对话：文字、工具、用量按统一事件发出，权限只�
   assert.deepEqual(h.events.at(-1), { type: 'completed', cancelled: false, error: 'dsh 回合结束：max_turn_requests' });
   h.connection.sendTurn('出错'); await tick();
   h.connection.handleMessage({ jsonrpc: '2.0', id: h.last('session/prompt').id, error: { code: -32603, message: 'MISSING_CREDENTIAL' } }); await tick();
-  assert.deepEqual(h.events.at(-1), { type: 'completed', cancelled: false, error: 'MISSING_CREDENTIAL' });
+  assert.match(h.events.at(-1).error, /^没有配置 DeepSeek API Key：.*DEEPSEEK_API_KEY/);
+  h.connection.sendTurn('别的错'); await tick();
+  h.connection.handleMessage({ jsonrpc: '2.0', id: h.last('session/prompt').id, error: { code: -32603, message: 'rate limited' } }); await tick();
+  assert.deepEqual(h.events.at(-1), { type: 'completed', cancelled: false, error: 'rate limited' });
   assert.deepEqual(h.failures, []);
 });
 

@@ -11,6 +11,8 @@ import static com.mcbot.servercontrol.Protocol.*;
 /** One scan binds a live player instance; later approach/dig/pickup cannot rebind by name or UUID. */
 final class CompanionMiningGuard {
     static final double PROTECTION_DISTANCE=2, PICKUP_SOURCE_DISTANCE=3;
+    /** A mined drop pops and slides; it may rest past the radius while the body still reaches it from inside. */
+    static final double DROP_REACH_MARGIN=1.5;
     record Player(Object identity,UUID uuid,Object dimension,Vec3 position,AABB bounds,boolean available) {}
     record Options(String player,UUID expected,int maxDistance) {}
     interface View {
@@ -42,6 +44,7 @@ final class CompanionMiningGuard {
     }
     Vec3 center(){return current().position();}
     int maxDistance(){return options.maxDistance();}
+    double dropDistance(){return options.maxDistance()+DROP_REACH_MARGIN;}
     void validateBody() {
         Player actual=current();requireWithin(view.bodyPosition(),actual.position());
     }
@@ -51,7 +54,8 @@ final class CompanionMiningGuard {
         if(view.miningConflict(position))throw error("COMPANION_MINING_CONFLICT","Another nearby player is actively mining this same ore cell");
     }
     void validatePickup(BlockPos source,Vec3 drop) {
-        Player actual=current();requireWithin(view.bodyPosition(),actual.position());requireWithin(drop,actual.position());
+        Player actual=current();requireWithin(view.bodyPosition(),actual.position());
+        if(drop.distanceToSqr(actual.position())>dropDistance()*dropDistance())throw error("COMPANION_OUT_OF_RANGE","Drop left the live companion radius plus the fixed reach margin");
         if(drop.distanceToSqr(Vec3.atCenterOf(source))>PICKUP_SOURCE_DISTANCE*PICKUP_SOURCE_DISTANCE)
             throw error("COMPANION_OUT_OF_RANGE","Drop left the bounded source-ore neighbourhood; position does not prove drop ownership");
     }

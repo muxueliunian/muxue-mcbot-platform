@@ -145,6 +145,8 @@ follow的可选pickup仅在companion-pickup能力存在时发布，`items`明确
 
 collect-items的授权范围是初始Bot位置为中心的radius球，冻结其中匹配物品的已观察UUID；gather-resources收取固定扫描区内的匹配地面物品及随后产生的掉落，收据位置按网格中心水平radius＋0.75格、距floor(center.y)最多3格核验，为方块内生成的掉落留边界余量，不借此增加待挖候选。拾到范围外、其它物品或不兼容变体时记录实际额外结果并停止，不能算入目标。
 
+陪挖（`companionMiningGuard`）的单块子任务另有规则（2026-10-06）：Bot位置、路线和站位只能在绑定玩家的半径内；挖出的掉落物会弹出滑动，允许离玩家半径＋1.5格（`DROP_REACH_MARGIN`，三维距离），同时必须在源矿3格内。运行端认领掉落用同一余量。站不进圈内又够不着的掉落以拾取失败回到跟随，不追出圈外。见[陪挖验收](archive/companion_mining_validation.md)。
+
 count和stacks必须二选一、1–256整数，最终解析目标最多256，不静默截断。用户省略数量时由Agent自主选择合理有限count并在say中说明；`1组`用授权地面源或首次真实原生拾取栈的有效maxStackSize。初始没有实际栈时，可先在冻结授权候选内挖取并收取首份原生掉落后固定variant／上限／目标，开工时如实说明数量未解析；不使用旧背包变体或从block ID猜上限。变体／上限变化停止，不能重新换算已承诺目标。
 
 目标是`quantity:"newly-picked"`，不是补足背包，也不是破坏方块数。result区分targetCount、pickedUpCount、minedBlocks、steps、overage、totalNativePickedUpCount及unexpectedPickedUpCount；unknown／cancelled仅保留lastConfirmedPickedUpCount并标partial-or-unknown。自然一次拾取可能超过目标，按原生实际量报告overage，不截断收据。默认maxSteps64（1–256）、timeoutMs60000（1000–120000）；候选／动作预算不足给部分结果，不滚动采集。拾取前有界等待落地稳定：新onGround=true后至少200ms／4次采样；旧身体缺该字段时至少400ms／8次采样，整个等待最多2500ms并受任务期限限制。

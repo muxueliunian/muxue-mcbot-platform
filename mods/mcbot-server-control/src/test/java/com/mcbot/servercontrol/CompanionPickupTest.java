@@ -55,6 +55,10 @@ final class CompanionPickupTest {
         World valid=new World(true);valid.guard.validate();check(valid.guard.allows(new Vec3(2.5,1,0.5))&&!valid.guard.allows(new Vec3(2.5001,1,0.5)),"inclusive live companion radius is exact rather than an eight-block pickup fallback");
         World bodyFar=new World(true);bodyFar.feet=new Vec3(3,1,0.5);Fixture farStart=new Fixture(bodyFar);farStart.fail("COMPANION_OUT_OF_RANGE");check(bodyFar.moves==0&&bodyFar.plans==0,"initial body outside guard rejects before planning or input");
         World itemFar=new World(true);itemFar.item=new Vec3(2.5001,1,0.5);Fixture farDrop=new Fixture(itemFar);farDrop.fail("COMPANION_OUT_OF_RANGE");check(itemFar.moves==0,"initial drop outside player radius rejects before input");
+        World minedDrop=new World(false);minedDrop.item=new Vec3(2,1,2.6);minedDrop.guard=new CompanionPickupGuard(args(),minedDrop,CompanionMiningGuard.DROP_REACH_MARGIN);minedDrop.guard.validate();
+        check(minedDrop.guard.allows(new Vec3(2.5,1,0.5))&&!minedDrop.guard.allows(new Vec3(2.5001,1,0.5)),"mined-drop margin widens only where the drop rests, never the body route");
+        Fixture minedReach=new Fixture(minedDrop);minedReach.pickup.tick();check(minedDrop.input!=null&&minedDrop.guard.allows(minedDrop.feet),"drop past the radius is still approached from inside it");
+        minedDrop.item=new Vec3(4.0001,1,0.5);errorCode("COMPANION_OUT_OF_RANGE",minedDrop.guard::validate);
 
         Fixture moved=new Fixture(true);moved.pickup.tick();check(moved.world.input!=null,"valid guarded pickup begins ordinary movement");moved.world.player=moved.world.player.add(-3,0,0);moved.fail("COMPANION_OUT_OF_RANGE");
         Fixture replacement=new Fixture(true);replacement.pickup.tick();replacement.world.playerIdentity=new Object();replacement.fail("STALE_COMPANION");

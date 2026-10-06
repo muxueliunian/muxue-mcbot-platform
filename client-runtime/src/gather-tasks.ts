@@ -13,6 +13,7 @@ export interface BorrowedPickup extends BorrowedOwner { entityId: string; source
 export interface BorrowedMining extends BorrowedOwner { kind: 'mining'; candidate: NearbyResources['candidates'][number]; deadline: number; onProgress?: (operation: Operation) => void }
 type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
+const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
 type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string };
 type Active = { id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean };
@@ -86,6 +87,9 @@ export class GatherTasks {
   }
   private inside(task: Active, position: Position): boolean {
     if (task.name === 'collect-items') return Math.hypot(position.x - task.center.x, position.y - task.center.y, position.z - task.center.z) <= task.radius;
+    // Same margin as ServerBody CompanionMiningGuard.DROP_REACH_MARGIN: a mined drop may slide past the
+    // player radius; the body still has to stay inside it, and the server also bounds the drop to its source ore.
+    if (miningOwner(task.borrowed)) return Math.hypot(position.x - task.center.x, position.y - task.center.y, position.z - task.center.z) <= task.radius + MINING_DROP_MARGIN;
     // The catalog scans block cells at y +/-2; drops may spawn inside their outer half-cell.
     return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && Math.abs(position.y - Math.floor(task.center.y)) <= 3;
   }

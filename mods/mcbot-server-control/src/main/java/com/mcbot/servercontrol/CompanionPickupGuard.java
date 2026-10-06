@@ -14,15 +14,17 @@ final class CompanionPickupGuard {
     private final View view;
     private final String player;
     private final UUID expected;
-    private final double maxDistance;
+    private final double maxDistance,itemDistance;
     private final Player bound;
-    CompanionPickupGuard(JsonObject args,View view) {
+    CompanionPickupGuard(JsonObject args,View view){this(args,view,0);}
+    /** itemMargin only widens where the drop may rest (mined drops); body and route keep the plain radius. */
+    CompanionPickupGuard(JsonObject args,View view,double itemMargin) {
         this.view=view;player=string(args,"player");
         if(!player.matches("[A-Za-z0-9_]{1,16}"))throw error("INVALID_ARGUMENT","companionGuard.player must be a player name");
         String uuid=string(args,"expectedEntityId");
         try {expected=UUID.fromString(uuid);if(!expected.toString().equalsIgnoreCase(uuid))throw new IllegalArgumentException();}
         catch(IllegalArgumentException invalid){throw error("INVALID_ARGUMENT","companionGuard.expectedEntityId must be a complete UUID");}
-        number(args,"maxDistance");maxDistance=bounded(args,"maxDistance",0,1.5,4);
+        number(args,"maxDistance");maxDistance=bounded(args,"maxDistance",0,1.5,4);itemDistance=maxDistance+itemMargin;
         bound=view.companion(player);
     }
     private Player current() {
@@ -34,7 +36,7 @@ final class CompanionPickupGuard {
     }
     void validate() {
         Player actual=current();
-        if(!within(view.bodyPosition(),actual.position())||!within(view.itemPosition(),actual.position()))
+        if(!within(view.bodyPosition(),actual.position())||view.itemPosition().distanceToSqr(actual.position())>itemDistance*itemDistance)
             throw error("COMPANION_OUT_OF_RANGE","Body or bound drop left the live companion pickup radius");
     }
     boolean allows(Vec3 point) {return within(point,current().position());}

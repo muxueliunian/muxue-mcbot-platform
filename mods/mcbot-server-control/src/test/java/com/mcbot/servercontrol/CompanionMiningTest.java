@@ -82,6 +82,9 @@ final class CompanionMiningTest {
         errorCode("UNSUPPORTED",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_copper"));
         errorCode("COMPANION_OUT_OF_RANGE",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(-2,1,0.5),"minecraft:iron_ore","minecraft:raw_iron"));
         good.player=new Vec3(0.5,1,0.5);errorCode("COMPANION_OUT_OF_RANGE",()->bound.validatePickup(ORE,new Vec3(0.3,1,0.5)));
+        bound.validatePickup(ORE,new Vec3(5.2,1,0.5));check(true,"mined drop may slide past the radius within the fixed reach margin and its source neighbourhood");
+        errorCode("COMPANION_OUT_OF_RANGE",()->bound.validatePickup(ORE,new Vec3(6.0001,1,0.5)));
+        good.feet=new Vec3(4.5001,1,0.5);errorCode("COMPANION_OUT_OF_RANGE",()->bound.validatePickup(ORE,new Vec3(4,1,0.5)));good.feet=new Vec3(1.5,1,0.5);
         good.identity=new Object();errorCode("STALE_COMPANION",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_iron"));
         check(ResourceTargets.valid(target,"session",1,good.dimension,99),"pickup source token can retain its context after block removal");
         check(!ResourceTargets.valid(target,"session",1,good.dimension,100)&&!ResourceTargets.valid(target,"session",2,good.dimension,1)&&!ResourceTargets.valid(target,"other",1,good.dimension,1)&&!ResourceTargets.valid(target,"session",1,new Object(),1),"expiry, stop generation, session and dimension still invalidate pickup tokens");

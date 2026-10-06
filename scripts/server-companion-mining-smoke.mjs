@@ -60,6 +60,7 @@ const safe = value => JSON.parse(redact(JSON.stringify(value)));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let phase = 'startup', client, transport, proxy, heartbeat, heartbeatError, mcpProcess, mcpClosed, peer, peerClosed, peerSpawned = false;
 let sequence = 1, fault = false, faultInjected = false, activePlayerDig, interrupted = '';
+let lastObserve;
 const forced = [];
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { interrupted = signal; });
 const stamp = () => ({ phase, at: Date.now() });
@@ -164,6 +165,10 @@ try {
       const decoded = await response.json();
       if (request.method === 'claim' && decoded.ok) for (const key of ['leaseId', 'stopToken']) if (decoded.result[key]) secrets.add(decoded.result[key]);
       const row = { ...stamp(), requestedAt: start, method: request.method, action: request.params?.name, operationId: request.params?.operationId, ok: decoded.ok, status: decoded.result?.status, code: decoded.error?.code, resultCode: decoded.result?.result?.code };
+      if (request.method === 'observe' && decoded.ok) lastObserve = { at: Date.now(), body: decoded.result.position, players: decoded.result.entities?.filter(entity => entity.type === 'minecraft:player').map(entity => ({ name: entity.name, position: entity.position })),
+        groundItems: decoded.result.groundItems?.map(item => ({ entityId: item.entityId, id: item.stack?.id, count: item.stack?.count, position: item.position })) };
+      // 失败回执留下摘要、结果（含导航诊断）和最近一次观察，排查用；safe()统一脱敏。
+      if (['failed', 'unknown'].includes(decoded.result?.status)) { row.summary = decoded.result.summary; row.result = decoded.result.result; row.lastObserve = lastObserve; }
       if (fault && !faultInjected && request.method === 'act' && request.params?.name === 'dig-block' && decoded.ok) {
         faultInjected = true; row.injected = 'one-native-dig-receipt-unknown'; decoded.result = { ...decoded.result, status: 'unknown', summary: '验收代理一次不确定回执', result: { code: 'UNKNOWN' } };
       }
@@ -253,7 +258,7 @@ try {
     await until(() => Promise.resolve(digCalls(floor)), calls => calls.length === 1, '没有在途挖掘'); await tool('stop-action'); const stoppedAt = Date.now();
     await wait(500); const old = await mode(); await setOre(targets[1]); await wait(1600);
     check('硬停丢弃mining意图和后续scan/dig，角色留服', old.state === 'stopped' && !old.intent && digCalls(floor).length === 1 && await blockIs(targets[0], 'deepslate_coal_ore') && await blockIs(targets[1], 'coal_ore'), { old, stoppedAt });
-    await fixture('item replace entity ServerBot hotbar.0 with minecraft:diamond_pickaxe'); const found = await tool('discover-resources', { blockIds: ['minecraft:coal_ore'], radius: 4, maxResults: 8 });
+    await fixture('item replace entity ServerBot hotbar.0 with minecraft:diamond_pickaxe'); const found = await tool('discover-resources', { blockIds: ['minecraft:coal_ore'], radius: 6, maxResults: 8 }); // 停止后Bot停在约6410.7，新矿在4.7格外
     let next = await tool('gather-resources', { resourceRef: found.resourceRef, item: 'minecraft:coal', count: 1, maxSteps: 16 });
     if (next.status === 'running') next = await until(() => tool('get-operation', { operationId: next.operationId, details: true }), value => value.status !== 'running', '首个新任务未完成');
     row.fresh = next; check('停止后首个明确新有限任务成功，不恢复旧陪挖', next.status === 'succeeded' && next.result?.minedBlocks === 1 && next.result?.pickedUpCount === 1 && (await mode()).state === 'stopped', next);

@@ -104,6 +104,17 @@ test('new visible copper drops are picked by receipt without predicting yield or
   assert.equal(f.native('pickup-item').length, 1); assert.equal(f.native('pickup-item')[0].args.resourceTargetToken, f.native('dig-block')[0].args.targetToken);
 });
 
+test('a mined drop that slid just past the radius is still picked up, a farther one is left alone', async t => {
+  // Player at x=1: 6.4 is past radius 4 but inside the 1.5 drop margin; 6.6 is beyond both.
+  for (const [x, picked] of [[6.4, 1], [6.6, 0]]) {
+    const f = fixture(t, { automatic: false, maxBlocks: 1 }); f.addBlock(4);
+    f.afterAct = async name => { if (name === 'dig-block') f.state.groundItems.at(-1).position.x = x; };
+    await f.follow();
+    await f.spin(() => f.mode.snapshot().mining.active === false && f.mode.snapshot().activity === 'following');
+    assert.equal(f.native('pickup-item').length, picked, `drop at x=${x}`); assert.equal(f.mode.snapshot().mining.minedBlocks, 1);
+  }
+});
+
 test('later ore is scanned after two seconds and exhausted attempts only disable mining once, including resume', async t => {
   const f = fixture(t); f.addBlock(); await f.follow();
   await f.spin(() => f.mode.snapshot().mining.minedBlocks === 1 && f.mode.snapshot().activity === 'following');

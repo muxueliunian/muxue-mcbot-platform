@@ -124,7 +124,7 @@ final class PickupItem {
                 return player==null?null:new CompanionPickupGuard.Player(player,player.getUUID(),player.serverLevel(),player.position(),
                     player!=body&&player.isAlive()&&!player.isRemoved()&&player.connection!=null&&player.connection.isAcceptingMessages());
             }
-        }):null;
+        },mining==null?0:CompanionMiningGuard.DROP_REACH_MARGIN):null;
         View view=new View(){
             FlatApproach geometry;
             final NativeNavigation navigation=new NativeNavigation(body,session,operation);

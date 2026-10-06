@@ -52,7 +52,7 @@ async function mock(){
 }
 
 test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
-  for(const agent of ['claude','codex']){
+  for(const agent of ['claude','codex','dsh']){
     const args=parseArgs(['--agent',agent,'--body','server','--server-check-seconds','1']);assert.equal(args.serverCheckSeconds,0);
     assert.match(startupPrompt(args,true),/ServerBody/);assert.doesNotMatch(startupPrompt(args,true),/调用 memory-context 读记忆|会自动进服|会被自动下线/);
     assert.match(startupPrompt(args,true),/components/);assert.match(startupPrompt(args,true),/revision/);assert.match(startupPrompt(args,true),/不自动复活/);
@@ -60,7 +60,8 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
     assert.doesNotMatch(startupPrompt(args,true),/每轮先查询当前状态|完整复制状态与 components/);
     assert.equal(bodySessionScope(args,['--world-id','a','--connection-file','x']).body,'server');
   }
-  assert.throws(()=>parseArgs(['--agent','gemini','--body','server']),/Claude 或 Codex/);
+  assert.throws(()=>parseArgs(['--agent','gemini','--body','server']),/仅接通 Claude、Codex、dsh/);
+  assert.throws(()=>parseArgs(['--agent','dsh','--body','client']),/仅接通 Codex/);
   assert.deepEqual(codexThreadConfig({}, {command:'node',args:[]},ROOT,'server').mcp_servers.minecraft.enabled_tools,CODEX_SERVER_TOOLS);
   assert.equal(CODEX_SERVER_TOOLS.includes('dig-block'),true);
   assert.equal(CODEX_SERVER_TOOLS.includes('select-slot'),true);
@@ -83,7 +84,7 @@ test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲�
   assert.match(prompt,/不自动 resume/);
 });
 
-for(const agent of ['claude','codex'])test(`ServerBody 真驱动+${agent}：journal卡住仍叫停，缓存能力重接且无旧TCP/RCON`,async()=>{
+for(const agent of ['claude','codex','dsh'])test(`ServerBody 真驱动+${agent}：journal卡住仍叫停，缓存能力重接且无旧TCP/RCON`,async()=>{
   const dir=temp(),api=await mock();const runtime=path.join(dir,'runtime');fs.mkdirSync(runtime);
   const connectionFile=path.join(dir,'connection.json');fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:'world-a',username:'ServerTest'}));
   const configFile=path.join(dir,'mcp.json');const original=Buffer.from(JSON.stringify({mcpServers:{minecraft:{command:process.execPath,args:['not-executed.mjs','--body','server','--connection-file',connectionFile,'--world-id','world-a','--username','ServerTest']},unrelatedFiles:{command:'not-started-filesystem-server'}}}));fs.writeFileSync(configFile,original);
@@ -105,6 +106,11 @@ for(const agent of ['claude','codex'])test(`ServerBody 真驱动+${agent}：jour
       assert.ok(argv.includes('--restricted'));
       assert.equal(start.toolSearch,'false');
       assert.match(argv[argv.indexOf('--append-system-prompt')+1],/宿主只读加载/);
+    }
+    if(agent==='dsh'){
+      const mcp=records(agentLog).find(r=>r.kind==='mcp');
+      assert.equal(mcp.name,'minecraft');assert.ok(path.isAbsolute(mcp.command),'ACP 的 MCP 命令必须是绝对路径');assert.equal(path.resolve(mcp.cwd),ROOT);
+      assert.deepEqual(records(agentLog).filter(r=>r.configId).map(r=>[r.configId,r.value]),[['reasoning_effort','low']],'默认思考档位 low，不改模型');
     }
     await waitFor(()=>api.state.calls.some(c=>c.method==='watch'),'independent watch');
     assert.equal(api.state.revokeCount,0,'claim之前历史stop跳过');

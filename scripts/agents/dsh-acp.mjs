@@ -1,0 +1,219 @@
+// DeepSeek Harness（dsh）的 ACP 适配：`dsh --profile acp` 讲标准 ACP v1（stdio 上的 JSON-RPC）。
+// 和 Codex app-server 一样只做协议转换，不持有游戏状态；接口：start / sendTurn / handleMessage / interrupt / dispose。
+import fs from 'node:fs';
+import path from 'node:path';
+import { SERVER_GAME_INSTRUCTIONS } from './game-instructions.mjs';
+
+// 只在核对过的版本上承诺行为；dsh 还在开发者预览，升级前要重测。
+export const DSH_VERSION = '0.2.0-rc.2';
+export const DSH_MCP_SERVER = 'minecraft';
+
+// acp profile 默认带的命令行、文件、联网、子代理等能力全部去掉，只留我们通过 MCP 给的游戏工具。
+// agent-instructions 会读工作目录里的 AGENTS.md，那是开发说明，不是陪玩规则，也去掉。
+export const DSH_DISABLED_ROWS = Object.freeze([
+  'tool-bash', 'tool-pwsh', 'tool-jobs', 'tool-fs', 'tool-fs-search', 'tool-skill', 'skill', 'skill-filesystem', 'skill-badge',
+  'agent-instructions', 'plan-mode', 'command-goal', 'tool-goal', 'tool-ralph', 'tool-todo', 'tool-workflow', 'workflow-ptc', 'ptc-runtime',
+  'subagent', 'subagent-spawn-in-process', 'subagent-fork-in-process', 'tool-subagent-control', 'tool-subagent-list-agents',
+  'tool-subagent', 'tool-subagent-fork', 'web', 'web-search-deepseek', 'web-fetch-http', 'tool-web', 'mcp-resources',
+]);
+
+const EFFORTS = { off: 'off', low: 'low', medium: 'high', high: 'high', xhigh: 'max', max: 'max' };
+/** 我们的思考档位（low/medium/high/xhigh）映射到 dsh 的 off/low/high/max；不认识的原样交给 dsh 判断。 */
+export function dshEffort(effort) {
+  return EFFORTS[effort || 'low'] ?? effort;
+}
+
+/** 托管用的 profile 补丁：关掉非游戏工具，用陪玩指令替换默认的 coding agent 人设。 */
+export function dshPatch(instructions = '') {
+  const persona = [SERVER_GAME_INSTRUCTIONS, instructions].filter(Boolean).join('\n\n')
+    // dsh 用 {{...}} 做模板占位，资料里的花括号不能被当成占位符。
+    .replaceAll('{{', '{ {').replaceAll('}}', '} }');
+  const rows = DSH_DISABLED_ROWS.map(id => `- id: ${id}\n  disabled: true`);
+  // JSON 字符串同时是合法的 YAML 双引号标量。
+  rows.push(`- id: system-prompt\n  config:\n    personaPrefix: ${JSON.stringify(persona)}\n    personaSuffix: ""`);
+  return `# MCBOT 托管 dsh 时生成；只保留 minecraft MCP 工具。\n${rows.join('\n\n')}\n`;
+}
+
+export function writeDshPatch(file, instructions = '') {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, dshPatch(instructions), 'utf8');
+  return file;
+}
+
+/** dsh 装在仓库的 runtime/dsh（锁定版本），也可用 MCBOT_DSH_BIN 指到别处的 bin.js。 */
+export function dshCommand({ root, patchFile, env = process.env }) {
+  const bin = env.MCBOT_DSH_BIN ? path.resolve(env.MCBOT_DSH_BIN) : path.join(root, 'runtime', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+  if (!fs.existsSync(bin)) throw new Error(`找不到 dsh：请在 runtime/dsh 里安装 @deepseek-ai/dsh@${DSH_VERSION}（见 docs/dev.md）`);
+  if (!patchFile) throw new Error('dsh 托管需要生成的 profile 补丁');
+  return { cmd: process.execPath, a: [bin, '--profile', 'acp', '--patch', patchFile] };
+}
+
+/** 托管 MCP 配置转成 ACP 的 stdio 声明：命令必须是绝对路径，环境变量是 name/value 列表。 */
+export function acpMcpServer(server, execPath = process.execPath) {
+  if (!server?.command || !Array.isArray(server.args)) throw new Error('dsh 需要 minecraft stdio MCP 配置（command、args）');
+  const command = path.isAbsolute(server.command) ? server.command : server.command === 'node' ? execPath : '';
+  if (!command) throw new Error('dsh 的 MCP 命令必须是绝对路径（ACP 规定）；请用 -NodePath 或完整路径');
+  return { name: DSH_MCP_SERVER, command, args: server.args.map(String),
+    env: Object.entries(server.env ?? {}).map(([name, value]) => ({ name, value: String(value) })) };
+}
+
+const GAME_TOOL = new RegExp(`^mcp__${DSH_MCP_SERVER}__`);
+export const gameToolName = name => String(name ?? '').replace(GAME_TOOL, '');
+export const isGameTool = name => GAME_TOOL.test(String(name ?? ''));
+
+function flatOptions(option) {
+  return (option?.options ?? []).flatMap(item => Array.isArray(item.options) ? item.options : [item]);
+}
+/** 模型可以写 dsh 列出的名字（deepseek-v4-pro）或它的完整取值。 */
+export function pickModel(configOptions, model) {
+  const option = configOptions?.find(item => item.id === 'model');
+  const choices = flatOptions(option);
+  const hit = choices.find(item => item.value === model || item.name === model || item.value?.endsWith(`"${model}"]`));
+  if (!hit) throw new Error(`dsh 没有这个模型：${model}（可选：${choices.map(item => item.name).join('、') || '无'}）`);
+  return hit.value;
+}
+
+export function createDshConnection({ write, emit, fail, conversationId = '', root, model = '', effort = '', mcpServer,
+  requestTimeoutMs = 45000, sessionTimeoutMs = 120000 }) {
+  let nextId = 0, sessionId = '', disposed = false, stopping = false, ready, prompt = null;
+  const requests = new Map();
+  const toolNames = new Map();
+
+  function request(method, params, timeoutMs = requestTimeoutMs) {
+    if (disposed) return Promise.reject(new Error('dsh 连接已关闭'));
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      // 一轮对话可能很久，session/prompt 不设超时；叫停走 session/cancel。
+      const timer = timeoutMs > 0 ? setTimeout(() => {
+        requests.delete(id);
+        reject(new Error(`dsh ${method} 请求超时；结果未知，不自动重放游戏动作`));
+      }, timeoutMs) : null;
+      requests.set(id, { resolve, reject, timer });
+      write({ jsonrpc: '2.0', id, method, params });
+    });
+  }
+  const notify = (method, params) => write({ jsonrpc: '2.0', method, params });
+
+  async function configure(configOptions) {
+    if (model) await request('session/set_config_option', { sessionId, configId: 'model', value: pickModel(configOptions, model) });
+    const reasoning = configOptions?.find(item => item.id === 'reasoning_effort');
+    const wanted = dshEffort(effort);
+    if (reasoning && flatOptions(reasoning).some(item => item.value === wanted) && reasoning.currentValue !== wanted)
+      await request('session/set_config_option', { sessionId, configId: 'reasoning_effort', value: wanted });
+  }
+
+  async function start() {
+    await request('initialize', { protocolVersion: 1, clientInfo: { name: 'mcbot_companion', version: '0.1.0' },
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+    if (stopping || disposed) return;
+    const params = { cwd: root, mcpServers: [acpMcpServer(mcpServer)] };
+    // 新会话要启动 MCP 子进程并连上游戏，给足时间。
+    const result = conversationId
+      ? await request('session/resume', { sessionId: conversationId, ...params }, sessionTimeoutMs)
+      : await request('session/new', params, sessionTimeoutMs);
+    if (stopping || disposed) return;
+    sessionId = conversationId || result?.sessionId;
+    if (!sessionId) throw new Error('dsh 没有返回 sessionId');
+    await configure(result?.configOptions);
+    if (stopping || disposed) return;
+    emit({ type: 'session', id: sessionId });
+  }
+
+  function settle(turn, stopReason, error = '') {
+    if (prompt !== turn) return;
+    prompt = null;
+    turn.resolve();
+    const cancelled = turn.cancelled || stopReason === 'cancelled';
+    emit({ type: 'text', text: '', done: true });
+    if (!cancelled && !error && stopReason === 'end_turn') emit({ type: 'request_completed' });
+    emit({ type: 'completed', cancelled,
+      error: cancelled ? '' : error || (stopReason === 'end_turn' ? '' : `dsh 回合结束：${stopReason || '未知原因'}`) });
+  }
+
+  async function runPrompt(turn) {
+    await ready;
+    if (disposed || stopping || turn.cancelled) { settle(turn, 'cancelled'); return; }
+    try {
+      const result = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: turn.text }] }, 0);
+      settle(turn, result?.stopReason);
+    } catch (error) {
+      if (!error.rpcError) throw error;
+      settle(turn, '', error.message);
+    }
+  }
+
+  function answerRequest(msg) {
+    if (msg.method === 'session/request_permission') {
+      // 只批准本次托管挂上的 minecraft 工具；其余（本应已关掉的）一律拒绝。
+      const name = toolNames.get(msg.params?.toolCall?.toolCallId);
+      write({ jsonrpc: '2.0', id: msg.id, result: { outcome: { outcome: 'selected', optionId: isGameTool(name) ? 'allow-once' : 'reject-once' } } });
+      return;
+    }
+    // 没声明文件、终端能力；其他客户端方法一律拒绝，避免对方永久等待。
+    write({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'MCBOT 不支持此请求' } });
+  }
+
+  function handleUpdate(update) {
+    switch (update?.sessionUpdate) {
+      case 'agent_message_chunk':
+        if (update.content?.type === 'text') emit({ type: 'text', text: update.content.text, done: false });
+        break;
+      case 'tool_call':
+        toolNames.set(update.toolCallId, update.title);
+        if (toolNames.size > 200) toolNames.delete(toolNames.keys().next().value);
+        emit({ type: 'tool', name: gameToolName(update.title), input: update.rawInput ?? {} });
+        break;
+      case 'tool_call_update':
+        // 工具结果回到模型，下一次模型请求从这里开始。
+        if (['completed', 'failed'].includes(update.status)) emit({ type: 'request_started' });
+        break;
+      case 'usage_update':
+        if (Number.isFinite(update.used)) emit({ type: 'usage', contextTokens: update.used });
+        break;
+    }
+  }
+
+  function handleMessage(msg) {
+    if (disposed || !msg) return;
+    if (msg.id !== undefined && !msg.method) {
+      const pending = requests.get(msg.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      requests.delete(msg.id);
+      if (msg.error) pending.reject(Object.assign(new Error(msg.error.message || 'dsh RPC 错误'), { rpcError: true }));
+      else pending.resolve(msg.result);
+      return;
+    }
+    if (msg.id !== undefined && msg.method) { answerRequest(msg); return; }
+    if (msg.method === 'session/update' && sessionId && msg.params?.sessionId === sessionId) handleUpdate(msg.params.update);
+  }
+
+  return {
+    start() { ready = start(); ready.catch((e) => { if (!disposed && !stopping) fail(e); }); },
+    sendTurn(text) {
+      if (stopping) throw new Error('dsh 正在停止，暂不能开始新回合');
+      if (prompt !== null) throw new Error('dsh 上一回合尚未结束');
+      let resolve;
+      const done = new Promise((r) => { resolve = r; });
+      prompt = { text, done, resolve, cancelled: false };
+      runPrompt(prompt).catch((e) => { if (!disposed && !stopping) fail(e); });
+    },
+    handleMessage,
+    async interrupt() {
+      stopping = true;
+      const turn = prompt;
+      if (!turn) return;
+      turn.cancelled = true;
+      if (sessionId) notify('session/cancel', { sessionId });
+      // session/prompt 要等 Agent 真正停稳才返回；调用方自己限时。
+      await turn.done;
+    },
+    dispose() {
+      disposed = true;
+      prompt?.resolve();
+      prompt = null;
+      for (const p of requests.values()) { clearTimeout(p.timer); p.reject(new Error('dsh 进程已退出')); }
+      requests.clear();
+    },
+  };
+}

@@ -1,7 +1,7 @@
 # A：接入已启动的 ServerBody 控制口；Agent 默认在本机现有登录环境运行。
 param(
     [Parameter(Mandatory)][string]$ConnectionFile,
-    [ValidateSet('claude', 'codex')][string]$Agent = 'claude',
+    [ValidateSet('claude', 'codex', 'dsh')][string]$Agent = 'claude',
     [string]$Nickname = '',
     [string]$ConfigDir = '',
     [string]$Model = '',
@@ -32,11 +32,14 @@ if ($NodePath) {
 Set-Location $PSScriptRoot
 $Name = [string]$connection.username
 $WorldId = [string]$connection.worldId
-if (-not $Nickname) { $Nickname = if ($Agent -eq 'claude') { '小克' } else { 'Codex' } }
+if (-not $Nickname) { $Nickname = switch ($Agent) { 'claude' { '小克' } 'dsh' { 'DeepSeek' } default { 'Codex' } } }
 $playDir = Join-Path $PSScriptRoot "runtime/server-play/$Name"
 $configFile = Join-Path $playDir 'mcp.json'
 $entry = Join-Path $PSScriptRoot 'client-runtime/dist/main.js'
 if (-not $PrepareOnly -and -not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw '请先在 client-runtime 目录运行 npm install 和 npm run build' }
+# dsh 锁定安装在 runtime/dsh（见 docs/dev.md）；DeepSeek 凭据用 DEEPSEEK_API_KEY 或 dsh 自己的凭据配置提供，脚本不读取。
+$dshBin = Join-Path $PSScriptRoot 'runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js'
+if ($Agent -eq 'dsh' -and -not $PrepareOnly -and -not $env:MCBOT_DSH_BIN -and -not (Test-Path -LiteralPath $dshBin -PathType Leaf)) { throw '请先安装 dsh：在 runtime/dsh 里运行 npm install --save-exact @deepseek-ai/dsh@0.2.0-rc.2' }
 New-Item -ItemType Directory -Path $playDir -Force | Out-Null
 $config = @{ mcpServers = @{ minecraft = @{
     command = $NodePath

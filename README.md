@@ -27,7 +27,7 @@
 - 手持物品右键方块（`interact-block`），按登记的交互放行，首批只有原版堆肥桶
 - 内容 Mod 只验过 Iron Furnaces 的普通铁炉
 
-还没有：持续陪挖（程序矩阵已通过，待真实模型和用户验收）、建筑、DeepSeek Harness 和原生 API、Mod 适配接口、多版本。详见[交付计划](docs/delivery_plan.md)。
+还没有：持续陪挖（程序矩阵已通过，待真实模型和用户验收）、DeepSeek Harness 的真实模型实测（适配器和离线测试已完成）、原生 API、建筑、Mod 适配接口、多版本。详见[交付计划](docs/delivery_plan.md)。
 
 用 `start-server-play.ps1` 启动。40 个 MCP 工具不代表所有 Mod 或服务器都能用。
 

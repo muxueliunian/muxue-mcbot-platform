@@ -1,8 +1,21 @@
-// 现有常驻 CLI 的协议适配。只做命令/消息转换，不持有进程、游戏状态或记忆。
-// 这是 AgentAdapter 的第一块：完整的连接、取消与工具配置接口随后由真实接入推动。
-// decodeMessage 返回有序事件：session、request_started、request_completed、usage、text、tool、completed。
+// 各 Agent 的适配器（R7）。驱动器只认这里的描述字段和统一事件，不再按 Agent 名字分支。
+// 描述字段：
+//   provider        会话 ID 的有效范围（换平台不能接着旧会话）；label 给人看的名字
+//   bodies          支持托管的身体类型；defaultName / defaultNickname 默认角色名与昵称
+//   configEnv       账号目录用哪个环境变量传给 Agent；defaultConfigDir(home, root) 默认账号目录（没有就不支持 --config-dir）
+//   identity        'xiaoke'：读小克/小双的人设和记忆（memoryAgent、soulFile）；'independent'：独立试玩身份，不碰他们的人设和记忆
+//   serverPolicy    ServerBody 托管时的工具策略标识，写进会话范围；策略变了旧会话作废
+//   systemInstructions  ServerBody 托管时，宿主是否把人设和游戏规则放进系统提示
+//   hostedMcpConfig 是否用驱动器生成的托管 MCP 配置（agy 只能用全局配置）
+//   environment(env, { body })  启动 Agent 前对环境变量的调整
+// 两种接法：无状态的 encodeTurn/decodeMessage（一行进一行出），或有状态的 createConnection
+// （start / sendTurn / handleMessage / interrupt / dispose，可选 stopActions）。
+// 统一事件：session、request_started、request_completed、usage、text、tool、completed。
 // completed 只表示 Agent 本轮结束，不表示其中每个游戏动作成功。
+import os from 'node:os';
+import path from 'node:path';
 import { codexCommand, createCodexConnection } from './codex-app-server.mjs';
+import { dshCommand, createDshConnection, writeDshPatch } from './dsh-acp.mjs';
 
 export function claudeContextTokens(usage) {
   if (!usage) return 0;
@@ -17,8 +30,13 @@ export function claudeGameEnvironment(env) {
 }
 
 const claude = Object.freeze({
-  provider: 'claude-code',
+  provider: 'claude-code', label: 'Claude',
   tracksContextTokens: true,
+  bodies: Object.freeze(['mineflayer', 'server']), defaultName: 'Claude', defaultNickname: '小克',
+  configEnv: 'CLAUDE_CONFIG_DIR', defaultConfigDir: home => path.join(home, '.claude'),
+  identity: 'xiaoke', memoryAgent: 'xiaoke', soulFile: 'claude_soul.md', systemInstructions: true, hostedMcpConfig: true,
+  serverPolicy: 'claude-game-tools-v1',
+  environment: (env, { body }) => body === 'server' ? claudeGameEnvironment(env) : env,
   command({ hostedConfigFile, model, effort, conversationId, body, gameInstructions }) {
     const gameOnly = body === 'server';
     const a = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -70,8 +88,12 @@ const claude = Object.freeze({
 
 const antigravity = Object.freeze({
   // 保留旧 provider 标识，避免已有会话状态被不必要地作废。
-  provider: 'agy',
+  provider: 'agy', label: 'Antigravity',
   tracksContextTokens: false,
+  bodies: Object.freeze(['mineflayer']), defaultName: 'Gemini', defaultNickname: '小双',
+  configEnv: '', defaultConfigDir: null,
+  identity: 'xiaoke', memoryAgent: 'xiaoshuang', soulFile: 'gemini_soul.md', systemInstructions: false, hostedMcpConfig: false,
+  environment: env => env,
   command({ root, model, effort, conversationId }) {
     const a = ['--input-format', 'stream-json', '--output-format', 'stream-json',
       '--dangerously-skip-permissions', '--print-timeout', '720h', '--add-dir', root];
@@ -110,16 +132,55 @@ const antigravity = Object.freeze({
 });
 
 const codex = Object.freeze({
-  provider: 'codex', tracksContextTokens: true,
+  provider: 'codex', label: 'Codex', tracksContextTokens: true,
+  bodies: Object.freeze(['mineflayer', 'client', 'server']), defaultName: 'CodexBot', defaultNickname: 'Codex',
+  configEnv: 'CODEX_HOME', defaultConfigDir: home => path.join(home, '.codex'),
+  // 游戏规则在 Codex 自己的 developerInstructions 里。
+  identity: 'independent', systemInstructions: false, hostedMcpConfig: true,
+  environment: env => env,
   defaultEffort: 'low',
   command: () => codexCommand(),
   createConnection: createCodexConnection,
 });
 
-const protocols = new Map([['claude', claude], ['gemini', antigravity], ['codex', codex]]);
+// DeepSeek Harness：ACP（标准 stdio JSON-RPC）。账号目录就是 DSH_HOME，默认放在仓库的 runtime/dsh/home，
+// 不写用户的 ~/.dsh；DeepSeek 凭据由使用者用 DEEPSEEK_API_KEY 或 dsh 自己的凭据配置提供。
+const dsh = Object.freeze({
+  provider: 'dsh', label: 'dsh', tracksContextTokens: true,
+  bodies: Object.freeze(['server']), defaultName: 'DeepSeekBot', defaultNickname: 'DeepSeek',
+  configEnv: 'DSH_HOME', defaultConfigDir: (home, root) => path.join(root, 'runtime', 'dsh', 'home'),
+  identity: 'independent', systemInstructions: true, hostedMcpConfig: true,
+  // 只挂游戏工具的补丁版本；补丁内容变了就不接着旧会话。
+  serverPolicy: 'dsh-acp-game-tools-v1',
+  // 没指定账号目录也不落到用户的 ~/.dsh。
+  environment: (env, { root }) => env.DSH_HOME ? env : { ...env, DSH_HOME: path.join(root, 'runtime', 'dsh', 'home') },
+  defaultEffort: 'low',
+  command({ root, hostedConfigFile, gameInstructions }) {
+    const patchFile = writeDshPatch(hostedConfigFile.replace(/\.json$/i, '') + '.dsh-patch.yml', gameInstructions);
+    return dshCommand({ root, patchFile });
+  },
+  createConnection: createDshConnection,
+});
+
+const protocols = new Map([['claude', claude], ['gemini', antigravity], ['codex', codex], ['dsh', dsh]]);
+
+export const AGENT_NAMES = Object.freeze([...protocols.keys()]);
+
+/** 实际生效的账号目录：命令行 > Agent 自己的环境变量 > 默认目录；规范化后才能比较。不支持的返回空串。 */
+export function agentConfigDir(name, configDir, env = process.env, home = os.homedir(), root = process.cwd()) {
+  const protocol = getAgentProtocol(name);
+  if (!protocol.defaultConfigDir) return '';
+  const dir = path.resolve(configDir || env[protocol.configEnv] || protocol.defaultConfigDir(home, root));
+  return process.platform === 'win32' ? dir.toLowerCase() : dir;
+}
 
 export function getAgentProtocol(name) {
   const protocol = protocols.get(name);
   if (!protocol) throw new Error(`尚未实现 Agent 协议：${name}（当前可用：${[...protocols.keys()].join(', ')}）`);
   return protocol;
+}
+
+/** 支持某种身体托管的 Agent 的显示名，按注册顺序。 */
+export function agentsFor(body) {
+  return [...protocols.values()].filter(protocol => protocol.bodies.includes(body)).map(protocol => protocol.label);
 }

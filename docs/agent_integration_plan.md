@@ -83,6 +83,22 @@ MCP 是对外工具接口之一，不承担所有 Agent 的进程与会话管理
 
 候选名称是设计标识，不是已经实现的类或可用配置项。上述产品的账号由各自受支持的认证流程管理，不能假定订阅登录凭据可直接用于通用模型 API。
 
+### dsh 调研（2026-10-06）
+
+锁定 `@deepseek-ai/dsh@0.2.0-rc.2`（npm 的 latest／next），装在 `runtime/dsh`（被 git 忽略），`DSH_HOME` 指到 `runtime/dsh/home`，不写用户的 `~/.dsh`。两条接法：
+
+| | ACP（`dsh --profile acp`） | dsh 插件（Cordis 插件，跑在 dsh Web 宿主里） |
+| --- | --- | --- |
+| 协议 | 标准 ACP v1，stdio JSON-RPC；官方说明不加私有方法 | dsh 内部插件 API（开发者预览，会有不兼容改动） |
+| 挂工具 | `session/new` 直接带我们的 stdio MCP 声明 | `dsh-mcp-client` 插件配置，或插件自己注册工具 |
+| 游戏事件唤醒 | 驱动器调用 `session/prompt`（一次一条，AI 空闲后才返回，即回合结束） | 插件用 `sessionController.resolveAgent` 找到会话，`agent.followup()` 投递消息（`dsh-schedule` 就是这么做的） |
+| 叫停 | `session/cancel` | 插件调内部接口 |
+| 恢复 | `session/resume`、`session/list` | 宿主自己管理 |
+| 界面 | 无界面，由我们的 WebUI 展示 | 用户在 dsh 自带网页里看对话 |
+| 和现有驱动器 | 和 Codex app-server 同一类，直接成为第三个适配器 | 驱动器的批处理、叫停、换会话等逻辑要在插件里另写一份 |
+
+实测（不带 Key）：`initialize` 返回协议 1、支持 HTTP MCP、会话 close/list/resume；`session/new` 返回会话 id 以及可选模型（deepseek-v4-flash、DeepSeek-V4-Pro 等）和思考档位（off/low/high/max）。还没验证：真实 `session/prompt`（要 DeepSeek Key）、把 dsh 自带的 bash/pwsh/文件工具关掉只留游戏工具。
+
 ### AgentAdapter 最小契约
 
 - 连接与健康：启动／附着／关闭、版本、运行能力与认证状态。

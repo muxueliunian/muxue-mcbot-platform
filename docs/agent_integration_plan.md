@@ -105,7 +105,8 @@ MCP 是对外工具接口之一，不承担所有 Agent 的进程与会话管理
 - 游戏陪玩的系统指令抽成 `scripts/agents/game-instructions.mjs`，Codex 和 dsh 共用同一份。
 - `scripts/agents/dsh-acp.mjs`：dsh 走 ACP，接口和 Codex 一样（start / sendTurn / handleMessage / interrupt / dispose）。启动时生成 profile 补丁，关掉命令行、文件、联网、子代理、技能、工作流等，只留 `minecraft` MCP 工具，并把人设换成陪玩指令；权限请求只批准 `mcp__minecraft__` 开头的工具。思考档位 low/medium/high/xhigh 对应 dsh 的 low/high/high/max，默认 low。`DSH_HOME` 默认在 `runtime/dsh/home`。
 - dsh 只接 ServerBody，是独立试玩身份（不读小克的人设和记忆）。`start-server-play.ps1 -Agent dsh` 可用。
-- 测试：新增 `dsh-adapter.test.mjs` 7 项；`server-driver.test.mjs` 的端到端流程（启动、快速回复、出错通知、叫停、带新任务重连）对 dsh 跑通，和 Claude、Codex 同一套。还没有用真实 DeepSeek Key 跑过。
+- 测试：新增 `dsh-adapter.test.mjs` 7 项；`server-driver.test.mjs` 的端到端流程（启动、快速回复、出错通知、叫停、带新任务重连）对 dsh 跑通，和 Claude、Codex 同一套。
+- 同日补上：可以直接用 DeepSeek Harness 桌面版自带的 dsh（`MCBOT_DSH_DESKTOP`，或默认安装位置），用桌面版里配好的 Key 时把 `DSH_HOME` 设成 `~/.dsh`。隔离服真实模型实测通过，见 [dsh 实测记录](archive/dsh_validation.md)。
 
 ### AgentAdapter 最小契约
 

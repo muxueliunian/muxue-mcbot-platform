@@ -124,7 +124,9 @@ export function runtimeFiles(runtimeDir, name) {
     heartbeat: path.join(runtimeDir, `companion-${name}.json`),
     lock: path.join(runtimeDir, `companion-${name}.lock`),
     log: path.join(runtimeDir, `companion-${name}.log`),
+    activity: path.join(runtimeDir, `activity-${name}.jsonl`),
     stop: path.join(runtimeDir, `companion-${name}.stop`),
+    halt: path.join(runtimeDir, `companion-${name}.halt`),
     session: path.join(runtimeDir, `session-${name}.json`),
     botLock: path.join(runtimeDir, `bot-${name}.lock`),
   };
@@ -225,8 +227,9 @@ function writeFileAtomic(file, text) {
   }
 }
 
-export function writeHeartbeat(file, agent, now = Date.now()) {
-  writeFileAtomic(file, JSON.stringify({ pid: process.pid, agent, updatedAt: now }));
+// extra 是给 WebUI 看的状态（昵称、身体、是否正在推理），锁判断只用 pid 和 updatedAt
+export function writeHeartbeat(file, agent, now = Date.now(), extra = {}) {
+  writeFileAtomic(file, JSON.stringify({ pid: process.pid, agent, updatedAt: now, ...extra }));
 }
 
 // 锁被别人持有的条件：pid 还活着，并且（心跳新鲜，或者锁是刚拿的）。
@@ -761,8 +764,18 @@ function main() {
     logFileLine(line);
   }
 
-  function info(msg) {
+  // 给 WebUI 看的结构化记录（每行一个 JSON），和文本日志内容一致，只是分好了类
+  function activity(kind, data) {
+    try {
+      fs.appendFileSync(F.activity, JSON.stringify({ t: Date.now(), kind, ...data }) + '\n');
+    } catch {
+      // 写不了不影响运行
+    }
+  }
+
+  function info(msg, kind = 'info', data = {}) {
     out(`\x1b[90m[${ts()}] ${msg}\x1b[0m`);
+    activity(kind, { text: msg, ...data });
   }
 
   // 在游戏里用灰字告诉小雪（同类限频）；RCON 连不上就只写日志
@@ -886,6 +899,7 @@ function main() {
     turnKind = kind;
     busy = true;
     turnStartedAt = Date.now();
+    activity('turn_start', { turnKind: kind });
     lastInputAt = turnStartedAt;
     lastActivity = Date.now();
     idleNudged = false;
@@ -895,7 +909,7 @@ function main() {
 
   function turnFinished(summary, error) {
     const secs = ((Date.now() - turnStartedAt) / 1000).toFixed(0);
-    info(`本轮结束（${secs} 秒）${summary ? `：${summary}` : ''}`);
+    info(`本轮结束（${secs} 秒）${summary ? `：${summary}` : ''}`, 'turn', { secs: Number(secs), ...(error ? { error: String(error) } : {}) });
     busy = false;
     lastActivity = Date.now();
     const errorKind = error ? classifyError(error) : '';
@@ -1076,7 +1090,7 @@ function main() {
     if (done || textBuffer.includes('\n')) {
       const parts = textBuffer.split('\n');
       textBuffer = done ? '' : parts.pop();
-      for (const p of parts) if (p.trim()) out(`\x1b[36m${args.nickname}>\x1b[0m ${p}`);
+      for (const p of parts) if (p.trim()) { out(`\x1b[36m${args.nickname}>\x1b[0m ${p}`); activity('reply', { text: p }); }
     }
   }
 
@@ -1174,7 +1188,7 @@ function main() {
         case 'request_completed': lastRequestAt = lastInputAt || Date.now(); break;
         case 'usage': contextTokens = event.contextTokens; break;
         case 'text': printText(event.text, event.done); break;
-        case 'tool': info(`· ${event.name} ${JSON.stringify(event.input).slice(0, 120)}`); break;
+        case 'tool': info(`· ${event.name} ${JSON.stringify(event.input).slice(0, 120)}`, 'tool', { name: event.name, input: JSON.stringify(event.input ?? null).slice(0, 400) }); break;
         case 'completed': {
           saveSession();
           if (event.cancelled) {
@@ -1261,8 +1275,8 @@ function main() {
     if (args.body === 'server' && waitingNewServerTask) return;
     const time = new Date(e.timestamp).toLocaleTimeString('zh-CN', { hour12: false });
     const text = `[${time}] ${e.type}: ${e.text}`;
-    if (e.type === 'chat' || e.type === 'whisper') out(`\x1b[32m${text}\x1b[0m`);
-    else info(`事件 ${e.type}: ${e.text}`);
+    if (e.type === 'chat' || e.type === 'whisper') { out(`\x1b[32m${text}\x1b[0m`); activity('event', { type: e.type, text: e.text, ...(e.username ? { from: e.username } : {}) }); }
+    else info(`事件 ${e.type}: ${e.text}`, 'event', { type: e.type });
     pendingEvents.push({ ...e, line: text });
     if (args.body === 'server' && isAddressedStop(e, args) && !shuttingDown) {
       void stopServerAgent('玩家叫停', e);
@@ -1486,6 +1500,7 @@ function main() {
   }
 
   rotateLog(F.log);
+  rotateLog(F.activity);
   const lock = acquireLock(F.lock, F.heartbeat, { agent: args.agent, headless: args.headless });
   if (!lock.ok) {
     info(`${args.nickname}（${args.name}）的驱动器已经在运行（pid ${lock.holder?.pid}），不重复启动`);
@@ -1509,6 +1524,7 @@ function main() {
       '否则 MCP 服务端不会写事件文件，驱动器收不到游戏事件，也不会认托管心跳');
   }
   try { fs.rmSync(F.stop, { force: true }); } catch { /* 忽略 */ }
+  try { fs.rmSync(F.halt, { force: true }); } catch { /* 忽略 */ }
 
   process.on('exit', cleanupFiles);
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -1523,7 +1539,7 @@ function main() {
 
   const beat = () => {
     try {
-      writeHeartbeat(F.heartbeat, args.agent);
+      writeHeartbeat(F.heartbeat, args.agent, Date.now(), { name: args.name, nickname: args.nickname, body: args.body, busy });
     } catch (e) {
       info(`写心跳失败：${e.message}`);
     }
@@ -1589,6 +1605,14 @@ function main() {
     if (fs.existsSync(F.stop)) {
       try { fs.rmSync(F.stop, { force: true }); } catch { /* 忽略 */ }
       shutdown('收到停止标记');
+    }
+    // WebUI 的「叫停」：和游戏里叫停一样停下动作、中断推理，等玩家给新任务；托管不退出
+    if (fs.existsSync(F.halt)) {
+      try { fs.rmSync(F.halt, { force: true }); } catch { /* 忽略 */ }
+      if (args.body === 'server' && !waitingNewServerTask) {
+        info('网页上点了叫停', 'halt');
+        void stopServerAgent('网页叫停');
+      }
     }
   }, 400);
   setInterval(idleCheck, 15000);

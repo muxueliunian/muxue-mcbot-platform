@@ -66,6 +66,14 @@ test('host heartbeat expiry releases the Body without any new action', async t =
   assert.equal(hostedHeartbeatFresh(heartbeat, 61001, () => true), false);
   assert.equal(hostedHeartbeatFresh(heartbeat, 1001, () => true), true);
   assert.equal(hostedHeartbeatFresh(heartbeat, 1001, () => false), false);
+  // A half-written file keeps the last value read; it still expires on time, and a removed file counts as gone.
+  fs.writeFileSync(heartbeat, '{"pid":');
+  assert.equal(hostedHeartbeatFresh(heartbeat, 1001, () => true), true);
+  assert.equal(hostedHeartbeatFresh(heartbeat, 61001, () => true), false);
+  assert.equal(hostedHeartbeatFresh(heartbeat, 1001, () => false), false);
+  fs.unlinkSync(heartbeat);
+  assert.equal(hostedHeartbeatFresh(heartbeat, 1001, () => true), false);
+  assert.equal(hostedHeartbeatFresh(path.join(dir, 'never.json'), 1001, () => true), false);
   const body = fakeBody();
   const errors = [];
   const monitor = new RuntimeMonitor(body, new EventJournal(), { heartbeatFresh: () => false, onFatal: error => errors.push(error.code) });

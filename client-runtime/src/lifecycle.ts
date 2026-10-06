@@ -29,11 +29,20 @@ export function acquireRuntimeLock(runtimeDir: string, username: string): () => 
   }
   throw new BodyError('LOCKED', '无法取得身体控制锁');
 }
+// The driver replaces the file every 15s; on Windows a read can land on a locked or half-written file.
+// A failed read falls back to the last value read, so only a stale timestamp or a dead pid releases the body.
+const lastHeartbeat = new Map<string, { pid: number; updatedAt: number }>();
 export function hostedHeartbeatFresh(file: string, now = Date.now(), alive = pidAlive): boolean {
+  let value: { pid: number; updatedAt: number } | undefined;
   try {
-    const value = JSON.parse(fs.readFileSync(file, 'utf8')) as { pid: number; updatedAt: number };
-    return Number.isFinite(value.updatedAt) && Math.abs(now - value.updatedAt) <= 60_000 && alive(value.pid);
-  } catch { return false; }
+    value = JSON.parse(fs.readFileSync(file, 'utf8')) as { pid: number; updatedAt: number };
+    if (Number.isFinite(value.updatedAt) && Number.isSafeInteger(value.pid)) lastHeartbeat.set(file, value);
+  } catch (error) {
+    // A missing file means the driver removed it on exit, not a transient read failure.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') lastHeartbeat.delete(file);
+    value = lastHeartbeat.get(file);
+  }
+  return !!value && Number.isFinite(value.updatedAt) && Math.abs(now - value.updatedAt) <= 60_000 && alive(value.pid);
 }
 export class RuntimeMonitor {
   private timer?: ReturnType<typeof setTimeout>;

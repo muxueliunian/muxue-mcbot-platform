@@ -2,6 +2,7 @@
   "name": "mcbot-mcp-server",
   "version": "2.0.4-mcbot.1",
   "private": true,
+  "license": "Apache-2.0",
   "description": "mcbot 自用的 Minecraft MCP 服务端，基于 yuniko-software/minecraft-mcp-server（Apache-2.0）扩展",
   "type": "module",
   "main": "dist/main.js",

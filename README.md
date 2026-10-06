@@ -44,4 +44,4 @@
 
 ## 来源
 
-`mcp-server/` 基于 yuniko-software/minecraft-mcp-server 扩展，保留原 Apache-2.0 许可证和 NOTICE。其他模块和 Gradle wrapper 保留各自已有的许可证声明；整仓的统一许可证还没定。
+整仓按 [Apache License 2.0](LICENSE) 发布（2026-10-06 定），版权声明见 [NOTICE](NOTICE)。`mcp-server/` 基于 yuniko-software/minecraft-mcp-server 扩展，保留原许可证和 NOTICE。

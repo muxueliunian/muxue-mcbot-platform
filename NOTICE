@@ -1,0 +1,7 @@
+muxue-mcbot-platform
+Copyright 2026 muxue
+
+本仓库按 Apache License 2.0 发布，全文见 LICENSE。
+
+mcp-server/ 基于 yuniko-software/minecraft-mcp-server（Copyright 2025 Yuniko Software，
+Apache License 2.0），修改说明见 mcp-server/NOTICE。

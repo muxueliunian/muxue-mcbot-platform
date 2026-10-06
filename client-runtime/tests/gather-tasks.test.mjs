@@ -90,6 +90,39 @@ test('gather mines then picks through the fixed token set without rescanning, wi
   assert.equal(f.calls[1].name, 'send-chat'); assert.equal(f.events.since(0, ['task']).length, 1);
 });
 
+test('gather digs every candidate within reach before one pickup pass, then walks to the next', async () => {
+  const f = fixture({ blocks: 4 });
+  f.candidates[3].position = { x: 4, y: 64, z: 0 }; f.candidates[3].distance = 4; // just past reach from the start, inside the authorized radius
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 4 }));
+  assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.minedBlocks, 4); assert.equal(result.result.pickedUpCount, 4);
+  const order = f.calls.filter(call => ['dig-block', 'pickup-item', 'approach-resource'].includes(call.name)).map(call => call.name);
+  assert.deepEqual(order, ['dig-block', 'dig-block', 'dig-block', 'pickup-item', 'pickup-item', 'pickup-item', 'approach-resource', 'dig-block', 'pickup-item']);
+  assert.equal(f.calls.find(call => call.name === 'approach-resource').args.targetToken, f.candidates[3].targetToken);
+});
+test('gather stops digging in place once the dug blocks cover the goal', async () => {
+  const f = fixture({ blocks: 3 });
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 2 }));
+  assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.minedBlocks, 2);
+  assert.equal(f.calls.filter(call => call.name === 'approach-resource').length, 0);
+});
+test('a reachable-looking block refused for line of sight is left for an approach, not retried in place', async () => {
+  const f = fixture({ blocks: 2 });
+  let refused = false;
+  const act = f.body.act;
+  f.body.act = async (name, args, token) => {
+    if (name === 'dig-block' && args.targetToken === f.candidates[0].targetToken && !refused) {
+      refused = true; f.calls.push({ name, args: clone(args), token, refused: true });
+      return { operationId: randomUUID(), sessionId: 'session', controlGeneration: f.state.controlGeneration, name, status: 'failed', summary: 'Block face is obstructed', result: { code: 'NO_LINE_OF_SIGHT' } };
+    }
+    return act(name, args, token);
+  };
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 2 }));
+  assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.minedBlocks, 2);
+  const order = f.calls.filter(call => ['dig-block', 'pickup-item', 'approach-resource'].includes(call.name))
+    .map(call => call.refused ? 'refused' : call.name === 'pickup-item' ? call.name : call.name + (call.args.targetToken === f.candidates[0].targetToken ? ':0' : ':1'));
+  assert.deepEqual(order, ['refused', 'dig-block:1', 'pickup-item', 'approach-resource:0', 'dig-block:0', 'pickup-item']);
+});
+
 function survivalFixture(options = {}) {
   const f = fixture({ automatic: true, blocks: 1, ...options });
   f.state.inventory[10] = { ...f.state.inventory[0], slot: 10 };

@@ -33,6 +33,15 @@ function dropPreference(block: string, item: string): 'any' | 'silk_touch' | 'no
   return undefined;
 }
 
+type Candidate = NearbyResources['candidates'][number];
+/** Ordinary block reach is 4.5 blocks from the eyes to the hit point; the block centre a little inside that counts as reachable. */
+const REACH = 4.4, EYE = 1.62;
+const eyeDistance = (feet: Position, block: Position) => Math.hypot(block.x + 0.5 - feet.x, block.y + 0.5 - (feet.y + EYE), block.z + 0.5 - feet.z);
+const inReach = (feet: Position, block: Position) => eyeDistance(feet, block) <= REACH;
+/** Native refusals of a dig from where the body stands; nothing was broken, so the block waits for an approach. */
+const reachRefusals = new Set(['OUT_OF_REACH', 'NO_LINE_OF_SIGHT']);
+/** Least items one block drops without Fortune (raw copper drops 2..5); everything else gathered drops at least one. */
+const leastYield: Record<string, number> = { 'minecraft:raw_copper': 2 };
 /** Finite goals on a frozen candidate set; native pickup receipts, never mined blocks or net inventory, determine quantity. */
 export class GatherTasks {
   private readonly references = new Map<string, Reference>();
@@ -302,64 +311,99 @@ export class GatherTasks {
       if (!this.done(task) && (await this.observe(task)).groundItems?.some(next => next.entityId === item.entityId)) throw new BodyError('INVENTORY_FULL', '目标实体仍有余量；未自动重复拾取，请检查背包空间');
     }
   }
+  /** Eat between blocks if needed, then assess, prepare and select the tool for one candidate; returns the fresh state. */
+  private async prepareFor(task: Active, candidate: Candidate, state: Observation): Promise<Observation> {
+    const policy = this.survivalPolicy?.();
+    const borrowed = { taskToken: task.taskToken, context: task.context, check: () => {
+      this.check(task);
+      if (policy && policy.revision !== this.survivalPolicy?.().revision) throw new BodyError('CANCELLED', '工具／本能策略已变化，旧子步骤未继续');
+    } };
+    if (this.survival && policy?.armed && policy.autoEat && this.body.survivalState) {
+      const needs = await this.body.survivalState(); this.check(task);
+      if (selectFood(needs, policy).slot !== undefined) {
+        task.progress.stage = 'eating-between-blocks';
+        const meal = await this.survival.eat({ policy }, borrowed); this.check(task);
+        if (meal.status !== 'succeeded') throw new BodyError(meal.status === 'unknown' ? 'UNKNOWN' : 'MEAL_FAILED', meal.summary);
+        state = await this.observe(task);
+      }
+    }
+    let slot = candidate.recommendedToolSlot;
+    const preference = dropPreference(candidate.id, task.request.item)!;
+    if (this.survival && this.body.assessTool) {
+      const assessed = await this.body.assessTool({ ...candidate.position, expectedBlock: candidate.id, policy: policy?.toolPolicy, minRemainingDurability: policy?.minRemainingDurability,
+        dropPreference: preference });
+      this.check(task);
+      if (!isDeepStrictEqual(contextOf(assessed), task.context)) throw new BodyError('WORLD_CHANGED', '工具评估不属于采集授权代次');
+      const choice = assessed.candidates.find(tool => tool.slot === assessed.recommendedSlot);
+      if (!choice || choice.eligible !== true || choice.componentsComplete === false || choice.components === undefined) throw new BodyError('WRONG_TOOL', '没有已核验且满足掉落／耐久策略的工具');
+      if (Object.hasOwn(oreDrops, candidate.id) && choice.dropEffectsKnown !== true) throw new BodyError('UNKNOWN', '矿石工具的掉落效果尚未核验，未开挖或自动重试');
+      if (Object.hasOwn(oreDrops, candidate.id) && (!Number.isInteger(choice.silkTouch) || choice.silkTouch! < 0)) throw new BodyError('UNKNOWN', '矿石工具缺少明确精准采集评估，未开挖');
+      if (preference === 'no_silk_touch' && choice.silkTouch! > 0 || preference === 'silk_touch' && choice.silkTouch === 0) throw new BodyError('WRONG_TOOL', '推荐工具与目标掉落冲突，未开挖');
+      task.progress.stage = 'preparing-tool';
+      if (choice.count === 0 && choice.id === 'minecraft:air' && choice.slot <= 8) {
+        await this.step(task, 'select-slot', { slot: choice.slot, expectedItem: choice.id, expectedCount: 0, expectedComponents: choice.components });
+      } else {
+        const prepared = await this.survival.prepareItem({ slot: choice.slot, expected: choice, ...(choice.slot > 8 ? { targetSlot: state.selectedSlot ?? 0 } : {}) }, borrowed);
+        this.check(task);
+        if (prepared.status !== 'succeeded') throw new BodyError(prepared.status === 'unknown' ? 'UNKNOWN' : 'WRONG_TOOL', prepared.summary);
+      }
+      state = await this.observe(task); slot = state.selectedSlot;
+    } else {
+      if (Object.hasOwn(oreDrops, candidate.id)) throw new BodyError('UNSUPPORTED', '矿石采集需要完整工具评估与准备能力，未仅依据基础快捷栏资格开挖');
+      if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
+    }
+    if (slot === undefined) throw new BodyError('WRONG_TOOL', '准备工具后没有权威选槽状态');
+    const tool = state.inventory.find(item => item.slot === slot);
+    if (!tool || tool.components === undefined) throw new BodyError('WRONG_TOOL', '缺少完整原生工具快照，未挖掘');
+    task.progress.stage = 'selecting-tool';
+    await this.step(task, 'select-slot', { slot, expectedItem: tool.id, expectedCount: tool.count, expectedComponents: tool.components, ...(tool.maxStackSize !== undefined ? { expectedMaxStackSize: tool.maxStackSize } : {}) });
+    return state;
+  }
+  /** Blocks dug since the last pickup already cover the rest of the goal at the item's least native yield per block. */
+  private covered(task: Active, pending: number): boolean {
+    const target = task.progress.targetCount;
+    return target === undefined ? pending >= 1 : pending * (leastYield[task.request.item] ?? 1) >= target - (task.progress.pickedUpCount ?? 0);
+  }
+  /**
+   * Dig every frozen candidate reachable from where the body stands (nearest first) before collecting the
+   * drops in one pass, then walk to the nearest remaining candidate. A reachable-looking block that the
+   * native reach or line-of-sight check refuses is left for a later approach, never retried from the same spot.
+   */
   private async run(task: Active, candidates: NearbyResources['candidates']): Promise<void> {
     try {
       if (!miningOwner(task.borrowed)) await this.pickups(task);
-      for (const candidate of candidates) {
-        if (this.done(task)) break;
+      const remaining = [...candidates], skipped = new Set<string>();
+      let pending = 0;
+      while (remaining.length > 0 && !this.done(task)) {
         let state = await this.observe(task);
         if (this.done(task)) break;
         this.capacity(task, state);
-        const policy = this.survivalPolicy?.();
-        const borrowed = { taskToken: task.taskToken, context: task.context, check: () => {
-          this.check(task);
-          if (policy && policy.revision !== this.survivalPolicy?.().revision) throw new BodyError('CANCELLED', '工具／本能策略已变化，旧子步骤未继续');
-        } };
-        if (this.survival && policy?.armed && policy.autoEat && this.body.survivalState) {
-          const needs = await this.body.survivalState(); this.check(task);
-          if (selectFood(needs, policy).slot !== undefined) {
-            task.progress.stage = 'eating-between-blocks';
-            const meal = await this.survival.eat({ policy }, borrowed); this.check(task);
-            if (meal.status !== 'succeeded') throw new BodyError(meal.status === 'unknown' ? 'UNKNOWN' : 'MEAL_FAILED', meal.summary);
-            state = await this.observe(task);
-          }
+        if (pending > 0 && this.covered(task, pending)) { await this.pickups(task); pending = 0; continue; }
+        const feet = state.position;
+        // Companion mining approaches its single block first: the approach also enforces the live companion radius.
+        let candidate = remaining.filter(next => !miningOwner(task.borrowed) && !skipped.has(next.targetToken) && inReach(feet, next.position))
+          .sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
+        const approach = !candidate;
+        if (approach) {
+          if (pending > 0) { await this.pickups(task); pending = 0; continue; }
+          candidate = [...remaining].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
         }
-        let slot = candidate.recommendedToolSlot;
-        const preference = dropPreference(candidate.id, task.request.item)!;
-        if (this.survival && this.body.assessTool) {
-          const assessed = await this.body.assessTool({ ...candidate.position, expectedBlock: candidate.id, policy: policy?.toolPolicy, minRemainingDurability: policy?.minRemainingDurability,
-            dropPreference: preference });
-          this.check(task);
-          if (!isDeepStrictEqual(contextOf(assessed), task.context)) throw new BodyError('WORLD_CHANGED', '工具评估不属于采集授权代次');
-          const choice = assessed.candidates.find(tool => tool.slot === assessed.recommendedSlot);
-          if (!choice || choice.eligible !== true || choice.componentsComplete === false || choice.components === undefined) throw new BodyError('WRONG_TOOL', '没有已核验且满足掉落／耐久策略的工具');
-          if (Object.hasOwn(oreDrops, candidate.id) && choice.dropEffectsKnown !== true) throw new BodyError('UNKNOWN', '矿石工具的掉落效果尚未核验，未开挖或自动重试');
-          if (Object.hasOwn(oreDrops, candidate.id) && (!Number.isInteger(choice.silkTouch) || choice.silkTouch! < 0)) throw new BodyError('UNKNOWN', '矿石工具缺少明确精准采集评估，未开挖');
-          if (preference === 'no_silk_touch' && choice.silkTouch! > 0 || preference === 'silk_touch' && choice.silkTouch === 0) throw new BodyError('WRONG_TOOL', '推荐工具与目标掉落冲突，未开挖');
-          task.progress.stage = 'preparing-tool';
-          if (choice.count === 0 && choice.id === 'minecraft:air' && choice.slot <= 8) {
-            await this.step(task, 'select-slot', { slot: choice.slot, expectedItem: choice.id, expectedCount: 0, expectedComponents: choice.components });
-          } else {
-            const prepared = await this.survival.prepareItem({ slot: choice.slot, expected: choice, ...(choice.slot > 8 ? { targetSlot: state.selectedSlot ?? 0 } : {}) }, borrowed);
-            this.check(task);
-            if (prepared.status !== 'succeeded') throw new BodyError(prepared.status === 'unknown' ? 'UNKNOWN' : 'WRONG_TOOL', prepared.summary);
-          }
-          state = await this.observe(task); slot = state.selectedSlot;
-        } else {
-          if (Object.hasOwn(oreDrops, candidate.id)) throw new BodyError('UNSUPPORTED', '矿石采集需要完整工具评估与准备能力，未仅依据基础快捷栏资格开挖');
-          if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
+        state = await this.prepareFor(task, candidate, state);
+        if (approach) {
+          task.progress.stage = 'approaching-resource';
+          await this.step(task, 'approach-resource', { targetToken: candidate.targetToken, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
+          skipped.clear();
         }
-        if (slot === undefined) throw new BodyError('WRONG_TOOL', '准备工具后没有权威选槽状态');
-        const tool = state.inventory.find(item => item.slot === slot);
-        if (!tool || tool.components === undefined) throw new BodyError('WRONG_TOOL', '缺少完整原生工具快照，未挖掘');
-        task.progress.stage = 'selecting-tool';
-        await this.step(task, 'select-slot', { slot, expectedItem: tool.id, expectedCount: tool.count, expectedComponents: tool.components, ...(tool.maxStackSize !== undefined ? { expectedMaxStackSize: tool.maxStackSize } : {}) });
-        task.progress.stage = 'approaching-resource';
-        await this.step(task, 'approach-resource', { targetToken: candidate.targetToken, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
         task.progress.stage = 'digging';
-        await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
-        await this.pickups(task);
+        try {
+          await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+        } catch (error) {
+          if (!approach && error instanceof BodyError && reachRefusals.has(error.code)) { skipped.add(candidate.targetToken); continue; }
+          throw error;
+        }
+        remaining.splice(remaining.indexOf(candidate), 1); pending++;
       }
+      if (pending > 0) await this.pickups(task);
       await this.observe(task);
       if (miningOwner(task.borrowed)) {
         if (task.progress.minedBlocks !== 1) throw new BodyError('UNKNOWN', '单块原生破坏未完整确认，未自动重试');

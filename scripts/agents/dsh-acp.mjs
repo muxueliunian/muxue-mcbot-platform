@@ -40,12 +40,36 @@ export function writeDshPatch(file, instructions = '') {
   return file;
 }
 
-/** dsh 装在仓库的 runtime/dsh（锁定版本），也可用 MCBOT_DSH_BIN 指到别处的 bin.js。 */
+/** DeepSeek Harness 桌面版自带的 dsh：用它的 Electron 当 Node 跑 app.asar 里的命令行（和它的 dsh.cmd 一样，要 ELECTRON_RUN_AS_NODE=1）。 */
+export function desktopDsh(env = process.env) {
+  const dir = env.MCBOT_DSH_DESKTOP || (env.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, 'Programs', 'DeepSeek Harness') : '');
+  if (!dir) return null;
+  const exe = path.join(dir, 'DeepSeek Harness.exe');
+  const asar = path.join(dir, 'resources', 'app.asar');
+  if (!fs.existsSync(exe) || !fs.existsSync(asar)) return null;
+  return { exe, cli: path.join(asar, 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js') };
+}
+
+/**
+ * 找 dsh 的顺序：MCBOT_DSH_BIN（别处的 bin.js）> MCBOT_DSH_DESKTOP（指定的桌面版目录）> 仓库 runtime/dsh 的锁定安装 > 默认位置的桌面版。
+ */
 export function dshCommand({ root, patchFile, env = process.env }) {
-  const bin = env.MCBOT_DSH_BIN ? path.resolve(env.MCBOT_DSH_BIN) : path.join(root, 'runtime', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
-  if (!fs.existsSync(bin)) throw new Error(`找不到 dsh：请在 runtime/dsh 里安装 @deepseek-ai/dsh@${DSH_VERSION}（见 docs/dev.md）`);
+  const profile = ['--profile', 'acp', '--patch', patchFile];
+  const locked = path.join(root, 'runtime', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+  let command;
+  if (env.MCBOT_DSH_BIN) {
+    const bin = path.resolve(env.MCBOT_DSH_BIN);
+    if (!fs.existsSync(bin)) throw new Error(`MCBOT_DSH_BIN 指的 dsh 不存在：${bin}`);
+    command = { cmd: process.execPath, a: [bin, ...profile] };
+  } else {
+    const desktop = desktopDsh(env);
+    if (env.MCBOT_DSH_DESKTOP && !desktop) throw new Error(`MCBOT_DSH_DESKTOP 里找不到 DeepSeek Harness 桌面版：${env.MCBOT_DSH_DESKTOP}`);
+    if (!env.MCBOT_DSH_DESKTOP && fs.existsSync(locked)) command = { cmd: process.execPath, a: [locked, ...profile] };
+    else if (desktop) command = { cmd: desktop.exe, a: ['--expose-internals', desktop.cli, ...profile] };
+    else throw new Error(`找不到 dsh：请安装 DeepSeek Harness 桌面版，或在 runtime/dsh 里安装 @deepseek-ai/dsh@${DSH_VERSION}（见 docs/dev.md）`);
+  }
   if (!patchFile) throw new Error('dsh 托管需要生成的 profile 补丁');
-  return { cmd: process.execPath, a: [bin, '--profile', 'acp', '--patch', patchFile] };
+  return command;
 }
 
 /** 托管 MCP 配置转成 ACP 的 stdio 声明：命令必须是绝对路径，环境变量是 name/value 列表。 */

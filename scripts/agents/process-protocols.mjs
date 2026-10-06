@@ -152,8 +152,8 @@ const dsh = Object.freeze({
   identity: 'independent', systemInstructions: true, hostedMcpConfig: true,
   // 只挂游戏工具的补丁版本；补丁内容变了就不接着旧会话。
   serverPolicy: 'dsh-acp-game-tools-v1',
-  // 没指定账号目录也不落到用户的 ~/.dsh。
-  environment: (env, { root }) => env.DSH_HOME ? env : { ...env, DSH_HOME: path.join(root, 'runtime', 'dsh', 'home') },
+  // 没指定账号目录也不落到用户的 ~/.dsh。桌面版的 Electron 要 ELECTRON_RUN_AS_NODE 才当 Node 用，对普通 Node 没影响。
+  environment: (env, { root }) => ({ ...env, DSH_HOME: env.DSH_HOME || path.join(root, 'runtime', 'dsh', 'home'), ELECTRON_RUN_AS_NODE: '1' }),
   defaultEffort: 'low',
   command({ root, hostedConfigFile, gameInstructions }) {
     const patchFile = writeDshPatch(hostedConfigFile.replace(/\.json$/i, '') + '.dsh-patch.yml', gameInstructions);

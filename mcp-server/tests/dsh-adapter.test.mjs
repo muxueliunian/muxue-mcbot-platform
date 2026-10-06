@@ -62,11 +62,26 @@ test('托管补丁关掉命令行、文件、联网和子代理，只留游戏�
 test('dsh 命令只用锁定安装或明确指定的 bin，找不到就说明怎么装', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-dsh-'));
   try {
-    assert.throws(() => dshCommand({ root: dir, patchFile: 'p.yml', env: {} }), /runtime\/dsh 里安装 @deepseek-ai\/dsh@0\.2\.0-rc\.2/);
+    assert.throws(() => dshCommand({ root: dir, patchFile: 'p.yml', env: {} }), /桌面版，或在 runtime\/dsh 里安装 @deepseek-ai\/dsh@0\.2\.0-rc\.2/);
     const bin = path.join(dir, 'bin.js'); fs.writeFileSync(bin, '');
     assert.deepEqual(dshCommand({ root: dir, patchFile: 'p.yml', env: { MCBOT_DSH_BIN: bin } }),
       { cmd: process.execPath, a: [bin, '--profile', 'acp', '--patch', 'p.yml'] });
     assert.throws(() => dshCommand({ root: dir, env: { MCBOT_DSH_BIN: bin } }), /补丁/);
+    assert.throws(() => dshCommand({ root: dir, patchFile: 'p.yml', env: { MCBOT_DSH_BIN: path.join(dir, 'none.js') } }), /MCBOT_DSH_BIN/);
+    // 桌面版：默认在 LOCALAPPDATA\Programs\DeepSeek Harness，用它的 Electron 跑 app.asar 里的命令行。
+    const desktop = path.join(dir, 'Programs', 'DeepSeek Harness');
+    fs.mkdirSync(path.join(desktop, 'resources'), { recursive: true });
+    fs.writeFileSync(path.join(desktop, 'DeepSeek Harness.exe'), ''); fs.writeFileSync(path.join(desktop, 'resources', 'app.asar'), '');
+    const cli = path.join(desktop, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
+    const viaDesktop = { cmd: path.join(desktop, 'DeepSeek Harness.exe'), a: ['--expose-internals', cli, '--profile', 'acp', '--patch', 'p.yml'] };
+    assert.deepEqual(dshCommand({ root: dir, patchFile: 'p.yml', env: { LOCALAPPDATA: dir } }), viaDesktop);
+    assert.deepEqual(dshCommand({ root: dir, patchFile: 'p.yml', env: { MCBOT_DSH_DESKTOP: desktop } }), viaDesktop);
+    assert.throws(() => dshCommand({ root: dir, patchFile: 'p.yml', env: { MCBOT_DSH_DESKTOP: dir } }), /MCBOT_DSH_DESKTOP/);
+    // 仓库里有锁定安装就优先用它；明确指定桌面版时用桌面版。
+    const locked = path.join(dir, 'runtime', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+    fs.mkdirSync(path.dirname(locked), { recursive: true }); fs.writeFileSync(locked, '');
+    assert.deepEqual(dshCommand({ root: dir, patchFile: 'p.yml', env: { LOCALAPPDATA: dir } }), { cmd: process.execPath, a: [locked, '--profile', 'acp', '--patch', 'p.yml'] });
+    assert.deepEqual(dshCommand({ root: dir, patchFile: 'p.yml', env: { MCBOT_DSH_DESKTOP: desktop } }), viaDesktop);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -75,6 +90,7 @@ test('dsh 是独立试玩身份：只接 ServerBody，账号目录默认在仓�
   assert.deepEqual(protocol.bodies, ['server']);
   assert.equal(protocol.environment({}, { root: 'R' }).DSH_HOME, path.join('R', 'runtime', 'dsh', 'home'));
   assert.equal(protocol.environment({ DSH_HOME: 'X' }, { root: 'R' }).DSH_HOME, 'X', '明确指定的目录优先');
+  assert.equal(protocol.environment({}, { root: 'R' }).ELECTRON_RUN_AS_NODE, '1', '桌面版的 Electron 要当 Node 跑');
   const norm = (p) => process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p);
   assert.equal(agentConfigDir('dsh', '', {}, 'H', 'R'), norm('R/runtime/dsh/home'));
   assert.equal(agentConfigDir('dsh', '', { DSH_HOME: 'D' }, 'H', 'R'), norm('D'));

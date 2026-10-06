@@ -266,7 +266,7 @@ final class ServerController implements ControlSession.Game {
     private void recordChat(String username,String message) {
         chat.addLast(obj("seq",++chatSequence,"time",System.currentTimeMillis(),"username",username,"message",message));
         while(chat.size()>100) chat.removeFirst();
-        if(!username.equals(config.username())){speaker=server.getPlayerList().getPlayerByName(username);spokeAt=now();}
+        if(!username.equals(config.username())){speaker=server.getPlayerList().getPlayerByName(username);spokeAt=now();if(companion!=null)companion.holdStroll();}
     }
     private void receiveDamage(net.neoforged.neoforge.event.entity.living.LivingDamageEvent.Post event){
         if(survival!=null)survival.receiveDamage(event);

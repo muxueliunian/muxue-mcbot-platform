@@ -92,6 +92,7 @@ test('one guarded ore uses the outer token and old ground coal never replaces th
   assert.deepEqual(mining.newPickedByItem.map(({ item, count }) => ({ item, count })), [{ item: 'minecraft:coal', count: 1 }]);
   assert(f.state.groundItems.some(item => item.entityId === old.entityId)); assert.equal(f.native('dig-block').length, 1);
   assert.equal(new Set(f.calls.filter(call => ['follow-companion', 'dig-block', 'select-slot'].includes(call.name)).map(call => call.token)).size, 1);
+  assert(f.calls.filter(call => call.name === 'follow-companion').every(call => call.args.wander === false), 'mining never strolls away from the ore radius');
   assert(f.native('scan')[0].generation > 0, 'scan uses confirmed internal-stop generation');
   assert.equal(f.events.since(0, ['task']).length, 0); assert.throws(() => f.body.acquireTask('intruder'), { code: 'BUSY' });
 });

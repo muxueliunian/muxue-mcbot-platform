@@ -5,6 +5,7 @@ import java.util.*;
 import java.util.function.LongSupplier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.phys.Vec3;
 import static com.mcbot.servercontrol.Protocol.*;
@@ -30,6 +31,11 @@ final class FollowCompanion {
         default boolean navigate(Vec3 target,double distance){throw new UnsupportedOperationException();}
         default void cancelNavigation(){}
         default JsonObject navigationDetails(){return null;}
+        /** A standable spot STROLL_MIN..STROLL_MAX blocks around the centre, or null. */
+        default Vec3 strollPoint(Vec3 centre){return null;}
+        /** Walk one tick toward a stroll spot, never leaving the stroll area around the centre; true once there. */
+        default boolean stroll(Vec3 point,Vec3 centre){throw new UnsupportedOperationException();}
+        default void endStroll(){}
     }
     private final ControlSession.Operation operation;
     private final View view;
@@ -49,9 +55,21 @@ final class FollowCompanion {
     static final long UNREACHABLE_RETRY_MS=3000;
     private Vec3 unreachableTarget;
     private long unreachableSince;
+    // Idle stroll: after standing by a still player for a while, walk a few steps somewhere nearby and stay there
+    // until the player moves. Only while waiting on native navigation; never with pickup or mining.
+    static final long STROLL_AFTER_MS=20_000,STROLL_SPREAD_MS=20_000,STROLL_LIMIT_MS=10_000,STROLL_RETRY_MS=5_000;
+    static final double STROLL_MIN=2.5,STROLL_MAX=4.5,STROLL_LEASH=1.5;
+    private final boolean wander;
+    private final Random random;
+    private Vec3 waitAnchor,strollAnchor,stroll;
+    private long nextStroll,strollDeadline;
 
-    FollowCompanion(ControlSession.Operation operation,View view,LongSupplier clock) {
-        this.operation=operation;this.view=view;this.clock=clock;
+    FollowCompanion(ControlSession.Operation operation,View view,LongSupplier clock) {this(operation,view,clock,new Random());}
+    FollowCompanion(ControlSession.Operation operation,View view,LongSupplier clock,Random random) {
+        this.operation=operation;this.view=view;this.clock=clock;this.random=random;
+        if(operation.args.has("wander")&&!(operation.args.get("wander").isJsonPrimitive()&&operation.args.getAsJsonPrimitive("wander").isBoolean()))
+            throw error("INVALID_ARGUMENT","wander must be a boolean");
+        wander=!operation.args.has("wander")||operation.args.get("wander").getAsBoolean();
         name=string(operation.args,"player");
         String uuid=string(operation.args,"expectedEntityId");
         try {expected=UUID.fromString(uuid);}
@@ -86,7 +104,26 @@ final class FollowCompanion {
                     view.stop();publish("waiting");operation.summary="Waiting: no walking route to companion yet";return;
                 }
                 unreachableTarget=null;
-                try {boolean arrived=view.navigate(actual.position(),distance);publish(arrived?"waiting":"following");}
+                if(strollAnchor!=null&&actual.position().distanceTo(strollAnchor)>STROLL_LEASH)endStroll(now,false);
+                if(strollAnchor!=null){
+                    // Strolling, or resting where the stroll ended, while the player stays put.
+                    if(stroll!=null){
+                        boolean done;
+                        try {done=view.stroll(stroll,strollAnchor)||now>=strollDeadline;}
+                        catch(Protocol.Error blocked){done=true;}
+                        if(done){view.endStroll();view.stop();stroll=null;nextStroll=now+STROLL_AFTER_MS+random.nextLong(STROLL_SPREAD_MS);}
+                    } else {view.stop();startStroll(now,actual.position());}
+                    publish("waiting");return;
+                }
+                try {
+                    boolean arrived=view.navigate(actual.position(),distance);
+                    if(!arrived)waitAnchor=null;
+                    else {
+                        if(waitAnchor==null||actual.position().distanceTo(waitAnchor)>1){waitAnchor=actual.position();nextStroll=now+STROLL_AFTER_MS+random.nextLong(STROLL_SPREAD_MS);}
+                        startStroll(now,actual.position());
+                    }
+                    publish(arrived?"waiting":"following");
+                }
                 catch(Protocol.Error error){
                     if(!error.code.equals("NO_PATH"))throw error;
                     unreachableTarget=actual.position();unreachableSince=now;
@@ -148,6 +185,7 @@ final class FollowCompanion {
         JsonObject result=obj("state",state==null?"following":state,"player",name,"expectedEntityId",expected.toString(),
             "distance",distance,"position",obj("x",feet.x,"y",feet.y,"z",feet.z));
         if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());
+        if(stroll!=null)result.addProperty("strolling",true);
         if(code!=null) result.addProperty("code",code);
         return result;
     }
@@ -155,8 +193,22 @@ final class FollowCompanion {
         if(!Objects.equals(state,next)) operation.summary=next.equals("waiting")?"Waiting near companion":"Following companion";
         state=next;operation.result=result(null);
     }
-    boolean waiting(){return "waiting".equals(state);}
-    void stop() {stopped=true;route=null;view.cancelNavigation();view.stop();}
+    private void startStroll(long now,Vec3 centre){
+        if(!wander||now<nextStroll)return;
+        Vec3 point=view.strollPoint(centre);
+        if(point==null){nextStroll=now+STROLL_RETRY_MS;return;}
+        stroll=point;strollAnchor=centre;strollDeadline=now+STROLL_LIMIT_MS;
+    }
+    private void endStroll(long now,boolean rest){
+        if(stroll!=null){view.endStroll();view.stop();stroll=null;}
+        if(!rest)strollAnchor=null;
+        nextStroll=now+STROLL_AFTER_MS+random.nextLong(STROLL_SPREAD_MS);
+    }
+    /** Someone spoke: stop strolling and stay where the body is, so it can turn to them. */
+    void holdStroll(){if(stroll!=null||strollAnchor!=null||waitAnchor!=null)endStroll(clock.getAsLong(),true);}
+    boolean strolling(){return stroll!=null;}
+    boolean waiting(){return "waiting".equals(state)&&stroll==null;}
+    void stop() {stopped=true;route=null;if(stroll!=null)view.endStroll();stroll=null;view.cancelNavigation();view.stop();}
 
     static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server) {
         View view=new View() {
@@ -166,7 +218,16 @@ final class FollowCompanion {
             public void refresh() {NativeNavigation.conditions(body);geometry=new FlatApproach(body);}
             public boolean nativeNavigation(){return true;}
             public boolean navigate(Vec3 target,double distance){return navigation.tick(target,feet->geometry.playerReach(feet,server.getPlayerList().getPlayerByName(string(operation.args,"player")),distance));}
-            public void cancelNavigation(){navigation.stop();}
+            public void cancelNavigation(){navigation.stop();endStroll();}
+            final RandomSource random=RandomSource.create();
+            NativeNavigation strollNavigation;
+            public Vec3 strollPoint(Vec3 centre){return navigation.strollPoint(centre,STROLL_MIN,STROLL_MAX,random);}
+            public boolean stroll(Vec3 point,Vec3 centre){
+                if(strollNavigation==null)strollNavigation=new NativeNavigation(body,session,operation);
+                return strollNavigation.tick(point,feet->feet.subtract(point).horizontalDistance()<=0.6&&Math.abs(feet.y-point.y)<1,
+                    p->p.subtract(centre).horizontalDistance()<=STROLL_MAX+2);
+            }
+            public void endStroll(){if(strollNavigation!=null)strollNavigation.stop();strollNavigation=null;}
             public JsonObject navigationDetails(){return navigation.diagnostics();}
             public Vec3 position() {return body.position();}
             public Object dimension() {return body.serverLevel();}

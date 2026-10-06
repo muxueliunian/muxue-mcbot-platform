@@ -15,7 +15,7 @@ final class FollowCompanionTest {
         checks++;try {action.run();throw new AssertionError("Expected "+code);}
         catch(Protocol.Error failure) {if(!failure.code.equals(code))throw failure;}
     }
-    private static final class Terrain implements FollowCompanion.View {
+    private static class Terrain implements FollowCompanion.View {
         final AtomicLong time=new AtomicLong();
         final Object dimension=new Object();
         Object identity=new Object(),targetDimension=dimension;
@@ -57,14 +57,32 @@ final class FollowCompanionTest {
         static FlatRoute.Cell cell(Vec3 point) {return new FlatRoute.Cell((int)Math.floor(point.x),(int)Math.floor(point.z));}
         static Vec3 point(FlatRoute.Cell cell) {return new Vec3(cell.x()+0.5,1,cell.z()+0.5);}
     }
+    /** Native-navigation body: walks straight at the player or a stroll spot, 0.22 blocks per tick. */
+    private static final class NativeTerrain extends Terrain {
+        int strollTicks,strollEnds;
+        boolean noSpot;
+        public boolean nativeNavigation(){return true;}
+        public boolean navigate(Vec3 destination,double distance){
+            if(feet.distanceTo(destination)<=distance){input=null;return true;}
+            moves++;input=destination.subtract(feet);return false;
+        }
+        public Vec3 strollPoint(Vec3 centre){return noSpot?null:centre.add(0,0,3.5);}
+        public boolean stroll(Vec3 point,Vec3 centre){
+            strollTicks++;
+            if(feet.subtract(point).horizontalDistance()<=0.6){input=null;return true;}
+            input=point.subtract(feet);return false;
+        }
+        public void endStroll(){strollEnds++;}
+    }
     private static final class Fixture implements ControlSession.Game {
-        final Terrain terrain=new Terrain();
-        final ControlSession session=new ControlSession(this,terrain.time::get,"world","Bot");
+        final Terrain terrain;
+        final ControlSession session;
         final JsonObject claim,auth;
         FollowCompanion follower;
         ControlSession.Operation operation;
-        Fixture() {
-            terrain.session=session;
+        Fixture() {this(new Terrain());}
+        Fixture(Terrain terrain) {
+            this.terrain=terrain;session=new ControlSession(this,terrain.time::get,"world","Bot");terrain.session=session;
             claim=session.call("claim",obj("instanceId",session.instanceId,"worldId","world","username","Bot","controllerId","controller"));
             auth=obj("instanceId",session.instanceId,"sessionId",claim.get("sessionId"),"leaseId",claim.get("leaseId"));
         }
@@ -77,7 +95,7 @@ final class FollowCompanionTest {
         public void begin(ControlSession.Operation op) {
             if(op.name.equals("send-chat")) {op.finish("succeeded","Chat delivered",null);return;}
             operation=op;terrain.operation=op;
-            follower=new FollowCompanion(op,terrain,terrain.time::get);follower.tick();
+            follower=new FollowCompanion(op,terrain,terrain.time::get,new Random(7));follower.tick();
         }
         public void abort(ControlSession.Operation op) {if(operation==op)stop();}
         public void stop() {if(follower!=null)follower.stop();terrain.stop();}
@@ -85,7 +103,12 @@ final class FollowCompanionTest {
             JsonObject act=auth.deepCopy();act.addProperty("operationId",UUID.randomUUID().toString());
             act.addProperty("controlGeneration",session.generation());act.addProperty("name",name);act.add("args",args);return act;
         }
-        JsonObject start() {return session.call("act",action("follow-companion",obj("player","muxue","expectedEntityId",TARGET.toString())));}
+        JsonObject start() {return start(obj());}
+        JsonObject start(JsonObject extra) {
+            JsonObject args=obj("player","muxue","expectedEntityId",TARGET.toString());
+            for(var entry:extra.entrySet())args.add(entry.getKey(),entry.getValue());
+            return session.call("act",action("follow-companion",args));
+        }
         void tick(long elapsed) {
             terrain.time.addAndGet(elapsed);session.call("heartbeat",auth);follower.tick();terrain.physics();
         }
@@ -164,6 +187,51 @@ final class FollowCompanionTest {
             Fixture f=new Fixture();JsonObject response=f.session.call("act",f.action("follow-companion",obj("player","muxue","expectedEntityId",TARGET.toString(),"distance",distance)));
             check(response.get("status").getAsString().equals("running"),"distance boundary accepted "+distance);
         }
+        stroll();
         System.out.println("FollowCompanionTest: "+checks+" checks passed");
+    }
+    /** Idle stroll while waiting on native navigation: late, short, stays put until the player moves. */
+    private static void stroll() {
+        Fixture f=new Fixture(new NativeTerrain());NativeTerrain t=(NativeTerrain)f.terrain;f.start();
+        for(int i=0;i<80&&!f.state().equals("waiting");i++)f.tick(50);
+        check(f.state().equals("waiting")&&f.follower.waiting(),"native follow arrives and waits");
+        for(int i=0;i<19;i++)f.tick(1000);
+        check(t.strollTicks==0&&f.follower.waiting(),"no stroll in the first 20 seconds of waiting");
+        long waited=19_000;
+        while(!f.follower.strolling()&&waited<45_000){f.tick(500);waited+=500;}
+        check(f.follower.strolling()&&waited>=20_000&&waited<=40_500,"a stroll starts 20..40 seconds after the player stood still");
+        check(!f.follower.waiting()&&f.state().equals("waiting"),"strolling is reported as waiting but turns off idle gaze");
+        check(f.operation.result.getAsJsonObject().get("strolling").getAsBoolean(),"result marks the stroll");
+        Vec3 spot=t.target.add(0,0,3.5);
+        for(int i=0;i<60&&f.follower.strolling();i++)f.tick(50);
+        check(!f.follower.strolling()&&t.feet.subtract(spot).horizontalDistance()<=0.6&&t.strollEnds==1,"walks to the stroll spot and ends the stroll");
+        Vec3 rested=t.feet;int moves=t.moves;
+        for(int i=0;i<15;i++)f.tick(1000);
+        check(t.feet.equals(rested)&&t.moves==moves&&f.state().equals("waiting"),"stays at the stroll spot instead of walking back while the player stands still");
+        for(int i=0;i<40&&!f.follower.strolling();i++)f.tick(1000);
+        check(f.follower.strolling(),"strolls again later");
+        f.follower.holdStroll();
+        check(!f.follower.strolling()&&t.input==null&&f.follower.waiting(),"someone speaking stops the stroll where it is");
+        f.tick(50);
+        check(!f.follower.strolling()&&f.follower.waiting(),"after speech it rests, not strolls straight away");
+        t.target=t.target.add(6,0,0);f.tick(50);
+        check(f.state().equals("following")&&t.input!=null,"player moving off ends the rest and follows again");
+
+        Fixture time=new Fixture(new NativeTerrain());NativeTerrain slow=(NativeTerrain)time.terrain;time.start();
+        for(int i=0;i<80&&!time.state().equals("waiting");i++)time.tick(50);
+        while(!time.follower.strolling())time.tick(1000);
+        // A spot that is never reached: the stroll gives up after its time limit and the body stops.
+        Vec3 start=slow.feet;
+        for(int i=0;i<12;i++){time.tick(1000);slow.feet=start;}
+        check(!time.follower.strolling()&&slow.strollEnds==1&&time.operation.status.equals("running"),"an unreached stroll ends within its time limit without failing the follow");
+
+        Fixture off=new Fixture(new NativeTerrain());NativeTerrain still=(NativeTerrain)off.terrain;off.start(obj("wander",false));
+        for(int i=0;i<200;i++)off.tick(1000);
+        check(still.strollTicks==0&&off.follower.waiting(),"wander false never strolls");
+        Fixture none=new Fixture(new NativeTerrain());NativeTerrain blocked=(NativeTerrain)none.terrain;blocked.noSpot=true;none.start();
+        for(int i=0;i<120;i++)none.tick(1000);
+        check(blocked.strollTicks==0&&none.follower.waiting()&&none.operation.status.equals("running"),"no standable spot nearby: keeps waiting");
+        Fixture bad=new Fixture(new NativeTerrain());JsonObject rejected=bad.start(obj("wander","yes"));
+        check(rejected.get("status").getAsString().equals("failed")&&rejected.getAsJsonObject("result").get("code").getAsString().equals("INVALID_ARGUMENT"),"wander must be a boolean");
     }
 }

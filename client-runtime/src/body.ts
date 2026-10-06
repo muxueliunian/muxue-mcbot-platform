@@ -77,7 +77,7 @@ export interface ActionArguments {
   'look-at': Position;
   'move-to-position': Position & { tolerance?: number; timeoutMs?: number };
   'follow-player': { player: string; distance?: number; timeoutMs?: number };
-  'follow-companion': { player: string; expectedEntityId: string; distance?: number };
+  'follow-companion': { player: string; expectedEntityId: string; distance?: number; wander?: boolean };
   'approach-container': { targetToken: string; timeoutMs?: number };
   'approach-player': { player: string; expectedEntityId?: string; distance?: number; timeoutMs?: number };
   'approach-resource': { targetToken: string; timeoutMs?: number };

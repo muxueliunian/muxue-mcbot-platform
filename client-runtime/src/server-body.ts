@@ -350,7 +350,7 @@ export class ServerBody implements Body {
     const schemas: Partial<Record<ActionName, z.ZodTypeAny>> = {
       'approach-resource': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'pickup-item': z.object({ entityId: z.string().uuid(), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components, expectedMaxStackSize: maxStackSize, companionGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().finite().min(1.5).max(4) }).optional(), resourceTargetToken: z.string().uuid().optional(), timeoutMs: z.number().int().min(500).max(30000).optional() }),
-      'follow-companion': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), distance: z.number().finite().min(1.5).max(6).optional() }).strict(),
+      'follow-companion': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), distance: z.number().finite().min(1.5).max(6).optional(), wander: z.boolean().optional() }).strict(),
       'approach-container': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'approach-player': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid().optional(), distance: z.number().finite().min(1).max(1.5).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'dig-block': z.object({ ...guardedBlock, targetToken: z.string().uuid().optional() }), 'open-container': z.object({ ...guardedBlock, targetToken: z.string().uuid().optional() }),

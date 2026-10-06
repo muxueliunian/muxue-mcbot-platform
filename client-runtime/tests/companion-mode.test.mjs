@@ -38,6 +38,16 @@ async function fixture(t) {
     await until(() => mode.snapshot().stage === 'active'); return accepted;
   } };
 }
+test('idle stroll is on by default and wander:false reaches the body; only follow accepts it', async t => {
+  const f = await fixture(t);
+  await f.follow();
+  const sent = () => f.mock.calls.filter(call => call.method === 'act' && call.params.name === 'follow-companion').map(call => call.params.args);
+  assert.equal('wander' in sent()[0], false, 'default leaves the body default (stroll on)');
+  await f.mode.request({ action: 'follow', player: 'Alex', wander: false });
+  await until(() => sent().length === 2);
+  assert.equal(sent()[1].wander, false);
+  await assert.rejects(f.mode.request({ action: 'wait', wander: true }), { code: 'INVALID_ARGUMENT' });
+});
 test('persistent follow returns accepted, owns shared task lock, allows chat/read and is never replayed by background refresh', async t => {
   const f = await fixture(t);
   const accepted = await f.follow();

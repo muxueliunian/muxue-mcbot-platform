@@ -4,6 +4,8 @@ import com.google.gson.JsonObject;
 import java.util.*;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.monster.Zombie;
@@ -82,8 +84,7 @@ final class NativeNavigation {
         steer(feet,next);
         return false;
     }
-    private void plan(Vec3 feet,Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed,long now){
-        body.stopInput();
+    private void ensureModel(){
         if(model==null||model.level()!=body.level()){
             model=new Zombie(EntityType.ZOMBIE,body.level());
             // The body never swims, wades through powder snow or opens doors on its own.
@@ -93,6 +94,29 @@ final class NativeNavigation {
             model.setPathfindingMalus(PathType.DANGER_OTHER,-1);model.setPathfindingMalus(PathType.DAMAGE_OTHER,-1);
             evaluator=new RouteEvaluator();evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(false);evaluator.setCanFloat(false);
         }
+    }
+    /**
+     * A random loaded spot a few blocks around a centre where vanilla would let a walker stand
+     * (solid floor, room for the body, no water, fire, powder snow or other danger), or null.
+     */
+    Vec3 strollPoint(Vec3 centre,double minRadius,double maxRadius,RandomSource random){
+        ensureModel();
+        for(int attempt=0;attempt<12;attempt++){
+            double angle=random.nextDouble()*Math.PI*2,radius=minRadius+random.nextDouble()*(maxRadius-minRadius);
+            int x=Mth.floor(centre.x+Math.cos(angle)*radius),z=Mth.floor(centre.z+Math.sin(angle)*radius),top=Mth.floor(centre.y)+2;
+            for(int y=top;y>=top-5;y--){
+                BlockPos pos=new BlockPos(x,y,z);
+                if(!body.serverLevel().isLoaded(pos))break;
+                PathType type=WalkNodeEvaluator.getPathTypeStatic(model,pos);
+                if(type==PathType.WALKABLE)return new Vec3(x+0.5,y,z+0.5);
+                if(type!=PathType.OPEN)break; // the first non-air from above decides: a wall, water or danger is no floor
+            }
+        }
+        return null;
+    }
+    private void plan(Vec3 feet,Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed,long now){
+        body.stopInput();
+        ensureModel();
         model.moveTo(feet.x,feet.y,feet.z,body.getYRot(),0);model.setOnGround(body.onGround());
         float range=(float)Math.min(MAX_RANGE,feet.distanceTo(destination)+16);
         visitedLimit=Math.min(MAX_VISITED,(int)(range*16));

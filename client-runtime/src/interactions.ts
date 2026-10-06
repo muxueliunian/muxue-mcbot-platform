@@ -2,6 +2,39 @@ import { BodyError, type Body, type Operation, type Position } from './body.js';
 
 export type Face = 'up' | 'down' | 'north' | 'south' | 'east' | 'west';
 export interface InteractBlockRequest extends Position { interaction: string; item?: string; emptyHand?: boolean; face?: Face; timeoutMs?: number }
+/** Repeat the same interaction until the adapter summary field reaches a value (e.g. a pot's stirsLeft = 0). */
+export interface RepeatUntil { field: string; equals: string | number | boolean; max: number; intervalMs: number }
+export interface RepeatOutcome { attempts: number; reached: boolean; field: string; value: unknown }
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const TERMINAL = new Set(['succeeded', 'failed', 'unknown', 'cancelled']);
+
+/**
+ * Timing-sensitive repetition stays in the program instead of one model turn per click. Every attempt is a full
+ * guarded interaction; the loop stops at the first receipt that is not succeeded, so unknown is never retried.
+ */
+export async function interactBlockRepeated(body: Body, request: InteractBlockRequest, repeat: RepeatUntil, taskToken?: string): Promise<{ operation: Operation; repeat: RepeatOutcome }> {
+  let operation: Operation | undefined, value: unknown;
+  for (let attempt = 1; attempt <= repeat.max; attempt++) {
+    operation = await settle(body, await interactBlock(body, request, taskToken));
+    const summary = (operation.result as { summary?: Record<string, unknown> } | undefined)?.summary;
+    value = summary?.[repeat.field];
+    if (operation.status !== 'succeeded') return { operation, repeat: { attempts: attempt, reached: false, field: repeat.field, value } };
+    if (value !== undefined && String(value) === String(repeat.equals)) return { operation, repeat: { attempts: attempt, reached: true, field: repeat.field, value } };
+    if (attempt < repeat.max) await sleep(repeat.intervalMs);
+  }
+  return { operation: operation!, repeat: { attempts: repeat.max, reached: false, field: repeat.field, value } };
+}
+
+async function settle(body: Body, operation: Operation): Promise<Operation> {
+  const deadline = Date.now() + 10000;
+  while (!TERMINAL.has(operation.status)) {
+    if (Date.now() > deadline) return operation;
+    await sleep(100);
+    operation = await body.operation(operation.operationId);
+  }
+  return operation;
+}
 
 /**
  * One registered right-click on a block. Guards come from a fresh server observation; the model never

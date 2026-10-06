@@ -48,6 +48,9 @@ export function summarizeOperation(operation: Operation) {
       if ((typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) && key !== 'components' && key !== 'targetToken') compact[key] = value;
     }
     if (result.block) compact.block = result.block;
+    // Interaction receipts: the adapter's own facts (e.g. a pot's status) and what was gained are what the model acts on next.
+    if (result.summary && typeof result.summary === 'object' && !Array.isArray(result.summary) && JSON.stringify(result.summary).length <= 2000) compact.summary = result.summary;
+    if (Array.isArray(result.gained)) compact.gained = result.gained.slice(0, 16);
     if (result.container) compact.container = summarizeContainer(result.container as Container);
     if (Array.isArray(result.inventory)) compact.inventoryChanged = true;
     if (Array.isArray(result.items)) compact.items = result.items.slice(0, 64).map(value => {

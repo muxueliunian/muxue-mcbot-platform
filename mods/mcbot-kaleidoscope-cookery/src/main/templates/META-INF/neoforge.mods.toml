@@ -1,0 +1,34 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mods]]
+modId="mcbot_kaleidoscope_cookery"
+version="${mod_version}"
+displayName="MCBOT × Kaleidoscope Cookery"
+authors="muxue"
+description='''Example MCBOT add-on: lets the bot cook with the Kaleidoscope Cookery pot (add oil, add ingredients, stir, take out). Verified only against Kaleidoscope Cookery 1.6.0-neoforge+mc1.21.1; other versions stay unsupported. Contains no Kaleidoscope Cookery code or assets.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_kaleidoscope_cookery]]
+modId="mcbot_server_control"
+type="required"
+versionRange="[0.1.0,)"
+ordering="AFTER"
+side="BOTH"
+[[dependencies.mcbot_kaleidoscope_cookery]]
+modId="kaleidoscope_cookery"
+type="optional"
+versionRange="*"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_kaleidoscope_cookery]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_kaleidoscope_cookery]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"

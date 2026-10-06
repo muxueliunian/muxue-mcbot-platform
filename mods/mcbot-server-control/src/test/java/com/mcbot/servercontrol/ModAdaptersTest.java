@@ -121,6 +121,18 @@ final class ModAdaptersTest {
         check(refusedBefore,"a summary failure before the native call refuses");
         check(ItemInteractions.summary(summaryFails,null,null,true).has("adapterError"),"a summary failure after the native call is recorded so the receipt becomes unknown");
         check(!ItemInteractions.consistent(summaryFails,new JsonObject(),new JsonObject()),"a crashing value check never confirms success");
+        // Per-use envelopes: defaults to expected(), may depend on the summary before the click, a crash gives no envelope
+        ItemInteraction.Expected dish=new ItemInteraction.Expected(1,1,false,Set.of(),Set.of(),Set.of("example:dish"),false);
+        ItemInteraction perUse=new ItemInteraction(){
+            public String id(){return "example:pot/take_out";} public String kind(){return BLOCK;} public boolean installed(){return true;} public boolean emptyHand(){return false;}
+            public boolean accepts(ItemStack held){return true;} public Expected expected(){return new Expected(0,0,false,Set.of(),Set.of(),Set.of(),false);}
+            public Expected expectedFor(JsonObject before){ if(!before.has("result")) throw new IllegalStateException("no dish");
+                return new Expected(1,1,false,Set.of(),Set.of(),Set.of(before.get("result").getAsString()),false); }
+        };
+        JsonObject withDish=new JsonObject();withDish.addProperty("result","example:dish");
+        check(ItemInteractions.expected(perUse,withDish).equals(dish),"envelope built from the summary before the click");
+        check(ItemInteractions.expected(perUse,new JsonObject())==null,"an adapter that cannot state its envelope gives none (receipt becomes unknown)");
+        check(ItemInteractions.expected(new FakeInteraction("example:plain","block"),null).maxConsumed()==0,"default expectedFor falls back to expected()");
 
         // Public registration API: validated ids, no duplicates, frozen when a server starts
         McbotApi.registerContainer(new FakeContainer("testmod:crate",true));

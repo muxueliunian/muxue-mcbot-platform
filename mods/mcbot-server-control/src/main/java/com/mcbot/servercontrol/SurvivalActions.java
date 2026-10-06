@@ -154,13 +154,25 @@ final class SurvivalActions {
     }
     private BlockHitResult hit(BlockPos position,Direction requestedFace) {
         if(!player.serverLevel().hasChunkAt(position)) throw error("UNLOADED","Interaction target is unloaded");
-        Vec3 destination=Vec3.atCenterOf(position);
-        if(requestedFace!=null) destination=destination.add(Vec3.atLowerCornerOf(requestedFace.getNormal()).scale(0.499));
+        // Aim at the block's actual outline: low blocks (pots, slabs, carpets) are missed by a ray to the cube centre.
+        var shape=player.serverLevel().getBlockState(position).getShape(player.serverLevel(),position,net.minecraft.world.phys.shapes.CollisionContext.of(player));
+        Vec3 destination=aimPoint(shape.isEmpty()?new AABB(position):shape.bounds().move(position),requestedFace);
         BlockHitResult hit=player.serverLevel().clip(new ClipContext(player.getEyePosition(),destination,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,player));
         if(hit.getType()!=HitResult.Type.BLOCK||!hit.getBlockPos().equals(position)||(requestedFace!=null&&hit.getDirection()!=requestedFace)) throw error("NO_LINE_OF_SIGHT","Block face is obstructed");
         if(player.getEyePosition().distanceTo(hit.getLocation())>player.blockInteractionRange()) throw error("OUT_OF_REACH","Target exceeds ordinary block reach");
         if(!player.serverLevel().getWorldBorder().isWithinBounds(position)) throw error("FORBIDDEN","Target outside world border");
         return hit;
+    }
+    /** Centre of the outline box, or the centre of the requested face pulled just inside the box. */
+    static Vec3 aimPoint(AABB box,Direction face) {
+        Vec3 c=box.getCenter();
+        if(face==null) return c;
+        double e=0.001;
+        return switch(face) {
+            case UP -> new Vec3(c.x,box.maxY-e,c.z); case DOWN -> new Vec3(c.x,box.minY+e,c.z);
+            case EAST -> new Vec3(box.maxX-e,c.y,c.z); case WEST -> new Vec3(box.minX+e,c.y,c.z);
+            case SOUTH -> new Vec3(c.x,c.y,box.maxZ-e); case NORTH -> new Vec3(c.x,c.y,box.minZ+e);
+        };
     }
     private void look(Vec3 target) {
         Vec3 delta=target.subtract(player.getEyePosition());float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));
@@ -344,10 +356,13 @@ final class SurvivalActions {
     private void finishInteraction(ControlSession.Operation operation,ItemInteraction interaction,JsonObject before,int heldSlot,BlockPos position,String forcedUnknown) {
         JsonObject after=interactionSnapshot(position,interaction,true);
         boolean menuOpened=player.containerMenu!=player.inventoryMenu;
+        ItemInteraction.Expected expected=ItemInteractions.expected(interaction,before.getAsJsonObject("summary"));
+        if(expected==null) forcedUnknown=forcedUnknown==null?"adapter could not state the expected effects":forcedUnknown;
+        ItemInteraction.Expected envelope=expected==null?new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),false):expected;
         boolean menuVerified;
-        try { menuVerified=menuOpened&&interaction.expected().opensMenu()&&interaction.menu(player.containerMenu); }
+        try { menuVerified=menuOpened&&envelope.opensMenu()&&interaction.menu(player.containerMenu); }
         catch(RuntimeException | LinkageError broken) { menuVerified=false; }
-        ItemInteractions.Verdict verdict=ItemInteractions.judge(before,after,heldSlot,interaction.expected(),(b,a)->ItemInteractions.consistent(interaction,b,a));
+        ItemInteractions.Verdict verdict=ItemInteractions.judge(before,after,heldSlot,envelope,(b,a)->ItemInteractions.consistent(interaction,b,a));
         if(menuOpened&&!menuVerified) {
             // Never leave an unverified menu open; the receipt still reports that it opened.
             player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));

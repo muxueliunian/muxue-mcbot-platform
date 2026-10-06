@@ -97,6 +97,15 @@ final class ItemInteractionsTest {
         errorCode("UNSUPPORTED",()->ItemInteractions.require(mixed,"example:backpack/open","block"));
         check(ItemInteractions.require(mixed,"minecraft:composter/add","block")==ItemInteractions.COMPOSTER,"registered block interaction resolves");
         check(ServerController.atomicAction("use-item-on-block")&&!ServerController.atomicAction("use-item"),"act accepts only advertised interaction actions");
+
+        // Aiming at the real outline: a 4/16-high pot is hit at its own centre, faces stay just inside the box
+        var pot=new net.minecraft.world.phys.AABB(10+2/16d,64,5+2/16d,10+14/16d,64+4/16d,5+14/16d);
+        var centre=SurvivalActions.aimPoint(pot,null);
+        check(Math.abs(centre.y-(64+2/16d))<1e-9&&Math.abs(centre.x-10.5)<1e-9,"low block aimed at its outline centre, not the cube centre");
+        var top=SurvivalActions.aimPoint(pot,net.minecraft.core.Direction.UP);
+        check(top.y<64+4/16d&&top.y>64+4/16d-0.01&&pot.contains(top),"requested face point lies just inside the outline");
+        var cube=SurvivalActions.aimPoint(new net.minecraft.world.phys.AABB(0,0,0,1,1,1),net.minecraft.core.Direction.EAST);
+        check(Math.abs(cube.x-0.999)<1e-9&&Math.abs(cube.y-0.5)<1e-9,"full blocks keep the previous face aim (centre + 0.499)");
         System.out.println("ItemInteractionsTest: "+checks+" checks passed (registration, held rules and receipt classification; no Minecraft launch/native interaction)");
     }
 }

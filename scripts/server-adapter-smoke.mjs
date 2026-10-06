@@ -69,7 +69,7 @@ let forced = [];
 try {
   const h = await hello();
   check('服务端声明 Iron Furnaces 容器适配', JSON.stringify(h.adapters) === '["ironfurnaces:iron_furnace"]', { adapters: h.adapters });
-  check('JSON 声明的重生锚交互和内置堆肥桶都登记了，写错的文件被跳过', h.interactions.includes('minecraft:composter/add') && h.interactions.includes('minecraft:respawn_anchor/charge') && h.interactions.length === 2, { interactions: h.interactions });
+  check('JSON 声明的重生锚交互和内置堆肥桶都登记了，写错的文件被跳过', h.interactions.includes('minecraft:composter/add') && h.interactions.includes('minecraft:respawn_anchor/charge') && !h.interactions.includes('example:broken'), { interactions: h.interactions });
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
     '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'adapter-fixture', version: '1' }); await client.connect(transport);

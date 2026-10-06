@@ -47,7 +47,17 @@ public interface ItemInteraction {
 
     Expected expected();
 
-    /** Adapter-specific value check on the two snapshots, in addition to the generic effect envelope. */
+    /**
+     * The envelope for one concrete use, given the {@link #summary} taken just before the native call. Override when the
+     * allowed effects depend on the target's state (e.g. which dish comes out of a pot); defaults to {@link #expected()}.
+     */
+    default Expected expectedFor(JsonObject beforeSummary) { return expected(); }
+
+    /**
+     * Adapter-specific value check on the two whole snapshots, in addition to the generic effect envelope. Each snapshot
+     * has {@code summary} (your {@link #summary}), {@code block} ({@code id}, {@code properties}), {@code inventory},
+     * {@code menu} and {@code drops}.
+     */
     default boolean consistent(JsonObject before, JsonObject after) { return true; }
 
     /** Item interactions that open a menu must verify it here. */

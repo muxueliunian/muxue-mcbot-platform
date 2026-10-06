@@ -88,6 +88,11 @@ final class ItemInteractions {
             return obj("adapterError","summary failed after the native call");
         }
     }
+    /** Envelope for this use; null when the adapter cannot give one, which makes the receipt unknown. */
+    static ItemInteraction.Expected expected(ItemInteraction interaction,JsonObject beforeSummary) {
+        try { return interaction.expectedFor(beforeSummary==null?new JsonObject():beforeSummary.deepCopy()); }
+        catch(RuntimeException | LinkageError broken) { return null; }
+    }
     static boolean consistent(ItemInteraction interaction,JsonObject before,JsonObject after) {
         try { return interaction.consistent(before,after); } catch(RuntimeException | LinkageError broken) { return false; }
     }

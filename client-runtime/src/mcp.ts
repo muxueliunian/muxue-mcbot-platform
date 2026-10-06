@@ -8,7 +8,7 @@ import { GatherTasks } from './gather-tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop } from './action-stop.js';
-import { interactBlock } from './interactions.js';
+import { interactBlock, interactBlockRepeated } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 
 const coordinate = z.coerce.number().finite();
@@ -167,10 +167,17 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
     }
   }
   const interactionIds = body.hello.interactions ?? [];
-  if (serverObserved && body.hello.capabilities.includes('use-item-on-block') && interactionIds.length) register('interact-block', `Right-click one block in reach through a registered interaction: ${interactionIds.join(', ')}. Give exactly one of item (must be in hotbar; use prepare-item first) or emptyHand when the interaction requires it. Unregistered blocks or items are refused before any action. unknown is never retried; observe again.`, {
+  if (serverObserved && body.hello.capabilities.includes('use-item-on-block') && interactionIds.length) register('interact-block', `Right-click one block in reach through a registered interaction: ${interactionIds.join(', ')}. Give exactly one of item (must be in hotbar; use prepare-item first) or emptyHand when the interaction requires it. Unregistered blocks or items are refused before any action. unknown is never retried; observe again. For timing-sensitive repeats (e.g. stirring a pot) give repeatUntil: the program repeats the same interaction until the receipt summary field equals the value, stopping at the first non-succeeded receipt.`, {
     ...blockXyz, interaction: z.enum(interactionIds as [string, ...string[]]), item: registryId.optional(), emptyHand: z.literal(true).optional(),
     face: z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(), timeoutMs,
-  }, async args => { tasks.assertIdle(); return operationResult(await interactBlock(body, args)); });
+    repeatUntil: z.object({ field: z.string().regex(/^[A-Za-z0-9_]{1,64}$/), equals: z.union([z.string().max(64), z.number(), z.boolean()]),
+      max: z.number().int().min(1).max(16).default(8), intervalMs: z.number().int().min(100).max(5000).default(300) }).optional(),
+  }, async ({ repeatUntil, ...args }) => {
+    tasks.assertIdle();
+    if (!repeatUntil) return operationResult(await interactBlock(body, args));
+    const { operation, repeat } = await interactBlockRepeated(body, args, repeatUntil);
+    return { ...(operationResult(operation) as object), repeat };
+  });
   for (const action of actions) {
     if (body.hello.capabilities.includes(action.name)) register(action.name, action.description, action.schema, async args => { if (action.name !== 'send-chat') tasks.assertIdle(); return operationResult(await body.act(action.name, args as ActionArguments[ActionName])); });
   }

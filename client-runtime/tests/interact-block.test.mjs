@@ -78,6 +78,34 @@ test('ServerBody rejects unregistered interaction IDs and malformed guards local
   assert.equal(acts().length, 0);
 });
 
+function scriptedActs(mock, receipts) {
+  const act = mock.handlers.act;
+  let n = 0;
+  mock.handlers.act = params => { const op = act(params); const next = receipts[Math.min(n++, receipts.length - 1)]; Object.assign(op, next); return op; };
+}
+
+test('repeatUntil repeats the same guarded interaction until the summary field reaches the value', async t => {
+  const { body, mock, acts } = await setup(t, { interactions: ['example:pot/stir'] });
+  scriptedActs(mock, [2, 1, 0].map(left => ({ status: 'succeeded', result: { interaction: 'example:pot/stir', summary: { status: 'cooking', stirsLeft: left } } })));
+  const result = await call(await client(t, body), { x: 1, y: 64, z: 0, interaction: 'example:pot/stir', item: 'minecraft:wheat_seeds', repeatUntil: { field: 'stirsLeft', equals: 0, intervalMs: 100 } });
+  assert.deepEqual(result.repeat, { attempts: 3, reached: true, field: 'stirsLeft', value: 0 });
+  assert.equal(result.status, 'succeeded'); assert.deepEqual(result.result.summary, { status: 'cooking', stirsLeft: 0 }, 'the adapter summary reaches the model');
+  assert.equal(acts().length, 3); assert.ok(acts().every(act => act.args.expectedItem === 'minecraft:wheat_seeds'), 'every attempt carries fresh guards');
+});
+
+test('repeatUntil stops at the first receipt that is not succeeded and at max attempts', async t => {
+  const { body, mock, acts } = await setup(t, { interactions: ['example:pot/stir'] });
+  scriptedActs(mock, [{ status: 'succeeded', result: { summary: { stirsLeft: 2 } } }, { status: 'unknown', result: { summary: { stirsLeft: 2 } } }]);
+  const c = await client(t, body);
+  const stopped = await call(c, { x: 1, y: 64, z: 0, interaction: 'example:pot/stir', item: 'minecraft:wheat_seeds', repeatUntil: { field: 'stirsLeft', equals: 0, intervalMs: 100 } });
+  assert.equal(stopped.status, 'unknown'); assert.deepEqual(stopped.repeat, { attempts: 2, reached: false, field: 'stirsLeft', value: 2 });
+  assert.equal(acts().length, 2, 'unknown is never retried');
+  scriptedActs(mock, [{ status: 'succeeded', result: { summary: { stirsLeft: 5 } } }]);
+  const capped = await call(c, { x: 1, y: 64, z: 0, interaction: 'example:pot/stir', item: 'minecraft:wheat_seeds', repeatUntil: { field: 'stirsLeft', equals: 0, max: 2, intervalMs: 100 } });
+  assert.deepEqual(capped.repeat, { attempts: 2, reached: false, field: 'stirsLeft', value: 5 });
+  assert.equal(acts().length, 4);
+});
+
 test('empty-hand requests are forwarded without a slot for the server to choose and verify', async t => {
   const { body, acts } = await setup(t, { interactions: ['minecraft:composter/add', 'example:pot/remove'] });
   await interactBlock(body, { x: 1, y: 64, z: 0, interaction: 'example:pot/remove', emptyHand: true });

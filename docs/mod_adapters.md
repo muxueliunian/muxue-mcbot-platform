@@ -73,9 +73,12 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
   Bot 只操作归属清楚的槽：`storage` 里的算容器槽，玩家背包里的算玩家槽。其余的槽标成 `unknown`，Bot 不会去点。
 - `ItemInteraction`：右键交互。除了 JSON 能表达的内容，还可以：
   - 用 `summary` 读方块内部状态，比如锅里有什么
-  - 用 `consistent` 核对前后两次快照的值
+  - 用 `expectedFor(右键前的 summary)` 按当时的状态给出预期效果，比如出锅时会得到哪道菜
+  - 用 `consistent` 核对前后两次快照的值。参数是完整快照，包含 `summary`、`block`、`inventory`、`menu`、`drops`
   - 用 `precondition` 在右键前检查
   - 用 `menu` 核对打开的菜单
+
+  回执会把 `summary` 带给 AI。对时间敏感、需要连续右键的步骤（比如炒锅翻炒），AI 可以给 `interact-block` 传 `repeatUntil`，运行端会连续右键，直到 `summary` 里某个字段达到目标值。
 
   `kind` 为 `item` 时是对空使用物品，比如打开背包。
 
@@ -92,7 +95,11 @@ public final class McbotExampleCook {
 
 附属模组的 `neoforge.mods.toml` 要声明依赖 `mcbot_server_control`，同时也依赖被适配的模组（可以设为可选，被适配的模组没装时，`installed()` 返回 false 就行）。编译时只需要 mcbot-server-control 的 jar（`compileOnly`）。被适配的模组建议用反射访问，不在编译期依赖它：Mod 改了类名或方法，适配器只会认不出来，不会让服务器崩溃。
 
-内置的 Iron Furnaces 适配（`IronFurnaceAdapter`）就是一个完整的 `ContainerAdapter` 例子，用反射访问 Iron Furnaces，锁定 4.3.2 版。第 8 步的森罗厨房和 Sophisticated Backpacks 会做成独立的附属模组，作为参考。
+参考例子：
+
+- 内置的 Iron Furnaces 适配（`IronFurnaceAdapter`）：一个完整的 `ContainerAdapter`，用反射访问 Iron Furnaces，锁定 4.3.2 版。
+- [mcbot-kaleidoscope-cookery](../mods/mcbot-kaleidoscope-cookery/README.md)：独立的附属模组。用森罗厨房的炒锅做菜，包括放油、加料、翻炒、出锅四个交互。
+- Sophisticated Backpacks 的示例还在做。
 
 ## 测试
 

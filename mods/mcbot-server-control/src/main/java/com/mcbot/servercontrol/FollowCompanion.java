@@ -45,6 +45,10 @@ final class FollowCompanion {
     private long lastPlan=Long.MIN_VALUE,lastProgress;
     private String state;
     private boolean stopped;
+    static final double UNREACHABLE_SHIFT=2;
+    static final long UNREACHABLE_RETRY_MS=3000;
+    private Vec3 unreachableTarget;
+    private long unreachableSince;
 
     FollowCompanion(ControlSession.Operation operation,View view,LongSupplier clock) {
         this.operation=operation;this.view=view;this.clock=clock;
@@ -75,7 +79,20 @@ final class FollowCompanion {
             health=view.health();
             Vec3 feet=view.position();
             if(view.nativeNavigation()){
-                boolean arrived=view.navigate(actual.position(),distance);publish(arrived?"waiting":"following");return;
+                // The player may stand where no walking route reaches (a roof, a pillar). Wait in place and
+                // look for a route again once they move or a few seconds pass, instead of ending the follow.
+                long now=clock.getAsLong();
+                if(unreachableTarget!=null&&actual.position().distanceTo(unreachableTarget)<=UNREACHABLE_SHIFT&&now-unreachableSince<UNREACHABLE_RETRY_MS){
+                    view.stop();publish("waiting");operation.summary="Waiting: no walking route to companion yet";return;
+                }
+                unreachableTarget=null;
+                try {boolean arrived=view.navigate(actual.position(),distance);publish(arrived?"waiting":"following");}
+                catch(Protocol.Error error){
+                    if(!error.code.equals("NO_PATH"))throw error;
+                    unreachableTarget=actual.position();unreachableSince=now;
+                    view.stop();publish("waiting");operation.summary="Waiting: no walking route to companion yet";
+                }
+                return;
             }
             if(!view.safe(feet,feet)) throw error("BLOCKED","Body is no longer on safe loaded flat ground");
             long now=clock.getAsLong();

@@ -3,33 +3,45 @@ package com.mcbot.servercontrol;
 import com.google.gson.JsonObject;
 import java.util.*;
 import java.util.function.Predicate;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.level.PathNavigationRegion;
+import net.minecraft.world.level.pathfinder.*;
 import net.minecraft.world.phys.Vec3;
 import static com.mcbot.servercontrol.Protocol.*;
 
-/** One loaded-only navigation driver shared by movement, interaction approaches and pickup. */
+/**
+ * One loaded-only navigation driver shared by movement, interaction approaches and pickup.
+ * Routes come from vanilla's walking path finder (the one zombies and villagers use: steps, slopes,
+ * one-block jumps, safe drops, no water/lava/fire), computed for a detached zombie standing where
+ * the body stands. Driving follows vanilla PathNavigation/MoveControl: steer at the next node,
+ * jump when it is a block higher, advance within the waypoint radius, replan when stuck.
+ */
 final class NativeNavigation {
-    static final int MAX_SEARCH_READS=1_000_000,MAX_REPLANS=3;
+    static final int MAX_REPLANS=4,MAX_RANGE=48,MAX_VISITED=2048;
+    static final double WAYPOINT=0.45,STUCK_MS=2000;
     private final BodyPlayer body;
     private final ControlSession session;
     private final ControlSession.Operation operation;
     private final Object dimension;
     private final float initialHealth;
-    private FlatApproach geometry;
-    private NavigationSearch search;
+    private Zombie model;
+    private RouteEvaluator evaluator;
+    private PathFinder finder;
     private List<Vec3> route;
-    private int index,reads,replans;
-    private int expandedTotal,plans,routePoints,readsTotal,totalReplans;
-    private long searchNanos,maxSearchSliceNanos;
-    private Vec3 target,progress,legStart;
-    private long lastProgress,lastPlan,airStart;
-    private boolean airborneLeg,jumping,sawAir,clearedLip,stopped;
+    private int index,replans;
+    private int plans,routePoints,totalReplans,visitedLimit;
+    private long searchNanos,maxSearchNanos;
+    private Vec3 target,progress,replanAnchor;
+    private long lastProgress,lastPlan;
+    private boolean stopped,jumped;
     private int lastTick=Integer.MIN_VALUE;
     private boolean arrivedThisTick;
-    private Predicate<Vec3> liveGoal,liveAllowed;
     NativeNavigation(BodyPlayer body,ControlSession session,ControlSession.Operation operation){
         this.body=body;this.session=session;this.operation=operation;dimension=body.serverLevel();initialHealth=body.getHealth();
-        progress=body.position();lastProgress=clock();
+        progress=replanAnchor=body.position();lastProgress=clock();
     }
     private static long clock(){return System.nanoTime()/1_000_000;}
     static void conditions(BodyPlayer body) {
@@ -44,113 +56,98 @@ final class NativeNavigation {
         if(body.getHealth()<initialHealth)throw error("BLOCKED","Body took damage during navigation; safe movement was not confirmed");
         int tick=body.getServer().getTickCount();if(lastTick==tick)return arrivedThisTick;
         lastTick=tick;arrivedThisTick=false;
-        geometry=new FlatApproach(body);liveGoal=goal;liveAllowed=allowed;Vec3 feet=body.position();long now=clock();
+        Vec3 feet=body.position();long now=clock();
         if(!allowed.test(feet))throw error("OUT_OF_REACH","Navigation left its authorized region");
-        if(!geometry.clear(feet,feet))throw error("BLOCKED","Current body intersects danger, collision or unloaded terrain");
-        if(body.onGround()&&geometry.stand(feet)&&goal.test(feet)){
-            body.stopInput();route=null;search=null;airborneLeg=false;jumping=false;replans=0;reads=0;progress=feet;lastProgress=now;arrivedThisTick=true;return true;
+        if(body.onGround()&&goal.test(feet)){
+            body.stopInput();route=null;replans=0;progress=replanAnchor=feet;lastProgress=now;arrivedThisTick=true;return true;
         }
-        if(feet.distanceToSqr(progress)>0.04){progress=feet;lastProgress=now;}
-        if(route!=null&&now-lastProgress>3000){
+        if(feet.distanceToSqr(progress)>0.09){progress=feet;lastProgress=now;}
+        // Real progress since the last replan earns the finite replan budget back.
+        if(feet.distanceTo(replanAnchor)>2){replans=0;replanAnchor=feet;}
+        if(route!=null&&now-lastProgress>STUCK_MS){
             if(!body.onGround())throw error("BLOCKED","Airborne navigation made no progress");
             replan(now);lastProgress=now;
         }
-        if(target!=null&&destination.distanceTo(target)>1&&now-lastPlan>=500&&body.onGround()){
-            route=null;search=null;airborneLeg=false;jumping=false;
-        }
+        // A moving destination (a walking player) is re-routed at most twice a second, from the ground.
+        if(route!=null&&target!=null&&destination.distanceTo(target)>1&&now-lastPlan>=500&&body.onGround())route=null;
         if(route==null){
-            body.stopInput();
-            if(!body.onGround())throw error("BLOCKED","Navigation may start or replan only from native supported ground");
-            if(search==null)begin(destination,goal,allowed,now);
-            if(now-lastPlan>10_000)throw error("TIMEOUT","Navigation incremental search time budget exhausted");
-            int before=geometry.reads(),priorExpanded=search.expanded();long began=System.nanoTime();
-            boolean done=search.advance();long elapsed=System.nanoTime()-began;searchNanos+=elapsed;maxSearchSliceNanos=Math.max(maxSearchSliceNanos,elapsed);
-            expandedTotal+=search.expanded()-priorExpanded;reads+=geometry.reads()-before;readsTotal+=geometry.reads()-before;
-            if(reads>MAX_SEARCH_READS)throw error("PATH_BUDGET","Navigation total terrain read budget exhausted");
+            if(!body.onGround()){steer(feet,null);return false;}
+            plan(feet,destination,goal,allowed,now);
             if(!session.mayDrive(operation)){stop();return false;}
-            if(!done)return false;
-            route=new ArrayList<>(search.result().stream().map(NavigationSearch.Cell::point).toList());search=null;index=0;legStart=feet;lastProgress=now;progress=feet;
-            if(!goal.test(route.getLast())&&goal.test(destination)&&allowed.test(destination)&&geometry.transition(route.getLast(),destination))route.add(destination);
-            routePoints=route.size();
         }
-        while(index<route.size()&&body.onGround()&&feet.subtract(route.get(index)).horizontalDistance()<0.17&&Math.abs(feet.y-route.get(index).y)<0.1){
-            index++;legStart=feet;airborneLeg=false;jumping=false;sawAir=false;clearedLip=false;
-        }
+        while(index<route.size()&&reached(feet,route.get(index)))index++;
         if(index>=route.size()){replan(now);return false;}
-        Vec3 next=route.get(index);double rise=next.y-legStart.y;
-        if(!allowed.test(next)||!allowed.test(feet.lerp(next,0.5)))throw error("OUT_OF_REACH","Next navigation leg left its authorized region");
-        boolean leavingDrop=groundFlaggedDrop(body.onGround(),airborneLeg,jumping,feet,next,body.onGround()&&geometry.groundContact(feet));
-        if(body.onGround()&&!leavingDrop){
-            if(airborneLeg&&sawAir&&Math.abs(feet.y-next.y)>0.15)throw error("BLOCKED","Body landed outside its verified destination height");
-            GroundNavigation.Step grounded=geometry.groundStep(legStart,feet,next);
-            if(!grounded.allowed()) {replan(now);return false;}
-            legStart=grounded.from();rise=grounded.rise();
-            jumping=rise>0.6;airborneLeg=jumping||rise< -0.05;airStart=now;sawAir=false;clearedLip=false;
-        }
-        if(!body.onGround()||leavingDrop) {
-            // Only the current, previously validated leg may authorize leaving the ground.
-            if(!airborneLeg&&rise<=0.6&&rise>=0&&feet.y>=legStart.y-0.1&&feet.y<=next.y+0.65){airborneLeg=true;airStart=now;}
-            if(!airborneLeg)throw error("BLOCKED","Unplanned airborne movement");
-            sawAir=true;
-            if(leavingDrop&&!geometry.dropClear(feet,next))throw error("BLOCKED","Actual drop departure sweep became unsafe");
-            if(feet.y>=next.y+0.04)clearedLip=true;
-            if(!insideAirCorridor(feet,legStart,next,jumping,clearedLip,body.getDeltaMovement().y,now-airStart))
-                throw error("BLOCKED","Body left the verified jump/drop corridor");
-            if(!geometry.stand(next))throw error("BLOCKED","Jump/drop landing changed or became unsafe");
-        }
-        if(!session.mayDrive(operation)){stop();return false;}
-        if(!allowed.test(body.position())||!allowed.test(next))throw error("OUT_OF_REACH","Navigation region changed before native input");
-        Vec3 delta=next.subtract(feet);
-        body.stopInput();
-        Input input=inputs(delta,jumping&&!sawAir);
-        if(input.jump())body.jumpInput(true);
-        // Vanilla handles the safe riser side collision while rising. Waiting until the apex
-        // before pressing forward cannot clear a one-block lip when starting from rest.
-        if(input.forward()>0)body.moveInput(delta.x,delta.z,input.forward());
+        Vec3 next=route.get(index);
+        if(!allowed.test(next))throw error("OUT_OF_REACH","Next navigation node left its authorized region");
+        steer(feet,next);
         return false;
     }
-    private void begin(Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed,long now){
-        Vec3 feet=body.position();NavigationSearch.Cell origin=null;
-        NavigationSearch.Cell base=NavigationSearch.Cell.at(feet);
-        for(int dx:new int[]{0,-1,1})for(int dz:new int[]{0,-1,1}){
-            NavigationSearch.Cell candidate=new NavigationSearch.Cell(base.x()+dx,feet.y,base.z()+dz);
-            if(candidate.point().subtract(feet).horizontalDistance()<=0.72&&allowed.test(candidate.point())&&geometry.transition(feet,candidate.point())&&
-                (origin==null||candidate.point().distanceToSqr(feet)<origin.point().distanceToSqr(feet)))origin=candidate;
+    private void plan(Vec3 feet,Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed,long now){
+        body.stopInput();
+        if(model==null||model.level()!=body.level()){
+            model=new Zombie(EntityType.ZOMBIE,body.level());
+            // The body never swims, wades through powder snow or opens doors on its own.
+            model.setPathfindingMalus(PathType.WATER,-1);model.setPathfindingMalus(PathType.WATER_BORDER,8);
+            model.setPathfindingMalus(PathType.DANGER_FIRE,-1);model.setPathfindingMalus(PathType.DAMAGE_FIRE,-1);
+            model.setPathfindingMalus(PathType.DANGER_POWDER_SNOW,-1);model.setPathfindingMalus(PathType.POWDER_SNOW,-1);
+            model.setPathfindingMalus(PathType.DANGER_OTHER,-1);model.setPathfindingMalus(PathType.DAMAGE_OTHER,-1);
+            evaluator=new RouteEvaluator();evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(false);evaluator.setCanFloat(false);
         }
-        if(origin==null)throw error("BLOCKED","Cannot enter a supported navigation grid");
-        target=destination;lastPlan=now;reads+=geometry.reads();readsTotal+=geometry.reads();plans++;
-        search=new NavigationSearch(origin,new NavigationSearch.View(){
-            public List<NavigationSearch.Cell> neighbours(NavigationSearch.Cell at){return geometry.neighbours(at).stream().filter(c->liveAllowed.test(c.point())&&liveAllowed.test(at.point().lerp(c.point(),0.5))).toList();}
-            public boolean goal(NavigationSearch.Cell at){return FlatApproach.arrivalStand(at.point(),p->liveAllowed.test(p)&&liveGoal.test(p))||
-                at.point().distanceTo(destination)<=1&&liveAllowed.test(destination)&&liveGoal.test(destination)&&geometry.transition(at.point(),destination);}
-            public double estimate(NavigationSearch.Cell at){return Math.max(0,at.point().distanceTo(destination)-2);}
-        });
+        model.moveTo(feet.x,feet.y,feet.z,body.getYRot(),0);model.setOnGround(body.onGround());
+        float range=(float)Math.min(MAX_RANGE,feet.distanceTo(destination)+16);
+        visitedLimit=Math.min(MAX_VISITED,(int)(range*16));
+        finder=new PathFinder(evaluator,visitedLimit);
+        evaluator.allowed=allowed;
+        BlockPos from=body.blockPosition();int radius=(int)range+8;
+        long began=System.nanoTime();
+        Path path=finder.findPath(new PathNavigationRegion(body.level(),from.offset(-radius,-radius,-radius),from.offset(radius,radius,radius)),
+            model,Set.of(BlockPos.containing(destination)),range,1,1);
+        long elapsed=System.nanoTime()-began;searchNanos+=elapsed;maxSearchNanos=Math.max(maxSearchNanos,elapsed);plans++;
+        if(path==null||path.getNodeCount()==0)throw error("NO_PATH","No loaded walkable route from the current position");
+        List<Vec3> points=new ArrayList<>();
+        for(int i=0;i<path.getNodeCount();i++){Node node=path.getNode(i);points.add(new Vec3(node.x+0.5,node.y,node.z+0.5));}
+        // The last node is a block centre; a nearby, allowed goal point (an item, a stand spot) is the final steer.
+        Vec3 last=points.getLast();
+        if(path.canReach()&&goal.test(destination)&&allowed.test(destination)&&last.subtract(destination).horizontalDistance()<=1&&Math.abs(last.y-destination.y)<0.6)points.add(destination);
+        if(points.size()==1&&reached(feet,points.getFirst())&&!goal.test(feet)&&!path.canReach())throw error("NO_PATH","No loaded walkable route makes progress toward the destination");
+        route=points;index=0;target=destination;lastPlan=now;lastProgress=now;progress=feet;routePoints=points.size();
+    }
+    /** Vanilla PathNavigation#followThePath: inside the waypoint radius horizontally and less than a block vertically. */
+    static boolean reached(Vec3 feet,Vec3 node){
+        return Math.abs(feet.x-node.x)<=WAYPOINT&&Math.abs(feet.z-node.z)<=WAYPOINT&&Math.abs(feet.y-node.y)<1;
+    }
+    private void steer(Vec3 feet,Vec3 next){
+        if(next==null){if(body.onGround())body.stopInput();return;}
+        Vec3 delta=next.subtract(feet);
+        Input input=inputs(delta,body.onGround(),body.horizontalCollision,body.maxUpStep());
+        body.jumpInput(input.jump());jumped|=input.jump();
+        if(input.forward()>0)body.moveInput(delta.x,delta.z,input.forward());else{body.forwardInput=0;}
+    }
+    record Input(float forward,boolean jump){}
+    /** Vanilla MoveControl: jump when the next node is higher than a step and close, or when a wall stops a rising leg. */
+    static Input inputs(Vec3 delta,boolean onGround,boolean blocked,double maxUpStep){
+        double distance=delta.horizontalDistance();
+        boolean jump=onGround&&(delta.y>maxUpStep&&distance*distance<1.0||blocked&&delta.y>0.05);
+        return new Input(distance<=0.08?0:(float)Math.min(1,distance/0.4),jump);
     }
     private void replan(long now){
         body.stopInput();totalReplans++;if(++replans>MAX_REPLANS)throw error("BLOCKED","Navigation finite obstacle/stuck replan budget exhausted");
-        route=null;search=null;airborneLeg=false;jumping=false;lastPlan=now;
+        route=null;lastPlan=now;
     }
-    static double horizontalCorridor(Vec3 point,Vec3 from,Vec3 to){
-        Vec3 span=new Vec3(to.x-from.x,0,to.z-from.z),offset=new Vec3(point.x-from.x,0,point.z-from.z);
-        double t=span.lengthSqr()==0?0:Math.max(0,Math.min(1,offset.dot(span)/span.lengthSqr()));
-        return offset.subtract(span.scale(t)).length();
-    }
-    static boolean insideAirCorridor(Vec3 feet,Vec3 from,Vec3 to,boolean jump,boolean clearedLip,double verticalMotion,long elapsedMs){
-        boolean fellBelowLip=jump&&clearedLip&&verticalMotion<0&&feet.y<to.y-0.15;
-        double maximum=jump?from.y+1.4:Math.max(from.y,to.y)+0.65;
-        return elapsedMs<=2000&&feet.y>=Math.min(from.y,to.y)-0.15&&!fellBelowLip&&feet.y<=maximum&&horizontalCorridor(feet,from,to)<=0.5;
-    }
-    record Input(float forward,boolean jump){}
-    static Input inputs(Vec3 delta,boolean initiateJump){
-        double distance=delta.horizontalDistance();return new Input(distance<=0.08?0:(float)Math.min(1,distance/0.4),initiateJump);
-    }
-    static boolean groundFlaggedDrop(boolean onGround,boolean authorizedAirLeg,boolean jump,Vec3 feet,Vec3 next,boolean contact){
-        return onGround&&authorizedAirLeg&&!jump&&feet.y>next.y+0.15&&!contact;
-    }
-    void stop(){stopped=true;search=null;route=null;airborneLeg=false;jumping=false;body.stopInput();}
+    void stop(){stopped=true;route=null;body.stopInput();}
     private static JsonObject point(Vec3 p){return p==null?null:obj("x",p.x,"y",p.y,"z",p.z);}
-    JsonObject diagnostics(){return obj("plans",plans,"obstacleReplans",totalReplans,"expandedNodes",expandedTotal,"searchReads",readsTotal,"routePoints",routePoints,
-        "searchMs",searchNanos/1_000_000d,"maxSearchSliceMs",maxSearchSliceNanos/1_000_000d,"sliceBudgetMs",2,"maxExpansionsPerTick",NavigationSearch.PER_TICK,
-        "legStart",point(legStart),"next",route!=null&&index<route.size()?point(route.get(index)):null,"feet",point(body.position()),"motion",point(body.getDeltaMovement()),
-        "onGround",body.onGround(),"stage",search!=null?"planning":jumping?(clearedLip?"jump-crossing":"jump-rising"):airborneLeg?"drop-or-land":"walk","airElapsedMs",airborneLeg?clock()-airStart:0);}
+    JsonObject diagnostics(){return obj("planner","vanilla-walk","plans",plans,"obstacleReplans",totalReplans,"routePoints",routePoints,"visitedLimit",visitedLimit,
+        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,
+        "next",route!=null&&index<route.size()?point(route.get(index)):null,"feet",point(body.position()),"motion",point(body.getDeltaMovement()),
+        "onGround",body.onGround(),"stage",route==null?"planning":body.onGround()?"walk":"air");}
+
+    /** Walking nodes, minus any node outside the caller's authorized region. */
+    private static final class RouteEvaluator extends WalkNodeEvaluator {
+        Predicate<Vec3> allowed=p->true;
+        @Override public int getNeighbors(Node[] output,Node node){
+            int count=super.getNeighbors(output,node),kept=0;
+            for(int i=0;i<count;i++){Node next=output[i];if(allowed.test(new Vec3(next.x+0.5,next.y,next.z+0.5)))output[kept++]=next;}
+            return kept;
+        }
+    }
 }

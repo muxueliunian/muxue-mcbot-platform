@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { choosePillarBlock, pillarRank, pillarUp, pillarDown } from '../dist/pillar.js';
+import { BodyError } from '../dist/body.js';
 
 const slot = (slot, id, count) => ({ slot, id, count, components: {}, ...(count ? { maxStackSize: 64 } : {}) });
 const inventory = items => { const all = Array.from({ length: 36 }, (_, i) => slot(i, 'minecraft:air', 0)); for (const item of items) all[item.slot] = item; return all; };
@@ -37,6 +38,27 @@ test('pillarUp moves a backpack block into a free hotbar slot without touching t
   assert.deepEqual(calls[1].args, { slot: 1, expectedItem: 'minecraft:dirt', expectedCount: 5, expectedComponents: {} });
   assert.deepEqual(placed, { position: { x: 0, y: 64, z: 0 }, id: 'minecraft:dirt', item: 'minecraft:dirt' });
   await assert.rejects(pillarUp({ observe: async () => ({ selectedSlot: 0, inventory: inventory([]) }), run: async () => assert.fail('no action without blocks') }, 'other'), { code: 'NO_PILLAR_BLOCKS' });
+});
+
+test('pillarUp retries from a fresh snapshot when a pickup changes the stack before the native action', async () => {
+  const state = { position: { x: 0.5, y: 64, z: 0.5 }, selectedSlot: 0, inventory: inventory([slot(0, 'minecraft:oak_log', 3)]) };
+  const calls = [];
+  const host = {
+    observe: async () => structuredClone(state),
+    run: async (name, args) => {
+      calls.push(args.expectedCount);
+      if (calls.length === 1) { state.inventory[0].count = 4; throw new BodyError('STALE_ITEM', 'Item ID, count or components changed; observe again'); }
+      state.inventory[0].count--; return { block: { position: { x: 0, y: 64, z: 0 }, id: 'minecraft:oak_log' } };
+    },
+  };
+  assert.equal((await pillarUp(host, 'log')).id, 'minecraft:oak_log');
+  assert.deepEqual(calls, [3, 4]);
+  let tries = 0;
+  await assert.rejects(pillarUp({ observe: async () => structuredClone(state), run: async () => { tries++; throw new BodyError('STALE_ITEM', 'again'); } }, 'log'), { code: 'STALE_ITEM' });
+  assert.equal(tries, 3);
+  tries = 0;
+  await assert.rejects(pillarUp({ observe: async () => structuredClone(state), run: async () => { tries++; throw new BodyError('BLOCKED', 'no headroom'); } }, 'log'), { code: 'BLOCKED' });
+  assert.equal(tries, 1);
 });
 
 test('pillarDown only digs the block it placed while standing on it, then waits to land one lower', async () => {

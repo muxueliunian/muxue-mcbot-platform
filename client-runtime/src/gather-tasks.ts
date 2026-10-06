@@ -16,7 +16,7 @@ type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
-type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number };
+type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; stuckHigh?: number };
 type Active = { id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
@@ -288,6 +288,8 @@ export class GatherTasks {
     return op;
   }
   private async pickups(task: Active): Promise<void> {
+    const shaken = new Set<string>();
+    let merged = 0;
     pickupLoop: for (;;) {
       const state = await this.observe(task); if (this.done(task)) return;
       const items = state.groundItems ?? [];
@@ -295,7 +297,10 @@ export class GatherTasks {
       // A gathered drop caught high in leaves cannot be walked to: leave it rather than fail the whole goal.
       let item = items.find(item => item.stack.id === task.request.item && !task.oldGround?.has(item.entityId) && this.inside(task, item.position) && (task.name === 'gather-resources' || task.allowed.has(item.entityId)) && item.visibility === 'visible'
         && (task.name !== 'gather-resources' || miningOwner(task.borrowed) || item.position.y <= state.position.y + 2));
-      if (!item) return;
+      if (!item) {
+        if (await this.shake(task, state, items, shaken)) continue;
+        return;
+      }
       this.capacity(task, state);
       // Newly mined drops may still be falling. Wait within a fixed budget before binding a movement guard.
       const settleBy = Math.min(task.deadline, this.now() + 2500);
@@ -324,10 +329,43 @@ export class GatherTasks {
       }
       this.bind(task, item.stack); task.allowed.add(item.entityId); task.progress.stage = 'picking-up';
       const before = task.progress.pickedUpCount;
+      // Drops of the same item lying together merge natively (two logs become one stack of 2); the refusal
+      // happens before any pickup, so look again rather than fail the whole goal.
+      try {
       await this.step(task, 'pickup-item', { entityId: item.entityId, expectedItem: item.stack.id, expectedCount: item.stack.count, expectedComponents: item.stack.components!, expectedMaxStackSize: item.stack.maxStackSize, ...(task.borrowed ? { companionGuard: task.borrowed.companionGuard } : {}), ...(miningOwner(task.borrowed) ? { resourceTargetToken: task.borrowed.candidate.targetToken } : {}), timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+      } catch (error) { if (error instanceof BodyError && error.code === 'STALE_ITEM' && task.progress.pickedUpCount === before && ++merged <= 3) continue; throw error; }
       if (task.progress.pickedUpCount === before) throw new BodyError('PICKUP_UNKNOWN', '动作没有对应新增原生拾取收据，未依据实体消失或背包净变化猜测成功');
       if (!this.done(task) && (await this.observe(task)).groundItems?.some(next => next.entityId === item.entityId)) throw new BodyError('INVENTORY_FULL', '目标实体仍有余量；未自动重复拾取，请检查背包空间');
     }
+  }
+  /**
+   * A gathered drop resting on leaves too high to walk to (a log chopped from a tree top): break the leaves
+   * its small box rests on or is wedged against (its own level and the one below, a neighbour column too
+   * when it sits on the edge) when they are in reach, so it falls to where it can be picked up. Leaves are
+   * never gathered; each drop is tried once. Returns whether a leaf was broken.
+   */
+  private async shake(task: Active, state: Observation, items: NonNullable<Observation['groundItems']>, shaken: Set<string>): Promise<boolean> {
+    if (task.name !== 'gather-resources' || miningOwner(task.borrowed)) return false;
+    for (const item of items) {
+      if (item.stack.id !== task.request.item || task.oldGround?.has(item.entityId) || shaken.has(item.entityId) || item.position.y <= state.position.y + 2 || !this.inside(task, item.position)) continue;
+      shaken.add(item.entityId);
+      const p = item.position, span = (v: number) => [...new Set([Math.floor(v - 0.13), Math.floor(v + 0.13)])];
+      let broke = false;
+      for (const y of [...new Set([Math.floor(p.y - 0.05), Math.floor(p.y)])]) for (const x of span(p.x)) for (const z of span(p.z)) {
+        const at = { x, y, z };
+        if (!inReach(state.position, at)) continue;
+        const cell = await this.cell(task, at);
+        if (!isLeaves(cell?.id)) continue;
+        task.progress.stage = 'shaking-leaves';
+        try { await this.step(task, 'dig-block', { ...at, expectedBlock: cell!.id!, expectedProperties: cell!.properties ?? {}, timeoutMs: 10000 }, true); }
+        catch (error) { if (error instanceof BodyError && reachRefusals.has(error.code)) continue; throw error; }
+        task.progress.leavesShaken = (task.progress.leavesShaken ?? 0) + 1; broke = true;
+      }
+      if (!broke) continue;
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return true;
+    }
+    return false;
   }
   /** Eat between blocks if needed, then assess, prepare and select the tool for one candidate; returns the fresh state. */
   private async prepareFor(task: Active, candidate: Candidate, state: Observation): Promise<Observation> {
@@ -548,7 +586,13 @@ export class GatherTasks {
         if (task.progress.minedBlocks !== 1) throw new BodyError('UNKNOWN', '单块原生破坏未完整确认，未自动重试');
         this.finish(task, 'succeeded', '单块原生破坏已确认；新拾取按独立收据记录，掉落归属未确认'); return;
       }
-      if (!this.done(task)) throw new BodyError('INSUFFICIENT_RESOURCES', '冻结候选已用完，实际拾取数量不足；未重新向外搜索');
+      if (!this.done(task)) {
+        const final = await this.observe(task);
+        const stuck = (final.groundItems ?? []).filter(item => item.stack.id === task.request.item && !task.oldGround?.has(item.entityId) && item.position.y > final.position.y + 2 && this.inside(task, item.position))
+          .reduce((sum, item) => sum + item.stack.count, 0);
+        if (stuck > 0) { task.progress.stuckHigh = stuck; throw new BodyError('INSUFFICIENT_RESOURCES', `候选都挖完了，但有 ${stuck} 个掉落卡在高处（多半在树叶上）够不着，没捡到；天然树叶过一会儿会腐烂，掉下来后可以再捡`); }
+        throw new BodyError('INSUFFICIENT_RESOURCES', '冻结候选已用完，实际拾取数量不足；未重新向外搜索');
+      }
       this.finish(task, 'succeeded', task.progress.overage ? '目标已达到；原生一次拾取产生额外数量，已如实记录' : '实际原生拾取数量已达到明确目标');
     } catch (error) {
       const code = error instanceof BodyError ? error.code : 'UNKNOWN';

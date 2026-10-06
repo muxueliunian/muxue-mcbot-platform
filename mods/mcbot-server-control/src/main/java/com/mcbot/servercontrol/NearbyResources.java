@@ -36,7 +36,7 @@ final class NearbyResources {
         return new Options(Set.copyOf(ids),radius,limit,center);
     }
     private static int integer(JsonObject args,String key,int fallback,int min,int max) {double value=bounded(args,key,fallback,min,max);if(value!=Math.rint(value))throw error("INVALID_ARGUMENT",key+" must be an integer");return (int)value;}
-    private record Candidate(BlockPos position,BlockState state,double distance) {}
+    record Candidate(BlockPos position,BlockState state,double distance) {}
     static JsonObject discover(ServerPlayer body,JsonObject args,ResourceTargets targets) {
         Options options=options(args,body.position());
         CompanionMiningGuard mining=args.has("companionMiningGuard")?CompanionMiningGuard.create(body,object(args,"companionMiningGuard")):null;
@@ -57,15 +57,18 @@ final class NearbyResources {
             }
         }
         matches.sort(Comparator.comparingDouble(Candidate::distance).thenComparingInt(c->c.position().getX()).thenComparingInt(c->c.position().getY()).thenComparingInt(c->c.position().getZ()));
-        Set<BlockPos> tree=mining==null?treeAbove(body,origin,options,matches):Set.of();
+        Set<BlockPos> tree=new HashSet<>(mining==null?treeAbove(body,origin,options,matches):Set.of());
         // Safety and line-of-sight checks cost terrain reads: run them nearest first, one past the limit to report truncation.
+        List<Candidate> hidden=new ArrayList<>();
         for(Candidate match:matches) {
             if(found.size()>options.maxResults())break;
             // Logs high in a tree are usually hidden behind the trunk or leaves from the ground: dig time checks the real line of sight.
-            try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry);if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){rejected++;continue;}}
+            try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry);
+                if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){if(mining==null&&match.state().is(BlockTags.LOGS))hidden.add(match);else rejected++;continue;}}
             catch(Protocol.Error unsafe){if(unsafe.code.equals("PATH_BUDGET")){exhausted=true;break;}rejected++;continue;}
             found.add(match);
         }
+        rejected+=trunk(found,hidden,tree,options.maxResults());
         JsonArray candidates=new JsonArray();
         var inventory=ToolAssessment.inventory(body);
         for(Candidate candidate:found.subList(0,Math.min(found.size(),options.maxResults()))) {
@@ -112,6 +115,30 @@ final class NearbyResources {
         extra.sort(Comparator.comparingInt((Candidate c)->c.position().getY()).thenComparingDouble(Candidate::distance));
         matches.addAll(extra);
         return added;
+    }
+    /**
+     * Hidden logs in the scan band that belong to a tree already found (connected through logs to an accepted
+     * candidate, 26-neighbourhood) join it: dense leaves (spruce) hide the middle of a trunk from the ground.
+     * They are marked like the logs above the band (not visible; dig time checks the line of sight). Returns
+     * how many hidden logs stay rejected.
+     */
+    static int trunk(List<Candidate> found,List<Candidate> hidden,Set<BlockPos> tree,int limit) {
+        Set<BlockPos> joined=new HashSet<>();for(Candidate candidate:found)if(candidate.state().is(BlockTags.LOGS))joined.add(candidate.position());
+        List<Candidate> left=new ArrayList<>(hidden);boolean grew=true;
+        while(grew&&!left.isEmpty()) {
+            grew=false;
+            for(var it=left.iterator();it.hasNext();) {
+                Candidate next=it.next();
+                if(!touches(next.position(),joined))continue;
+                it.remove();grew=true;joined.add(next.position());tree.add(next.position());
+                if(found.size()<=limit)found.add(next);
+            }
+        }
+        return left.size();
+    }
+    private static boolean touches(BlockPos p,Set<BlockPos> set) {
+        for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++) for(int dz=-1;dz<=1;dz++) if((dx|dy|dz)!=0&&set.contains(p.offset(dx,dy,dz)))return true;
+        return false;
     }
     private static JsonObject position(Vec3 p){return obj("x",p.x,"y",p.y,"z",p.z);}
 }

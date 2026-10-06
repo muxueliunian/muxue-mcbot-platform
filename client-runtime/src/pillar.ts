@@ -36,8 +36,18 @@ export function pillarBlockCount(state: Observation, purpose: PillarPurpose): nu
 const value = (item: ItemStack): ItemValue => ({ id: item.id, count: item.count, components: item.components, ...(item.maxStackSize !== undefined ? { maxStackSize: item.maxStackSize } : {}) });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-/** Rise one block on the best pillar block in the inventory, moving it into the hotbar first when needed. */
+/**
+ * Rise one block on the best pillar block in the inventory, moving it into the hotbar first when needed.
+ * A pickup landing between the inventory snapshot and the native action changes the stack count; the
+ * refusal (STALE_ITEM) happens before anything is placed, so it is retried from a fresh snapshot.
+ */
 export async function pillarUp(host: PillarHost, purpose: PillarPurpose): Promise<PillarBlock> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await pillarOnce(host, purpose); }
+    catch (error) { if (!(error instanceof BodyError && error.code === 'STALE_ITEM') || attempt >= 3) throw error; await delay(100); }
+  }
+}
+async function pillarOnce(host: PillarHost, purpose: PillarPurpose): Promise<PillarBlock> {
   let state = await host.observe();
   const block = choosePillarBlock(state, purpose);
   if (!block) throw new BodyError('NO_PILLAR_BLOCKS', '背包里没有能垫脚的方块（泥土、木头或石头）');

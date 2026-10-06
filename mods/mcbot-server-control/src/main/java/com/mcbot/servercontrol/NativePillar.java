@@ -29,7 +29,8 @@ final class NativePillar {
     private final ControlSession session;
     private final SurvivalActions survival;
     private final BlockPos feet;
-    private final int slot,before;
+    private final int slot;
+    private int before;
     private final Block block;
     private final String item;
     private final JsonObject components;
@@ -85,7 +86,9 @@ final class NativePillar {
             return;
         }
         ItemStack stack=body.getInventory().getItem(slot);
-        if(body.getInventory().selected!=slot||stack.getCount()!=before||!BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(item))throw error("STALE_ITEM","Selected pillar stack changed");
+        if(body.getInventory().selected!=slot||stack.getCount()<before||!BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(item))throw error("STALE_ITEM","Selected pillar stack changed");
+        // Native pickup may merge a drop of the same block into the stack mid-jump (a log chopped overhead): still the same stack.
+        before=stack.getCount();
         if(body.onGround()&&!leftGround){body.jumpInput(true);return;}
         if(!body.onGround())leftGround=true;
         body.jumpInput(false);

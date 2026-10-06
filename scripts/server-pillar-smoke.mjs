@@ -2,7 +2,8 @@
 // 垫高实测：平坦隔离服高空平台上
 //   1. 一棵 9 节原木的树（顶上 4 层有树叶）：gather-resources 要 9 个原木，看它找到整棵树、站在原木上垫高砍完、再挖掉柱子下来，原木全拿到、树叶不动；
 //   2. 头顶 7 格悬空的一块石头：pillar-up 垫高、dig-block 挖掉、pillar-down 下来，泥土收回、圆石捡到；
-//   3. pillar-up 3 格再 pillar-down，回到原来的高度、方块一个不少。
+//   3. pillar-up 3 格再 pillar-down，回到原来的高度、方块一个不少；
+//   4. 仿 10-07 试玩那棵云杉：6 节树干被密树叶包住、只有下面两节看得见，扫描带里被挡住的原木也算同一棵树，整棵砍完。
 // 不启停服务器、不调用模型、不计算哈希。需要：隔离服开着、平坦世界、没装要求客户端的 Mod。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -130,6 +131,25 @@ try {
   check('pillar-down 回到 y=201，3 个泥土收回', !down.error && down.value.recovered === 3 && Math.abs(low[1] - (Y + 1)) < 0.01 && await countItem('minecraft:dirt') === 8, { down: down.value, low, dirt: await countItem('minecraft:dirt') });
   const again = await tool('pillar-down');
   check('没有自己搭的柱子时 pillar-down 拒绝，不往下挖', again.error || /NOT_FOUND|没有记着/.test(JSON.stringify(again.value)), again.value);
+
+  // 4. 云杉：树干 (3404, 201..206, 3404)，树叶从 203 起层层包住树干（下面两节看得见，上面四节被挡住），顶上 207、208；Bot 站在西边 3 格
+  await ground();
+  const spruce = Array.from({ length: 6 }, (_, i) => [3404, Y + 1 + i, 3404]);
+  for (const [y, r] of [[Y + 3, 2], [Y + 4, 1], [Y + 5, 2], [Y + 6, 1], [Y + 7, 1]]) await fixture(`fill ${3404 - r} ${y} ${3404 - r} ${3404 + r} ${y} ${3404 + r} spruce_leaves[persistent=true]`);
+  await fixture(`setblock 3404 ${Y + 8} 3404 spruce_leaves[persistent=true]`);
+  for (const p of spruce) await fixture(`setblock ${p.join(' ')} spruce_log`);
+  await command('clear ServerBot');
+  await command(`tp ServerBot 3401.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
+  const sprucePlan = await tool('discover-resources', { blockIds: ['minecraft:spruce_log'], radius: 6, maxResults: 32 });
+  check('云杉：扫描带里被树叶挡住的原木也算进这棵树，6 节都找到', !sprucePlan.error && sprucePlan.value.candidates?.length === 6, sprucePlan.value.candidates ? { candidates: sprucePlan.value.candidates.map(c => [c.position.y, c.visible]), budget: sprucePlan.value.budget } : sprucePlan.value);
+  op = await settle(await tool('gather-resources', { resourceRef: sprucePlan.value.resourceRef, item: 'minecraft:spruce_log', count: 6, timeoutMs: 120000 }));
+  report.runs.spruce = op.value;
+  const spruceLeft = []; for (const p of spruce) if (await isBlock(p, 'minecraft:spruce_log')) spruceLeft.push(p[1]);
+  // 树叶是人工放的（不会腐烂），顶上那节的掉落可能卡在树叶上：那时要如实报出卡住的数量，而不是笼统的“候选用完”
+  const spruceLogs = await countItem('minecraft:spruce_log'), stuck = op.value.result?.stuckHigh ?? 0;
+  check('云杉整棵砍完：6 节都挖了，拿到的加上如实报告卡在树叶上的正好 6 个', spruceLeft.length === 0 && op.value.result?.minedBlocks === 6 && !op.value.result?.unreachable && spruceLogs + stuck === 6 && (op.value.status === 'succeeded' ? spruceLogs >= 6 : stuck > 0 && /卡在高处/.test(op.value.summary)), { spruceLeft, spruceLogs, stuck, status: op.value.status, summary: op.value.summary, result: op.value.result, logs: await countItem('minecraft:spruce_log'), drops: await command('execute as @e[type=item,x=3404,y=205,z=3404,distance=..12] run data get entity @s Pos'), bot: await pos('ServerBot') });
+  let spruceColumn = 0; for (let y = Y + 1; y <= Y + 6; y++) if (!(await isBlock([3404, y, 3404], 'minecraft:air'))) spruceColumn++;
+  check('云杉那一列没有留下垫脚方块，柱子都收回了', spruceColumn === 0 && (op.value.result?.pillarRecovered ?? 0) === (op.value.result?.pillarPlaced ?? 0), { spruceColumn, result: op.value.result });
   report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.error = redact(error.stack || error.message); process.exitCode = 1; console.error(report.error);

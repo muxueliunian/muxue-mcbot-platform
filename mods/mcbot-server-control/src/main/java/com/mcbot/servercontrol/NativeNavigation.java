@@ -4,12 +4,15 @@ import com.google.gson.JsonObject;
 import java.util.*;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.level.CollisionGetter;
 import net.minecraft.world.level.PathNavigationRegion;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.pathfinder.*;
 import net.minecraft.world.phys.Vec3;
 import static com.mcbot.servercontrol.Protocol.*;
@@ -20,10 +23,19 @@ import static com.mcbot.servercontrol.Protocol.*;
  * one-block jumps, safe drops, no water/lava/fire), computed for a detached zombie standing where
  * the body stands. Driving follows vanilla PathNavigation/MoveControl: steer at the next node,
  * jump when it is a block higher, advance within the waypoint radius, replan when stuck.
+ * On top of vanilla, a route may leap a one-block gap: straight across, landing on walkable ground at
+ * the same level two blocks ahead, with headroom for the arc. The driver runs at the gap from inside the
+ * take-off block and jumps once vanilla's walking-jump physics put the landing in the middle of that block.
  */
 final class NativeNavigation {
     static final int MAX_REPLANS=4,MAX_RANGE=48,MAX_VISITED=2048;
     static final double WAYPOINT=0.45,STUCK_MS=2000,FINAL_APPROACH=1.5;
+    /**
+     * Gap leap, in blocks from the take-off block centre toward the gap: jump from TAKEOFF_FROM on when the
+     * predicted landing is LAND_MIN..LAND_MAX (the landing block centre is 2); never jump past EDGE (the body
+     * falls once its centre is 0.8 out); back up to RUN_UP for another run.
+     */
+    static final double TAKEOFF_FROM=0.05,EDGE=0.6,LAND_MIN=1.6,LAND_MAX=2.4,RUN_UP=-0.3;
     private final BodyPlayer body;
     private final ControlSession session;
     private final ControlSession.Operation operation;
@@ -38,7 +50,8 @@ final class NativeNavigation {
     private long searchNanos,maxSearchNanos;
     private Vec3 target,progress,replanAnchor;
     private long lastProgress,lastPlan;
-    private boolean stopped,jumped;
+    private boolean stopped,jumped,backing;
+    private int leaps;
     private int lastTick=Integer.MIN_VALUE;
     private boolean arrivedThisTick;
     NativeNavigation(BodyPlayer body,ControlSession session,ControlSession.Operation operation){
@@ -89,8 +102,56 @@ final class NativeNavigation {
         }
         Vec3 next=route.get(index);
         if(!allowed.test(next))throw error("OUT_OF_REACH","Next navigation node left its authorized region");
-        steer(feet,next);
+        if(index>0&&leap(route.get(index-1),next))leap(feet,route.get(index-1),next);
+        else{backing=false;steer(feet,next);}
         return false;
+    }
+    /** Two route points two blocks apart on one level are a gap leap (vanilla nodes are never more than one block apart). */
+    static boolean leap(Vec3 from,Vec3 to){return Math.abs(to.y-from.y)<0.01&&to.subtract(from).horizontalDistance()>1.9;}
+    record Leap(boolean back,boolean jump){}
+    /**
+     * One ground tick of a gap leap, from how far the feet are past the take-off block centre toward the gap
+     * and the predicted jump length: jump when it lands mid-block; still short, keep running while there is
+     * room; would overshoot, or no room left, walk back to the run-up spot and try again.
+     */
+    static Leap leapInput(double along,double jumpLength,boolean backing){
+        if(backing&&along>RUN_UP+0.05)return new Leap(true,false);
+        if(along<TAKEOFF_FROM)return new Leap(false,false);
+        double landing=along+jumpLength;
+        if(landing>=LAND_MIN&&landing<=LAND_MAX)return new Leap(false,true);
+        return new Leap(landing>LAND_MAX||along>EDGE,false);
+    }
+    /**
+     * How far a jump taken now carries horizontally before landing back on the same level, following vanilla
+     * LivingEntity#travel with forward input held: the take-off tick still moves with ground acceleration and
+     * friction (speed is the post-friction motion along the leap), then air acceleration and drag until the
+     * jump arc (0.42 up, gravity 0.08, drag 0.98) comes back down.
+     */
+    static double jumpLength(double speed,double groundAccel){
+        double v=speed,total=0,y=0,vy=0.42;
+        for(int tick=0;tick<30;tick++){
+            boolean ground=tick==0;
+            double step=v+(ground?groundAccel:0.02*0.98);
+            total+=step;v=step*(ground?0.546:0.91);
+            y+=vy;vy=(vy-0.08)*0.98;
+            if(y<=0)break;
+        }
+        return total;
+    }
+    private void leap(Vec3 feet,Vec3 from,Vec3 to){
+        Vec3 dir=new Vec3(to.x-from.x,0,to.z-from.z).normalize();
+        Vec3 toLanding=to.subtract(feet);
+        if(!body.onGround()){body.jumpInput(false);body.moveInput(toLanding.x,toLanding.z,1);return;} // keep heading for the landing in the air
+        Vec3 motion=body.getDeltaMovement();
+        double along=(feet.x-from.x)*dir.x+(feet.z-from.z)*dir.z,speed=motion.x*dir.x+motion.z*dir.z;
+        Leap step=leapInput(along,jumpLength(speed,body.getSpeed()*0.98),backing);
+        backing=step.back();
+        if(step.back()){
+            Vec3 spot=from.add(dir.scale(RUN_UP)).subtract(feet);
+            body.jumpInput(false);body.moveInput(spot.x,spot.z,(float)Math.min(1,spot.horizontalDistance()/0.4));return;
+        }
+        body.jumpInput(step.jump());body.moveInput(toLanding.x,toLanding.z,1);
+        if(step.jump()){jumped=true;leaps++;}
     }
     private void ensureModel(){
         if(model==null||model.level()!=body.level()){
@@ -177,17 +238,54 @@ final class NativeNavigation {
     void stop(){stopped=true;route=null;body.stopInput();}
     private static JsonObject point(Vec3 p){return p==null?null:obj("x",p.x,"y",p.y,"z",p.z);}
     JsonObject diagnostics(){return obj("planner","vanilla-walk","plans",plans,"obstacleReplans",totalReplans,"routePoints",routePoints,"visitedLimit",visitedLimit,
-        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,
+        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,"leaps",leaps,
         "next",route!=null&&index<route.size()?point(route.get(index)):null,"feet",point(body.position()),"motion",point(body.getDeltaMovement()),
         "onGround",body.onGround(),"stage",route==null?"planning":body.onGround()?"walk":"air");}
 
-    /** Walking nodes, minus any node outside the caller's authorized region. */
+    /** Walking nodes plus one-block gap leaps, minus any node outside the caller's authorized region. */
     private static final class RouteEvaluator extends WalkNodeEvaluator {
         Predicate<Vec3> allowed=p->true;
         @Override public int getNeighbors(Node[] output,Node node){
-            int count=super.getNeighbors(output,node),kept=0;
+            int count=super.getNeighbors(output,node);
+            for(Direction direction:Direction.Plane.HORIZONTAL){
+                if(count>=output.length)break;
+                int x=node.x+direction.getStepX(),z=node.z+direction.getStepZ();
+                boolean walkable=false; // vanilla already walks (or steps up) there: no leap
+                for(int i=0;i<count;i++)if(output[i].x==x&&output[i].z==z&&output[i].y>=node.y)walkable=true;
+                Node landing=walkable?null:gapLanding(node,direction);
+                if(landing!=null)output[count++]=landing;
+            }
+            int kept=0;
             for(int i=0;i<count;i++){Node next=output[i];if(allowed.test(new Vec3(next.x+0.5,next.y,next.z+0.5)))output[kept++]=next;}
             return kept;
+        }
+        /**
+         * The block two ahead when the one between is a gap: no floor at this level, nothing solid, burning or
+         * fluid where the body passes, headroom over take-off, gap and landing, and walkable ground at the same
+         * level to land on. Anything under the gap (a drop, water, lava) does not matter: the body flies over it.
+         */
+        private Node gapLanding(Node node,Direction direction){
+            int dx=direction.getStepX(),dz=direction.getStepZ(),x=node.x,y=node.y,z=node.z;
+            if(!open(x,y+2,z)||!passable(x+dx,y-1,z+dz))return null;
+            for(int h=0;h<=2;h++)if(!open(x+dx,y+h,z+dz))return null;
+            int lx=x+2*dx,lz=z+2*dz;
+            if(!open(lx,y+2,lz)||getCachedPathType(lx,y,lz)!=PathType.WALKABLE)return null;
+            double floor=getFloorLevel(new BlockPos(x,y,z)),landingFloor=getFloorLevel(new BlockPos(lx,y,lz));
+            if(landingFloor>floor+0.01||landingFloor<floor-0.51)return null;
+            Node landing=getNode(lx,y,lz);
+            if(landing.closed)return null;
+            landing.type=PathType.WALKABLE;landing.costMalus=Math.max(landing.costMalus,0);
+            return landing;
+        }
+        /** No collision at all (the gap floor may hold a liquid). */
+        private boolean passable(int x,int y,int z){
+            CollisionGetter level=currentContext.level();BlockPos pos=new BlockPos(x,y,z);
+            return level.getBlockState(pos).getCollisionShape(level,pos).isEmpty();
+        }
+        /** Room for the body: no collision, no fire or other burning block, no fluid. */
+        private boolean open(int x,int y,int z){
+            BlockState state=currentContext.getBlockState(new BlockPos(x,y,z));
+            return passable(x,y,z)&&!isBurningBlock(state)&&state.getFluidState().isEmpty();
         }
     }
 }

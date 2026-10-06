@@ -27,6 +27,28 @@ final class NavigationTest {
         check(NativeNavigation.inputs(new Vec3(0.2,0,0),true,false,0.6).forward()==0.5,"Waypoint approach reduces native input strength");
         check(NativeNavigation.inputs(new Vec3(0.01,0,0),true,false,0.6).forward()==0,"Arrived horizontal point releases native forward input");
 
+        // One-block gap leap: two points two blocks apart on one level; run-up, take-off window, back off when slow
+        check(NativeNavigation.leap(new Vec3(0.5,64,0.5),new Vec3(2.5,64,0.5)),"Two blocks apart on one level is a gap leap");
+        check(!NativeNavigation.leap(new Vec3(0.5,64,0.5),new Vec3(1.5,64,1.5)),"A diagonal step is an ordinary move");
+        check(!NativeNavigation.leap(new Vec3(0.5,64,0.5),new Vec3(2.1,64,0.5)),"A final approach point is not a leap");
+        check(!NativeNavigation.leap(new Vec3(0.5,64,0.5),new Vec3(2.5,65,0.5)),"A leap never changes level");
+        double full=NativeNavigation.jumpLength(0.1178,0.098),still=NativeNavigation.jumpLength(0,0.098),reversing=NativeNavigation.jumpLength(-0.1,0.098);
+        check(full>1.8&&full<2.3,"A full-speed walking jump carries about two blocks: "+full);
+        check(still<full-0.4,"A standing jump carries much less: "+still);
+        check(reversing<1.2,"Still moving back from the run-up: the jump would fall short: "+reversing);
+        var run=NativeNavigation.leapInput(-0.3,full,false);
+        check(!run.jump()&&!run.back(),"Before the take-off window: run at the gap without jumping");
+        var takeoff=NativeNavigation.leapInput(0.1,full,false);
+        check(takeoff.jump()&&!takeoff.back(),"In the window at walking speed the landing is mid-block: jump");
+        var short_=NativeNavigation.leapInput(0.1,0.8,false);
+        check(!short_.jump()&&!short_.back(),"Too slow but room left: keep running");
+        var noRoom=NativeNavigation.leapInput(0.65,0.8,false);
+        check(!noRoom.jump()&&noRoom.back(),"Too slow at the edge: back up for a run-up");
+        var over=NativeNavigation.leapInput(0.5,full,false);
+        check(!over.jump()&&over.back(),"Past the window the jump would overshoot the landing: back up");
+        check(NativeNavigation.leapInput(-0.1,full,true).back(),"Keeps backing until the run-up spot");
+        check(!NativeNavigation.leapInput(-0.3,reversing,true).back(),"At the run-up spot: run at the gap again");
+
         AABB standing=new AABB(-0.3,1,-0.3,0.3,2.8,0.3),raised=standing.move(0,1.25,0);
         check(!FlatApproach.collides(standing,Shapes.create(new AABB(-1,3,-1,1,4,1))),"Low ceiling allows standing body");
         check(FlatApproach.collides(standing.minmax(raised),Shapes.create(new AABB(-1,3,-1,1,4,1))),"Same low ceiling intersects the real jumping body envelope");

@@ -10,6 +10,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import static com.mcbot.servercontrol.Protocol.*;
 
@@ -52,9 +53,13 @@ final class TargetTokens {
         if(!sameIdentities(expected.stream().map(Part::entity).toList(),actual.stream().map(Part::entity).toList())) return false;
         for(int i=0;i<expected.size();i++) {
             Part a=expected.get(i),b=actual.get(i);
-            if(!a.position().equals(b.position())||!Objects.equals(a.state(),b.state())) return false;
+            if(!a.position().equals(b.position())||!Objects.equals(viewerless(a.state()),viewerless(b.state()))) return false;
         }
         return true;
+    }
+    /** Barrels and backpacks flip their "open" property while anyone views them; that is not a different container. */
+    static BlockState viewerless(BlockState state) {
+        return state!=null&&state.hasProperty(BlockStateProperties.OPEN)?state.setValue(BlockStateProperties.OPEN,false):state;
     }
     static boolean validContext(Target target,String session,long generation,String dimension,long now) {
         return target!=null&&target.expiresAt()>now&&Objects.equals(target.session(),session)&&target.generation()==generation&&target.dimension().equals(dimension);
@@ -68,7 +73,7 @@ final class TargetTokens {
         Container storage=ModAdapters.storage(menu,player.getInventory());
         if(storage==null) throw error("STALE_TARGET","Opened menu storage source is unknown");
         if(target.parts().size()==1) {
-            if(storage!=target.parts().getFirst().entity()) throw error("STALE_TARGET","Menu does not use the discovered block entity");
+            if(!ModAdapters.storageOf(menu,storage,target.parts().getFirst().entity())) throw error("STALE_TARGET","Menu does not use the discovered block entity");
         } else if(!(storage instanceof CompoundContainer combined)||target.parts().stream().anyMatch(p->!(p.entity() instanceof Container c)||!combined.contains(c)))
             throw error("STALE_TARGET","Double chest menu does not use both discovered entities");
     }

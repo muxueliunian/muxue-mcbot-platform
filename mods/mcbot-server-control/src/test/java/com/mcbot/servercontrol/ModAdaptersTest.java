@@ -152,6 +152,23 @@ final class ModAdaptersTest {
         try { McbotApi.registerContainer(new FakeContainer("testmod:late",true)); } catch(IllegalStateException frozen) { refused=true; }
         check(refused,"registration after server start is refused");
         check(McbotApi.refuse("INTERACTION_NOT_READY","pot is cold").code.equals("INTERACTION_NOT_READY"),"refusal carries its code");
+        // Pickup sinks: only an exact single-item growth in one sink accounts for absorbed items
+        Map<String,Map<String,Integer>> before=Map.of("sb:backpack",Map.of("minecraft:cobblestone",3)),
+            exact=Map.of("sb:backpack",Map.of("minecraft:cobblestone",7));
+        check("sb:backpack".equals(ModAdapters.absorbedBy(before,exact,"minecraft:cobblestone",4)),"exact growth of the absorbed item is attributed to its sink");
+        check(ModAdapters.absorbedBy(before,exact,"minecraft:cobblestone",3)==null,"a different count is not attributed");
+        check(ModAdapters.absorbedBy(before,exact,"minecraft:dirt",4)==null,"growth of another item is not attributed");
+        check(ModAdapters.absorbedBy(before,Map.of("sb:backpack",Map.of("minecraft:cobblestone",7,"minecraft:dirt",1)),"minecraft:cobblestone",4)==null,"any extra change voids the attribution");
+        check(ModAdapters.absorbedBy(Map.of("a:x",Map.of(),"b:y",Map.of()),Map.of("a:x",Map.of("minecraft:stone",2),"b:y",Map.of("minecraft:stone",2)),"minecraft:stone",4)==null,"a split across sinks is not attributed");
+        check("b:y".equals(ModAdapters.absorbedBy(Map.of("a:x",Map.of(),"b:y",Map.of()),Map.of("a:x",Map.of(),"b:y",Map.of("minecraft:stone",4)),"minecraft:stone",4)),"the one sink that grew is named");
+        check(ModAdapters.absorbedBy(null,exact,"minecraft:cobblestone",4)==null&&ModAdapters.absorbedBy(before,null,"minecraft:cobblestone",4)==null,"an unreadable sink attributes nothing");
+        check(ModAdapters.absorbedBy(Map.of(),Map.of(),"minecraft:cobblestone",4)==null,"without sinks nothing is attributed");
+        check(ModAdapters.absorbedBy(before,Map.of("other:sink",Map.of("minecraft:cobblestone",7)),"minecraft:cobblestone",4)==null,"a changed sink set attributes nothing");
+        PickupSink broken=new PickupSink(){public String id(){return "broken:sink";}public boolean installed(){throw new IllegalStateException();}public Map<String,Integer> stored(net.minecraft.server.level.ServerPlayer p){return Map.of();}};
+        PickupSink absent=new PickupSink(){public String id(){return "absent:sink";}public boolean installed(){return false;}public Map<String,Integer> stored(net.minecraft.server.level.ServerPlayer p){return Map.of();}};
+        PickupSink live=new PickupSink(){public String id(){return "live:sink";}public boolean installed(){return true;}public Map<String,Integer> stored(net.minecraft.server.level.ServerPlayer p){return Map.of();}};
+        check(ModAdapters.installedSinks(List.of(broken,absent,live)).equals(List.of(live)),"only installed sinks are used; a throwing installed() counts as absent");
+
         System.out.println("ModAdaptersTest: "+checks+" checks passed (registry, dispatch merge, JSON declarations; no Minecraft launch)");
     }
 }

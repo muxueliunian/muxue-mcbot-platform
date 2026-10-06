@@ -29,6 +29,7 @@ const helloSchema = z.object({
   platform: z.object({ minecraft: z.string(), loader: z.string(), loaderVersion: z.string() }),
   capabilities: z.array(z.string()), connected: z.boolean(), sessionId: identifier.nullable(),
   interactions: z.array(z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).max(256).optional(),
+  itemInteractions: z.array(z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).max(256).optional(),
   adapters: z.array(z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).max(256).optional(),
 });
 const observationSchema = z.object({
@@ -42,7 +43,7 @@ const observationSchema = z.object({
   block: z.object({ position, state: z.enum(['loaded', 'unloaded']), id: z.string().optional(), properties: z.record(z.unknown()).optional() }).optional(),
   source: z.literal('server-observed'),
   groundItems: z.array(z.object({ entityId: z.string().uuid(), position, stack: itemValue, onGround: z.boolean().optional(), visible: z.boolean().nullable().optional(), visibility: z.enum(['visible', 'occluded', 'unknown']) })).max(32).optional(), groundItemsTruncated: z.boolean().optional(),
-  pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier })).max(256).optional(),
+  pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier, storedIn: identifier.optional() })).max(256).optional(),
 });
 const operationSchema = z.object({
   operationId: identifier, sessionId: identifier, name: z.string(), controlGeneration: generation,

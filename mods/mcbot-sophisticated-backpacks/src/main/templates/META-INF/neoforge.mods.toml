@@ -1,0 +1,34 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mods]]
+modId="mcbot_sophisticated_backpacks"
+version="${mod_version}"
+displayName="MCBOT × Sophisticated Backpacks"
+authors="muxue"
+description='''Example MCBOT add-on: lets the bot open a held backpack, use a placed backpack as a container, and accounts for items a carried backpack's pickup upgrade takes. Verified only against Sophisticated Backpacks 3.25.77 with Sophisticated Core 1.4.86; other versions stay unsupported. Contains no Sophisticated Backpacks code or assets.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_sophisticated_backpacks]]
+modId="mcbot_server_control"
+type="required"
+versionRange="[0.1.0,)"
+ordering="AFTER"
+side="BOTH"
+[[dependencies.mcbot_sophisticated_backpacks]]
+modId="sophisticatedbackpacks"
+type="optional"
+versionRange="*"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_sophisticated_backpacks]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_sophisticated_backpacks]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"

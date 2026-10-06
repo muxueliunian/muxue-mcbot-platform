@@ -18,9 +18,20 @@ import net.minecraft.world.level.block.state.BlockState;
 public interface ItemInteraction {
     String BLOCK = "block", ITEM = "item";
 
-    /** Effects a succeeded interaction may produce; anything else makes the receipt unknown. */
+    /**
+     * Effects a succeeded interaction may produce; anything else makes the receipt unknown. {@code heldComponents} names
+     * data components of the held stack that may change (e.g. a storage id a backpack assigns on first open); check
+     * their values in {@link #consistent}.
+     */
     record Expected(int minConsumed, int maxConsumed, boolean heldDamageAllowed, Set<String> properties,
-                    Set<String> summaryFields, Set<String> gainedItems, boolean opensMenu) {}
+                    Set<String> summaryFields, Set<String> gainedItems, boolean opensMenu, Set<String> heldComponents) {
+        public Expected { heldComponents = heldComponents == null ? Set.of() : Set.copyOf(heldComponents); }
+
+        public Expected(int minConsumed, int maxConsumed, boolean heldDamageAllowed, Set<String> properties,
+                        Set<String> summaryFields, Set<String> gainedItems, boolean opensMenu) {
+            this(minConsumed, maxConsumed, heldDamageAllowed, properties, summaryFields, gainedItems, opensMenu, Set.of());
+        }
+    }
 
     /** Stable id the agent passes back, e.g. {@code minecraft:composter/add}. */
     String id();

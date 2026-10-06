@@ -39,6 +39,7 @@ final class PickupItem {
     private int index,picked;
     private boolean stolen,stopped;
     private JsonObject pickedStack;
+    private String storedIn;
     PickupItem(ControlSession.Operation operation,View view,LongSupplier clock) {
         this.operation=operation;this.view=view;this.clock=clock;entityId=string(operation.args,"entityId");
         try {if(!UUID.fromString(entityId).toString().equalsIgnoreCase(entityId))throw new IllegalArgumentException();}
@@ -51,11 +52,13 @@ final class PickupItem {
         deadline=clock.getAsLong()+(long)bounded(operation.args,"timeoutMs",15_000,500,30_000);
         identity=view.identity();health=view.health();initialTarget=view.target();progressPosition=view.feet();progressTime=clock.getAsLong();
     }
-    void picked(Object actualIdentity,boolean byBody,JsonObject stack,int count) {
+    /** sink: the carried storage that took the items instead of the inventory, or null. */
+    void picked(Object actualIdentity,boolean byBody,JsonObject stack,int count,String sink) {
         if(stopped||actualIdentity!=identity||!operation.status.equals("running"))return;
         if(!byBody){stolen=true;return;}
         if(!sameVariant(expected,stack)||count<=0||picked+count>expected.get("count").getAsInt()) {fail("PICKUP_UNKNOWN","Native pickup changed the bound item stack");return;}
-        picked+=count;pickedStack=stack.deepCopy();pickedStack.addProperty("count",picked);
+        if(picked>0&&!Objects.equals(storedIn,sink)) {fail("PICKUP_UNKNOWN","Native pickup split between the inventory and carried storage");return;}
+        picked+=count;storedIn=sink;pickedStack=stack.deepCopy();pickedStack.addProperty("count",picked);
     }
     boolean targets(Object actualIdentity){return !stopped&&actualIdentity==identity;}
     static boolean sameVariant(JsonObject expected,JsonObject actual) {
@@ -104,7 +107,7 @@ final class PickupItem {
     private JsonObject result(String code) {
         JsonObject result=obj("entityId",entityId,"pickedUpCount",picked,"pickup",picked>0?"confirmed":"unconfirmed","requestedCount",expected.get("count").getAsInt());
         if(code==null&&!stolen)result.addProperty("remainingCount",expected.get("count").getAsInt()-picked);
-        if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());if(pickedStack!=null)result.add("stack",pickedStack.deepCopy());if(code!=null)result.addProperty("code",code);return result;
+        if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());if(pickedStack!=null)result.add("stack",pickedStack.deepCopy());if(storedIn!=null)result.addProperty("storedIn",storedIn);if(code!=null)result.addProperty("code",code);return result;
     }
     void fail(String code,String message){operation.finish("failed",code+": "+message,result(code));stop();}
     void stop(){stopped=true;route=null;view.cancelNavigation();view.stop();}

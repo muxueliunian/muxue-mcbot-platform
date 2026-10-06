@@ -6,7 +6,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 
 /** In-process sink; no network listener or second Minecraft client. */
-final class VirtualConnection extends Connection {
+public final class VirtualConnection extends Connection {
     private final EmbeddedChannel localChannel;
     private PacketListener listener;
     VirtualConnection() { super(PacketFlow.SERVERBOUND); localChannel=new EmbeddedChannel(this); }

@@ -20,7 +20,7 @@ Java 21 编译：`$env:JAVA_HOME='D:/Java/jdk-21'; ./gradlew.bat build`。产物
 
 默认 spawn 为 null，使用原版出生点。配置 spawn 仅无该 UUID 的玩家存档时生效，附着已存活角色不会传送。身份、世界与端口只由服务端配置指定，claim 不能任意更换角色或出生点。不要把配置身份设为 OP；存活可控判定、claim 和 respawn 都拒绝 OP，运行中加 OP 也会使旧控制失效。唯一例外是单人世界「对局域网开放＋允许作弊」给所有玩家的 OP（内置服务器没有出生点保护）。单人世界没开局域网时拒绝接管（`SINGLEPLAYER_NOT_LAN`），`worldId: "auto"` 按存档文件夹命名，见[单人模式](../../docs/singleplayer_design.md)。
 
-Mod 适配（R5）：附属模组通过公开包 `com.mcbot.servercontrol.api` 登记容器适配和右键交互，服主可以在 `config/mcbot-server-control/interactions/*.json` 里声明简单交互；服务器启动时加载，结果写进 `hello.adapters` 和 `hello.interactions`，日志里有一行 `MCBOT adapters: ...`。见 [Mod 适配接口](../../docs/mod_adapters.md)，示例附属模组见 [mcbot-kaleidoscope-cookery](../mcbot-kaleidoscope-cookery/README.md)。
+Mod 适配（R5）：附属模组通过公开包 `com.mcbot.servercontrol.api` 登记容器适配和右键交互，服主可以在 `config/mcbot-server-control/interactions/*.json` 里声明简单交互；服务器启动时加载，结果写进 `hello.adapters` 和 `hello.interactions`，日志里有一行 `MCBOT adapters: ...`。见 [Mod 适配接口](../../docs/mod_adapters.md)，示例附属模组见 [mcbot-kaleidoscope-cookery](../mcbot-kaleidoscope-cookery/README.md) 和 [mcbot-sophisticated-backpacks](../mcbot-sophisticated-backpacks/README.md)。别的 Mod 把掉落物直接收进玩家身上的存储时，附属模组可以登记 `PickupSink`，按数量核对后记账。Bot 没有客户端，核心会直接丢掉发给 Bot 的网络包，不做 NeoForge 的频道检查，这样登录时会给客户端发包的 Mod 也不会让 Bot 进不了服。
 
 每次服务启动随机生成实例与本机 Bearer token，写同目录 `connection.json`（含 backend、endpoint、worldId、username）。此文件为本机凭据，不能公开或打印 token。HTTP 只接受本机 POST JSON /v2，拒绝 Origin、其它路径、非 JSON 与超过 64 KiB 请求；所有游戏读写在主线程执行，排队超时请求不得在后续 tick 执行。
 

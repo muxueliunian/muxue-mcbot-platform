@@ -58,6 +58,10 @@ final class ItemInteractions {
         JsonArray result=new JsonArray();for(ItemInteraction interaction:available) result.add(interaction.id());return result;
     }
     static JsonArray ids() {return ids(installed());}
+    /** Ids of the in-air ({@link #ITEM}) interactions, so the runtime can offer them separately from block right-clicks. */
+    static JsonArray itemIds(List<ItemInteraction> available) {
+        JsonArray result=new JsonArray();for(ItemInteraction interaction:available) if(ITEM.equals(interaction.kind())) result.add(interaction.id());return result;
+    }
     static ItemInteraction require(List<ItemInteraction> available,String id,String kind) {
         for(ItemInteraction interaction:available) if(interaction.id().equals(id)) {
             if(!interaction.kind().equals(kind)) throw error("UNSUPPORTED","Interaction "+id+" is not a "+kind+" interaction");
@@ -121,7 +125,7 @@ final class ItemInteractions {
         return result;
     }
     private static boolean empty(JsonObject stack) {return stack==null||stack.get("count").getAsInt()==0||stack.get("id").getAsString().equals("minecraft:air");}
-    private static JsonObject withoutDamage(JsonObject components) {JsonObject copy=components.deepCopy();copy.remove("minecraft:damage");return copy;}
+    private static JsonObject without(JsonObject components,Set<String> keys) {JsonObject copy=components.deepCopy();for(String key:keys) copy.remove(key);return copy;}
     private static JsonObject member(JsonObject object,String key) {return object.has(key)&&object.get(key).isJsonObject()?object.getAsJsonObject(key):new JsonObject();}
     private static void changedKeys(JsonObject before,JsonObject after,Set<String> allowed,String label,JsonArray unexpected) {
         Set<String> keys=new TreeSet<>(before.keySet());keys.addAll(after.keySet());
@@ -153,8 +157,8 @@ final class ItemInteractions {
                 int lost=b.get("count").getAsInt()-(empty(a)?0:a.get("count").getAsInt());
                 if(lost<0) { unexpected.add("held stack grew");continue; }
                 consumed=lost;
-                if(sameKind&&!b.getAsJsonObject("components").equals(a.getAsJsonObject("components"))&&
-                    !(expected.heldDamageAllowed()&&withoutDamage(b.getAsJsonObject("components")).equals(withoutDamage(a.getAsJsonObject("components")))))
+                Set<String> mayChange=new HashSet<>(expected.heldComponents());if(expected.heldDamageAllowed()) mayChange.add("minecraft:damage");
+                if(sameKind&&!without(b.getAsJsonObject("components"),mayChange).equals(without(a.getAsJsonObject("components"),mayChange)))
                     unexpected.add("held item components changed");
                 continue;
             }

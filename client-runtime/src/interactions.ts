@@ -36,6 +36,26 @@ async function settle(body: Body, operation: Operation): Promise<Operation> {
   return operation;
 }
 
+export interface UseItemRequest { interaction: string; item: string; timeoutMs?: number }
+
+/** One registered in-air use of a held item (e.g. opening a backpack), with guards from a fresh observation. */
+export async function useItem(body: Body, request: UseItemRequest, taskToken?: string): Promise<Operation> {
+  if (!body.hello.capabilities.includes('use-item')) throw new BodyError('UNSUPPORTED', '身体没有声明对空使用物品的能力');
+  if (!body.hello.itemInteractions?.includes(request.interaction)) throw new BodyError('UNSUPPORTED', `服务端没有登记对空使用的交互 ${request.interaction}`);
+  const state = await body.observe();
+  const chosen = hotbarStack(state.inventory, state.selectedSlot, request.item);
+  return body.act('use-item', { interaction: request.interaction, slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components!, ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}) }, taskToken);
+}
+
+function hotbarStack(inventory: Array<{ slot: number; id: string; count: number; components?: Record<string, unknown>; componentsComplete?: boolean }>, selectedSlot: number | undefined, item: string) {
+  const matches = inventory.filter(stack => stack.id === item && stack.count > 0);
+  const hotbar = matches.filter(stack => stack.slot >= 0 && stack.slot <= 8);
+  if (!hotbar.length) throw new BodyError(matches.length ? 'NOT_IN_HOTBAR' : 'MISSING_ITEM', matches.length ? `${item} 不在快捷栏，先用 prepare-item 放到快捷栏` : `背包里没有 ${item}`);
+  const chosen = hotbar.find(stack => stack.slot === selectedSlot) ?? hotbar[0];
+  if (chosen.componentsComplete === false || !chosen.components) throw new BodyError('INCOMPLETE_GUARD', '这个物品的组件读不完整，不能安全使用');
+  return chosen;
+}
+
 /**
  * One registered right-click on a block. Guards come from a fresh server observation; the model never
  * computes slots or copies components. The server still re-checks everything and decides the receipt.
@@ -50,10 +70,6 @@ export async function interactBlock(body: Body, request: InteractBlockRequest, t
   if (!block || block.state !== 'loaded' || !block.id) throw new BodyError('UNLOADED', '目标方块所在区块没有加载');
   const target = { x, y, z, interaction: request.interaction, expectedBlock: block.id, expectedProperties: block.properties ?? {}, ...(request.face ? { face: request.face } : {}), ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}) };
   if (request.emptyHand) return body.act('use-item-on-block', { ...target, emptyHand: true }, taskToken);
-  const matches = state.inventory.filter(stack => stack.id === request.item && stack.count > 0);
-  const hotbar = matches.filter(stack => stack.slot >= 0 && stack.slot <= 8);
-  if (!hotbar.length) throw new BodyError(matches.length ? 'NOT_IN_HOTBAR' : 'MISSING_ITEM', matches.length ? `${request.item} 不在快捷栏，先用 prepare-item 放到快捷栏` : `背包里没有 ${request.item}`);
-  const chosen = hotbar.find(stack => stack.slot === state.selectedSlot) ?? hotbar[0];
-  if (chosen.componentsComplete === false || !chosen.components) throw new BodyError('INCOMPLETE_GUARD', '这个物品的组件读不完整，不能安全使用');
-  return body.act('use-item-on-block', { ...target, slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components }, taskToken);
+  const chosen = hotbarStack(state.inventory, state.selectedSlot, request.item!);
+  return body.act('use-item-on-block', { ...target, slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components! }, taskToken);
 }

@@ -18,6 +18,7 @@ public final class McbotApi {
     private static final Pattern ID = Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
     private static final List<ContainerAdapter> CONTAINERS = new ArrayList<>();
     private static final List<ItemInteraction> INTERACTIONS = new ArrayList<>();
+    private static final List<PickupSink> PICKUP_SINKS = new ArrayList<>();
     private static final Set<String> IDS = new HashSet<>();
     private static boolean frozen;
 
@@ -34,6 +35,12 @@ public final class McbotApi {
         String kind = interaction.kind();
         if (!ItemInteraction.BLOCK.equals(kind) && !ItemInteraction.ITEM.equals(kind)) throw new IllegalArgumentException("Unknown interaction kind: " + kind);
         INTERACTIONS.add(interaction);
+        IDS.add(id);
+    }
+
+    public static synchronized void registerPickupSink(PickupSink sink) {
+        String id = checkId(Objects.requireNonNull(sink, "sink").id());
+        PICKUP_SINKS.add(sink);
         IDS.add(id);
     }
 
@@ -66,8 +73,8 @@ public final class McbotApi {
     /** Snapshot of what add-ons registered. Internal: called by MCBOT when a server starts. */
     public static synchronized Registered freeze() {
         frozen = true;
-        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS));
+        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS));
     }
 
-    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions) {}
+    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks) {}
 }

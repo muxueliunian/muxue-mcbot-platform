@@ -9,11 +9,13 @@ final class PickupLedger {
     static final int LIMIT=256;
     private long cursor;
     private final ArrayDeque<JsonObject> receipts=new ArrayDeque<>();
-    JsonObject record(String entityId,JsonObject position,JsonObject original,JsonObject remaining,String session,long generation,String dimension) {
+    /** storedIn names the pickup sink (e.g. a carried backpack) that took the items instead of the inventory; null for the inventory. */
+    JsonObject record(String entityId,JsonObject position,JsonObject original,JsonObject remaining,String session,long generation,String dimension,String storedIn) {
         int count=pickedUpCount(original,remaining);
         JsonObject stack=original.deepCopy();stack.addProperty("count",count);
         JsonObject receipt=obj("seq",++cursor,"entityId",entityId,"position",position,"stack",stack,"pickedUpCount",count,
             "sessionId",session,"controlGeneration",generation,"dimension",dimension);
+        if(storedIn!=null)receipt.addProperty("storedIn",storedIn);
         receipts.addLast(receipt);while(receipts.size()>LIMIT)receipts.removeFirst();return receipt.deepCopy();
     }
     static int pickedUpCount(JsonObject original,JsonObject remaining) {

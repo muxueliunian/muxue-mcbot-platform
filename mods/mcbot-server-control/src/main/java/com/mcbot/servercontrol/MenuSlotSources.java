@@ -51,7 +51,7 @@ final class MenuSlotSources {
 
     static JsonObject annotate(JsonObject stack,Slot slot,Inventory inventory,Container storage,ContainerAdapter adapter) {
         Source source=classify(new BackingSlot(slot.container,slot.getContainerSlot(),slot.container.getContainerSize()),inventory,inventory.getContainerSize(),storage);
-        if(adapter!=null&&source.source().equals("unknown")) source=ModAdapters.playerSource(adapter,slot,inventory);
+        if(adapter!=null&&source.source().equals("unknown")) source=ModAdapters.storageSlot(adapter,slot,storage)?new Source("container",null):ModAdapters.playerSource(adapter,slot,inventory);
         stack.addProperty("source",source.source());
         if(source.playerSlot()!=null) stack.addProperty("playerSlot",source.playerSlot());
         return stack;

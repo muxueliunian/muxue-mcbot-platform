@@ -23,6 +23,8 @@ public final class McbotServerControl {
         NeoForge.EVENT_BUS.addListener(this::beforeTick);
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,this::chat);
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,this::pickup);
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,(ItemEntityPickupEvent.Pre event)->{if(controller!=null)controller.receivePickupPre(event,true);});
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,(ItemEntityPickupEvent.Pre event)->{if(controller!=null)controller.receivePickupPre(event,false);});
         NeoForge.EVENT_BUS.addListener(RespawnValidationFixture::register);
         NeoForge.EVENT_BUS.addListener(RespawnValidationFixture::cloneEvent);
         NeoForge.EVENT_BUS.addListener(RespawnValidationFixture::respawnEvent);

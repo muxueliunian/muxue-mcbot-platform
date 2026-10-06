@@ -62,26 +62,28 @@ final class ResourcePickupTest {
         check(airborne.getAsJsonObject("stack").equals(dropStack)&&grounded.getAsJsonObject("position").equals(dropPosition)&&grounded.get("entityId").getAsString().equals("drop"),"landing observation preserves complete stack maximum components position and identity guards");
         check(ServerController.groundObservation("drop",dropPosition,dropStack,"unknown",false).get("visible").isJsonNull(),"unknown loaded-only visibility does not invent visibility from landing state");
 
-        PickupLedger ledger=new PickupLedger();JsonObject first=ledger.record("item",obj("x",1,"y",1,"z",1),stack(4,64),stack(1,64),"session",1,"overworld");
+        PickupLedger ledger=new PickupLedger();JsonObject first=ledger.record("item",obj("x",1,"y",1,"z",1),stack(4,64),stack(1,64),"session",1,"overworld",null);
         check(first.get("pickedUpCount").getAsInt()==3&&first.getAsJsonObject("stack").get("count").getAsInt()==3,"native partial pickup count uses original minus remaining not whole entity");
         check(first.getAsJsonObject("stack").get("maxStackSize").getAsInt()==64&&first.getAsJsonObject("stack").getAsJsonObject("components").equals(stack(4,64).get("components")),"pickup receipt preserves actual variant and effective stack maximum");
-        PickupLedger highMaximum=new PickupLedger();JsonObject highReceipt=highMaximum.record("large",obj(),stack(99,99),stack(0,99),"session",1,"overworld");
+        PickupLedger highMaximum=new PickupLedger();JsonObject highReceipt=highMaximum.record("large",obj(),stack(99,99),stack(0,99),"session",1,"overworld",null);
         check(highReceipt.get("pickedUpCount").getAsInt()==99&&highReceipt.getAsJsonObject("stack").get("maxStackSize").getAsInt()==99,"native quantity above64 is retained exactly without atomic-drop limit truncation");
         check(PickupLedger.pickedUpCount(stack(4,64),stack(0,64))==4,"complete pickup handles empty current stack before count refill");
         errorCode("PICKUP_UNKNOWN",()->PickupLedger.pickedUpCount(stack(4,64),stack(4,64)));
         errorCode("PICKUP_UNKNOWN",()->PickupLedger.pickedUpCount(stack(4,64),stack(5,64)));
         errorCode("PICKUP_UNKNOWN",()->PickupLedger.pickedUpCount(stack(4,64),stack(1,16)));
-        for(int i=0;i<PickupLedger.LIMIT;i++)ledger.record("item"+i,obj(),stack(1,99),stack(0,99),"session",1,"overworld");
+        for(int i=0;i<PickupLedger.LIMIT;i++)ledger.record("item"+i,obj(),stack(1,99),stack(0,99),"session",1,"overworld",null);
         JsonObject history=ledger.observation();
         check(history.getAsJsonArray("pickupReceipts").size()==256&&history.get("pickupCursor").getAsInt()==257&&history.get("pickupOldestCursor").getAsInt()==1,"bounded receipt history exposes exact lower cursor for gap rejection");
+        JsonObject stored=new PickupLedger().record("item",obj(),stack(4,64),stack(0,64),"session",1,"overworld","sophisticatedbackpacks:backpack");
+        check(stored.get("storedIn").getAsString().equals("sophisticatedbackpacks:backpack")&&!first.has("storedIn"),"receipts name a carried storage destination and omit it for the inventory");
         ledger.unknown();check(ledger.observation().getAsJsonArray("pickupReceipts").isEmpty()&&ledger.observation().get("pickupOldestCursor").getAsInt()==258,"unattributable native event creates visible receipt gap instead of invented count");
 
         Fixture normal=new Fixture();normal.pickup.tick();check(normal.operation.status.equals("running")&&normal.view.moves==1,"pickup owns a running ordinary movement operation");
-        normal.pickup.picked(normal.view.entity,true,stack(4,64),4);normal.view.live=false;normal.pickup.tick();
+        normal.pickup.picked(normal.view.entity,true,stack(4,64),4,null);normal.view.live=false;normal.pickup.tick();
         check(normal.operation.status.equals("succeeded")&&normal.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==4&&normal.view.input==null,"matching native Post confirms pickup even after entity discard");
         Fixture absent=new Fixture();absent.view.live=false;absent.failure("PICKUP_UNKNOWN");
         check(absent.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==0&&absent.operation.result.getAsJsonObject().get("pickup").getAsString().equals("unconfirmed"),"unknown disappearance never counts as received");
-        Fixture other=new Fixture();other.pickup.picked(other.view.entity,false,stack(4,64),4);other.failure("PICKUP_TAKEN");
+        Fixture other=new Fixture();other.pickup.picked(other.view.entity,false,stack(4,64),4,null);other.failure("PICKUP_TAKEN");
         Fixture replacement=new Fixture();replacement.view.entity=new Object();replacement.failure("PICKUP_UNKNOWN");
         Fixture changed=new Fixture();changed.view.stack=stack(3,64);changed.failure("STALE_ITEM");
         Fixture maximum=new Fixture();maximum.view.stack=stack(4,16);maximum.failure("STALE_ITEM");
@@ -90,10 +92,15 @@ final class ResourcePickupTest {
         Fixture reserved=new Fixture();reserved.view.eligible=false;reserved.failure("FORBIDDEN");
         Fixture moved=new Fixture();moved.view.target=moved.view.target.add(1,0,0);moved.failure("TARGET_MOVED");
         Fixture expired=new Fixture();expired.view.time.set(15000);expired.failure("TIMEOUT");
-        Fixture stopped=new Fixture();stopped.pickup.tick();stopped.pickup.stop();int moves=stopped.view.moves;stopped.pickup.picked(stopped.view.entity,true,stack(4,64),4);stopped.pickup.tick();
+        Fixture stopped=new Fixture();stopped.pickup.tick();stopped.pickup.stop();int moves=stopped.view.moves;stopped.pickup.picked(stopped.view.entity,true,stack(4,64),4,null);stopped.pickup.tick();
         check(stopped.view.input==null&&stopped.view.moves==moves&&stopped.operation.status.equals("running"),"retired pickup cannot consume late Post or resume input; session owns cancellation metadata");
         Fixture lost=new Fixture();lost.view.planExpires=true;lost.pickup.tick();check(lost.view.moves==0&&lost.view.input==null,"lease lost during route plan cannot emit late input");
-        Fixture partial=new Fixture();partial.pickup.picked(partial.view.entity,true,stack(2,64),2);partial.pickup.tick();
+        Fixture sunk=new Fixture();sunk.pickup.picked(sunk.view.entity,true,stack(4,64),4,"sb:backpack");sunk.view.live=false;sunk.pickup.tick();
+        check(sunk.operation.status.equals("succeeded")&&sunk.operation.result.getAsJsonObject().get("storedIn").getAsString().equals("sb:backpack"),"pickup into a carried storage succeeds and says where the items went");
+        check(!normal.operation.result.getAsJsonObject().has("storedIn"),"an inventory pickup carries no storage destination");
+        Fixture split=new Fixture();split.pickup.picked(split.view.entity,true,stack(2,64),2,"sb:backpack");split.pickup.picked(split.view.entity,true,stack(2,64),2,null);
+        check(split.operation.status.equals("failed")&&split.operation.result.getAsJsonObject().get("code").getAsString().equals("PICKUP_UNKNOWN"),"a pickup split between inventory and carried storage is unknown");
+        Fixture partial=new Fixture();partial.pickup.picked(partial.view.entity,true,stack(2,64),2,null);partial.pickup.tick();
         check(partial.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==2&&partial.operation.result.getAsJsonObject().get("remainingCount").getAsInt()==2,"partial native pickup reports only actual count and remaining portion");
         // A barely-intersecting cell used to end a route before a 0.15-tolerance arrival
         // actually touched the item. Use vanilla's exact body inflation for this boundary.
@@ -115,7 +122,7 @@ final class ResourcePickupTest {
         check(arrival.operation.status.equals("running")&&arrival.view.input!=null,"tolerated first waypoint cannot prematurely exhaust the interior pickup route");
         arrival.view.feet=planned.add(-0.14,0,0);arrival.view.time.set(50);arrival.pickup.tick();
         check(arrival.operation.status.equals("running")&&arrival.view.input==null,"actual reach waits for physical Post and never declares virtual pickup success");
-        arrival.pickup.picked(arrival.view.entity,true,stack(4,64),4);arrival.view.live=false;arrival.view.time.set(100);arrival.pickup.tick();
+        arrival.pickup.picked(arrival.view.entity,true,stack(4,64),4,null);arrival.view.live=false;arrival.view.time.set(100);arrival.pickup.tick();
         check(arrival.operation.status.equals("succeeded")&&arrival.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==4,"next physical-tick native Post confirms quantity after entity removal");
         System.out.println("ResourcePickupTest: "+checks+" checks passed");
     }

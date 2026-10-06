@@ -71,6 +71,17 @@ final class ItemInteractionsTest {
         JsonObject menuAfter=snapshot("0",shovel);menuAfter.addProperty("menu","example:backpack");
         check(ItemInteractions.judge(snapshot("0",shovel),menuAfter,0,menu,(x,y)->true).status().equals("succeeded"),"declared menu opening is within the envelope (menu contract checked separately)");
 
+        // Declared held components (e.g. a backpack's storage id assigned on first open)
+        JsonObject pack=stack(0,"example:backpack",1,obj()),packed=stack(0,"example:backpack",1,obj("example:storage_uuid",obj("type","string","value","u")));
+        JsonObject openedAfter=snapshot("0",packed);openedAfter.addProperty("menu","example:backpack");
+        var opens=new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),true,Set.of("example:storage_uuid"));
+        check(ItemInteractions.judge(snapshot("0",pack),openedAfter,0,opens,(x,y)->true).status().equals("succeeded"),"declared held component change is within the envelope");
+        check(ItemInteractions.judge(snapshot("0",pack),openedAfter,0,menu,(x,y)->true).status().equals("unknown"),"undeclared held component change stays unknown");
+        JsonObject renamed=stack(0,"example:backpack",1,obj("example:storage_uuid",obj("type","string","value","u"),"minecraft:custom_name",obj("type","string","value","x")));
+        JsonObject renamedAfter=snapshot("0",renamed);renamedAfter.addProperty("menu","example:backpack");
+        check(ItemInteractions.judge(snapshot("0",pack),renamedAfter,0,opens,(x,y)->true).status().equals("unknown"),"other held components still count beside a declared one");
+        check(new ItemInteraction.Expected(0,0,false,null,null,null,false).heldComponents().isEmpty()&&new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),false,null).heldComponents().isEmpty(),"seven-argument and null held components mean none");
+
         // Held rules: empty hand is never a fallback
         ItemInteractions.requireHeld(false,false,false,true);checks++;
         errorCode("UNSUPPORTED",()->ItemInteractions.requireHeld(true,false,true,false));

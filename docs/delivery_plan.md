@@ -19,10 +19,10 @@
 | 陪伴：持续跟随、等待、跟随时捡指定物品 | 已验证 |
 | 有限采集：石料、原木，6 种矿石的普通产物 | 已验证 |
 | 生存：背包、工具选择、自动进食、有限高差寻路、近距自卫 | 已验证，有地形和武器范围的限制 |
-| 内容 Mod | 只有 Iron Furnaces 普通铁炉一个样本 |
+| 内容 Mod | 内置 Iron Furnaces 普通铁炉；示例附属模组：森罗厨房（炒锅做菜）、Sophisticated Backpacks（背包） |
 | Agent | Claude Code、Codex 都实际跑通过；Claude 没有在新矿石功能上实测过 |
-| 手持物品使用 | 对方块使用（右键）已实服验证，首批只登记了原版堆肥桶；对空使用只有离线测试 |
-| MCP 工具 | 40 个（新增 `interact-block`），工具定义约 33KB（粗估 9k token），托管时放在缓存前缀里 |
+| 手持物品使用 | 对方块使用（右键）、对空使用都已实服验证；内置原版堆肥桶，示例附属模组提供炒锅和背包的交互 |
+| MCP 工具 | 40 个，装了对空使用的交互时再多一个 `use-item`；工具定义约 33KB（粗估 9k token），托管时放在缓存前缀里 |
 
 ## 还没解决的
 
@@ -38,14 +38,14 @@
 
 | 顺序 | 内容 | 完成标准 | 估计 |
 | --- | --- | --- | --- |
-| 1 | ✅ **通用能力：手持物品使用**（[设计](use_item_design.md)、[验收](archive/use_item_validation.md)） | 对方块使用已实服验收；对空使用只有离线测试，等 SB 背包再实测 | 已完成 |
+| 1 | ✅ **通用能力：手持物品使用**（[设计](use_item_design.md)、[验收](archive/use_item_validation.md)） | 对方块使用已实服验收；对空使用 10-06 用 SB 背包实服验收 | 已完成 |
 | 2 | ✅ **完善陪玩** | 陪挖 `COMPANION_OUT_OF_RANGE` 已修（[验收](archive/companion_mining_validation.md)）；单人模式开局域网后接管（[设计与验收](singleplayer_design.md)）。试玩中再发现的体验问题随时补 | 已完成 |
 | 3 | **请用户验收** | 真实模型陪挖；用户在自己的实例里试单人模式（独立服务器回归 10-06 已跑过，陪挖 24 项、手持物品 18 项通过） | 半天，需要用户 |
 | 4 | ✅ **R7：拆出 Agent 适配接口**（10-06，见 [Agent 接入计划](agent_integration_plan.md) 的 dsh 调研） | Claude Code、Codex 走同一个接口，任务执行策略不复制；现有回归通过 | 约 1 天 |
 | 5 | ✅ **dsh 接入**（[验收](archive/dsh_validation.md)） | 走 ACP（`dsh --profile acp`），锁定 `0.2.0-rc.2`，也能直接用 DeepSeek Harness 桌面版自带的 dsh；只留游戏工具；事件唤醒、回合结束、叫停、恢复会话都走驱动器同一套流程。10-06 在隔离服用真实模型实测通过 | 已完成 |
 | 6 | ✅ **本地 WebUI**（[说明](dev.md#本地-webui)） | `node scripts/webui.mjs`，只听 `127.0.0.1`、一次性令牌：Bot 状态、陪伴模式、游戏聊天和 AI 每轮回复、工具调用和错误、「叫停」「停止托管」按钮；三家 Agent 通用；不做桌面 GUI，不在网页里配置启动 | 已完成 |
 | 7 | ✅ **R5：Mod 适配接口**（[说明](mod_adapters.md)） | 公开包 `com.mcbot.servercontrol.api`：附属模组登记容器适配和右键交互；服主用 `interactions/*.json` 声明简单交互；所有分派走统一入口，未知 Mod 默认拒绝，适配器出错按拒绝或 unknown 处理；Iron Furnaces 和堆肥桶改用新接口。10-06 离线 42 项、隔离服 13 项通过 | 已完成 |
-| 8 | **示例适配**（10-06 进行中：森罗厨房附属模组 `mods/mcbot-kaleidoscope-cookery` 已完成；SB 待做，选定 3.25.77.2086 + Core 1.4.86.2259，因为更新的版本要求 NeoForge ≥ 21.1.229） | ①**森罗物语：厨房**：先跑通炒锅一道菜（放油、加料、翻炒、出锅），翻炒时机由程序盯，不逐次唤醒模型；反射调用、锁定版本；代码 BSD-3、素材 CC BY-NC-SA 4.0，适配器只调用接口、不带素材。②**Sophisticated Backpacks**：手持打开、可放置，处理它的拾取升级和我们拾取逻辑的冲突；顺带实测 `use-item` | 3～5 天 |
+| 8 | ✅ **示例适配**（10-06 完成：[森罗厨房](../mods/mcbot-kaleidoscope-cookery/README.md) 隔离服 16 项、[SB 背包](../mods/mcbot-sophisticated-backpacks/README.md) 隔离服 18 项通过；SB 选 3.25.77.2086 + Core 1.4.86.2259，因为更新的版本要求 NeoForge ≥ 21.1.229） | ①**森罗物语：厨房**：先跑通炒锅一道菜（放油、加料、翻炒、出锅），翻炒时机由程序盯，不逐次唤醒模型；反射调用、锁定版本；代码 BSD-3、素材 CC BY-NC-SA 4.0，适配器只调用接口、不带素材。②**Sophisticated Backpacks**：手持打开、可放置，处理它的拾取升级和我们拾取逻辑的冲突；顺带实测 `use-item` | 3～5 天 |
 | 9 | **打包和上手文档** | 给观众的安装包和一键启动（独立服务器和单人两种）、快速上手、三家 Agent 的配置示例 | 约 1 天 |
 | 10 | **三家回归并发布 v0.1** | Claude、Codex、dsh 各跑一轮试玩；发布说明写清支持范围和已知限制 | 约 1 天 |
 

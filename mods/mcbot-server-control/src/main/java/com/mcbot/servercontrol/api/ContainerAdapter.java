@@ -43,4 +43,14 @@ public interface ContainerAdapter {
 
     /** Native player-inventory index for a menu slot that wraps the player inventory indirectly (e.g. item handlers). */
     default OptionalInt playerSlot(Slot slot, Inventory inventory) { return OptionalInt.empty(); }
+
+    /**
+     * Whether a menu slot belongs to the verified {@link #storage} although it does not wrap that container directly,
+     * e.g. item-handler slots whose {@code Slot.container} is a placeholder. Only asked for slots that are neither the
+     * storage container nor the player inventory.
+     */
+    default boolean storageSlot(Slot slot, Container storage) { return false; }
+
+    /** Whether a verified {@link #storage} that is not the block entity itself is the storage of this targeted block entity. */
+    default boolean storageOf(Container storage, BlockEntity entity) { return false; }
 }

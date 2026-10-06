@@ -8,7 +8,7 @@ export interface ItemStack extends ItemValue { slot: number; source?: 'container
 export interface GroundItem { entityId: string; position: Position; stack: ItemValue; onGround?: boolean; visible?: boolean | null; visibility: 'visible' | 'occluded' | 'unknown' }
 export interface CompanionGuard { player: string; expectedEntityId: string; maxDistance: number }
 export interface ResourceScanOptions { blockIds: string[]; radius: number; maxResults: number; center?: Position; companionMiningGuard?: CompanionGuard }
-export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string }
+export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string; /** A carried mod storage (e.g. a backpack) took the items instead of the inventory. */ storedIn?: string }
 export interface NearbyResources {
   instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number; center: Position;
   candidates: Array<{ position: Position; id: string; properties: Components; targetToken: string; distance: number; visible: boolean; requiresCorrectTool: boolean; suitableToolSlots: number[]; recommendedToolSlot?: number; recommendedInventorySlot?: number }>;
@@ -67,6 +67,8 @@ export interface BodyHello {
   capabilities: string[]; connected: boolean; username: string | null; sessionId: string | null;
   /** Registered held-item interaction IDs; only these may be sent with use-item-on-block / use-item. */
   interactions?: string[];
+  /** The subset of interactions used in the air (use-item), e.g. opening a held backpack; the rest are block right-clicks. */
+  itemInteractions?: string[];
   /** Mod container adapters the server has installed (e.g. ironfurnaces:iron_furnace); informational. */
   adapters?: string[];
 }

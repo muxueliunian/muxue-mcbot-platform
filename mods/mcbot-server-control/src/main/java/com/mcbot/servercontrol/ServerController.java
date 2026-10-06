@@ -149,6 +149,7 @@ final class ServerController implements ControlSession.Game {
         List<String> capabilities=new ArrayList<>(CAPABILITIES);capabilities.addAll(ItemInteractions.capabilities(interactions));
         JsonObject hello=obj("platform",obj("minecraft","1.21.1","loader","neoforge","loaderVersion","21.1.217"),"capabilities",capabilities);
         hello.add("interactions",ItemInteractions.ids(interactions));
+        hello.add("itemInteractions",ItemInteractions.itemIds(interactions));
         hello.add("adapters",ModAdapters.containerIds());
         if(validationProtection.enabled()) hello.add("validationFixture",validationProtection.json());
         return hello;
@@ -208,6 +209,41 @@ final class ServerController implements ControlSession.Game {
         return obj("entityId",entityId,"position",position,"stack",stack,"visibility",visibility,
             "visible",visibility.equals("unknown")?null:visibility.equals("visible"),"onGround",onGround);
     }
+    private ItemEntityPickupEvent.Pre pendingPre;
+    private ItemStack pendingPreStack;
+    private Map<String,Map<String,Integer>> pendingPreStored;
+    /**
+     * Another mod (e.g. a backpack pickup upgrade) may move the drop into storage during Pre and cancel the vanilla pickup,
+     * so no Post event fires. That counts as picked up only when an installed {@link com.mcbot.servercontrol.api.PickupSink}
+     * accounts for exactly the absorbed items; otherwise the ledger gets an explicit gap.
+     */
+    void receivePickupPre(ItemEntityPickupEvent.Pre event,boolean first) {
+        if(player==null||survival==null||event.getPlayer()!=player)return;
+        ItemEntity entity=event.getItemEntity();
+        if(first) {
+            pendingPre=event;pendingPreStack=entity.getItem().copy();
+            pendingPreStored=ModAdapters.pickupSinks().isEmpty()?Map.of():ModAdapters.stored(player);
+            return;
+        }
+        if(event!=pendingPre)return;
+        ItemStack before=pendingPreStack;Map<String,Map<String,Integer>> storedBefore=pendingPreStored;
+        pendingPre=null;pendingPreStack=null;pendingPreStored=null;
+        ItemStack now=entity.getItem();
+        if(event.canPickup()!=net.neoforged.neoforge.common.util.TriState.FALSE||before.isEmpty()||now.getCount()>=before.getCount())return;
+        String sink;JsonObject original=null,portion=null;int count=0;
+        try {
+            original=survival.stackValue(before);count=PickupLedger.pickedUpCount(original,survival.stackValue(now));
+            portion=original.deepCopy();portion.addProperty("count",count);
+            sink=ModAdapters.absorbedBy(storedBefore,ModAdapters.pickupSinks().isEmpty()?Map.of():ModAdapters.stored(player),string(original,"id"),count);
+        }catch(RuntimeException unknown){sink=null;}
+        if(sink==null) {
+            pickups.unknown();
+            if(pickup!=null&&pickup.targets(entity))pickup.fail("PICKUP_UNKNOWN","Another mod moved the drop into storage that no installed adapter accounts for");
+            return;
+        }
+        pickups.record(entity.getUUID().toString(),position(entity.position()),original,survival.stackValue(now),session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString(),sink);
+        if(pickup!=null)pickup.picked(entity,true,portion,count,sink);
+    }
     void receivePickup(ItemEntityPickupEvent.Post event) {
         if(player==null||survival==null)return;
         ItemEntity entity=event.getItemEntity();
@@ -215,8 +251,8 @@ final class ServerController implements ControlSession.Game {
         try {
             JsonObject original=survival.stackValue(event.getOriginalStack()),remaining=survival.stackValue(event.getCurrentStack());
             int count=PickupLedger.pickedUpCount(original,remaining);JsonObject portion=original.deepCopy();portion.addProperty("count",count);
-            if(event.getPlayer()==player)pickups.record(entity.getUUID().toString(),position(entity.position()),original,remaining,session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString());
-            if(pickup!=null)pickup.picked(entity,event.getPlayer()==player,portion,count);
+            if(event.getPlayer()==player)pickups.record(entity.getUUID().toString(),position(entity.position()),original,remaining,session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString(),null);
+            if(pickup!=null)pickup.picked(entity,event.getPlayer()==player,portion,count,null);
         }catch(RuntimeException unknown){if(event.getPlayer()==player)pickups.unknown();if(pickup!=null)pickup.fail("PICKUP_UNKNOWN","Native pickup stack could not be attributed completely");}
     }
     @Override public JsonObject watch() { return obj("chat",chat,"chatCursor",chatSequence); }

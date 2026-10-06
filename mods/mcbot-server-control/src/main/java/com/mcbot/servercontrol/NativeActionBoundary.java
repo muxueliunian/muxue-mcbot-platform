@@ -26,6 +26,7 @@ final class NativeActionBoundary {
             // drop's finally records only quantities already observed; never discard them on a receipt fault.
             JsonObject result=operation.result!=null&&operation.result.isJsonObject()?operation.result.getAsJsonObject().deepCopy():obj();
             result.addProperty("code",code);
+            if(pending&&failure.getMessage()!=null) result.addProperty("detail",failure.getMessage());
             operation.finish(pending?"unknown":"failed",pending?"Native interaction has no reliable receipt; observe current state, never blindly replay":code+": "+failure.getMessage(),result);
             cleanup(cleanup);
         }

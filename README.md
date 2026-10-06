@@ -24,19 +24,20 @@
 - 单格挖放、标准容器、走近取物再交还
 - 有限采集：石料、原木，煤、铁、铜等 6 种矿石
 - 背包整理、工具选择、自动进食、有限高差寻路、近距自卫
-- 手持物品右键方块（`interact-block`），按登记的交互放行，首批只有原版堆肥桶
-- 内容 Mod 只验过 Iron Furnaces 的普通铁炉；别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）
+- 手持物品右键方块（`interact-block`）和对空使用（`use-item`），按登记的交互放行，内置的只有原版堆肥桶
+- 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）
 
 Agent：Claude Code、Codex、DeepSeek Harness（dsh，可直接用桌面版自带的；2026-10-06 隔离服真实模型实测通过）。
 
 还没有：持续陪挖（程序矩阵已通过，待真实模型和用户验收）、原生 API、建筑、多版本。详见[交付计划](docs/delivery_plan.md)。
 
-用 `start-server-play.ps1` 启动。40 个 MCP 工具不代表所有 Mod 或服务器都能用。托管时可以另开一个终端运行 `node scripts/webui.mjs --open`，在本机网页里看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。
+用 `start-server-play.ps1` 启动。四十来个 MCP 工具不代表所有 Mod 或服务器都能用。托管时可以另开一个终端运行 `node scripts/webui.mjs --open`，在本机网页里看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。
 
 ## 目录
 
 - `client-runtime/`：Body、MCP 工具、任务和陪伴状态
 - `mods/mcbot-server-control/`：服务端身体：假玩家、控制租约、原生交互、Mod 适配
+- `mods/mcbot-kaleidoscope-cookery/`、`mods/mcbot-sophisticated-backpacks/`：示例附属模组
 - `scripts/companion.mjs`、`scripts/agents/`：Agent 会话和事件驱动
 - `mcp-server/`、`bot-scripts/`：旧 Mineflayer 实现，用来对照迁移，协议测试玩家也用它
 - `mods/mcbot-control/`、`mods/mcbot-server-spike/`：保留的实验（ClientBody、早期服务端原型），不是默认路线

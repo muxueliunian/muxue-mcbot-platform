@@ -3,6 +3,6 @@
   "minVersion": "0.8",
   "package": "com.mcbot.servercontrol.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["PlayerListRespawnMixin", "ServerPlayerGameModeAccessor"],
+  "mixins": ["PlayerListRespawnMixin", "ServerPlayerGameModeAccessor", "VirtualPayloadMixin"],
   "injectors": {"defaultRequire": 1}
 }

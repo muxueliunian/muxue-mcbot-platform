@@ -6,11 +6,11 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
 | | JSON 声明 | Java 附属模组 |
 | --- | --- | --- |
-| 适合 | "拿着这些物品、右键这些方块，可能产生这些变化"这类简单交互 | 容器和机器的菜单、对空使用物品、需要读方块内部状态或自己校验结果的交互 |
+| 适合 | "拿着这些物品、右键这些方块，可能产生这些变化"这类简单交互 | 容器和机器的菜单、对空使用物品、需要读方块内部状态或自己校验结果的交互、把掉落物直接收走的 Mod |
 | 谁来写 | 服主，不用写代码 | Mod 作者或适配者，单独打包成一个附属模组 |
 | 放在哪 | `config/mcbot-server-control/interactions/*.json` | 和 mcbot-server-control 一起放进 `mods/` |
 
-两种都在服务器启动时加载。之后服务端会把它们告诉运行端：容器适配列在 `hello.adapters`，交互列在 `hello.interactions`。AI 在 `open-container` 和 `interact-block` 的工具说明里能看到这些名单。启动日志里会打一行 `MCBOT adapters: ...`。有问题的 JSON 文件和适配器会被跳过，并记一条 `MCBOT adapter: ...` 警告。
+两种都在服务器启动时加载。之后服务端会把它们告诉运行端：容器适配列在 `hello.adapters`，交互列在 `hello.interactions`，其中对空使用的交互另外列在 `hello.itemInteractions`。AI 在 `open-container`、`interact-block` 和 `use-item` 的工具说明里能看到这些名单。启动日志里会打一行 `MCBOT adapters: ...`。有问题的 JSON 文件和适配器会被跳过，并记一条 `MCBOT adapter: ...` 警告。
 
 ## 安全规则
 
@@ -23,7 +23,7 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
   - 所有变化都在声明范围内：`succeeded`。
   - 什么都没变：`failed`。
   - 其余情况：`unknown`，AI 被要求先重新观察，不要重放。
-- **id 不能重复**：先登记的优先，顺序是内置 → JSON → 附属模组。重复的会被跳过并记日志。
+- **id 不能重复**：容器、交互和拾取适配的 id 共用一个命名空间。先登记的优先，顺序是内置 → JSON → 附属模组，重复的会被跳过并记日志；附属模组之间重复登记，会在模组加载时直接报错。
 - **登记有截止时间**：服务器启动后，附属模组就不能再登记了。
 
 ## JSON 声明
@@ -69,6 +69,7 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
   - 识别菜单（`menu`）
   - 核对完整的槽位布局后，返回真正的存储（`storage`）
   - 给间接包装的玩家槽报出对应的背包位置（`playerSlot`）
+  - 物品处理器（item handler）型的存储：槽位的 `Slot.container` 只是占位，`storage` 返回一个代表这份存储的只读对象，再用 `storageSlot` 认领它的槽，用 `storageOf` 说明它属于哪个方块实体（`discover-containers` 的目标核对要用）。例子见 SB 附属模组的 `BackpackContainerAdapter`
 
   Bot 只操作归属清楚的槽：`storage` 里的算容器槽，玩家背包里的算玩家槽。其余的槽标成 `unknown`，Bot 不会去点。
 - `ItemInteraction`：右键交互。除了 JSON 能表达的内容，还可以：
@@ -80,7 +81,8 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
   回执会把 `summary` 带给 AI。对时间敏感、需要连续右键的步骤（比如炒锅翻炒），AI 可以给 `interact-block` 传 `repeatUntil`，运行端会连续右键，直到 `summary` 里某个字段达到目标值。
 
-  `kind` 为 `item` 时是对空使用物品，比如打开背包。
+  `kind` 为 `item` 时是对空使用物品，比如打开背包，AI 用 `use-item` 调用。手上物品会被 Mod 改写的（比如背包第一次打开时写上存储 ID），在 `Expected` 的 `heldComponents` 里列出允许变化的组件名，再在 `consistent` 里核对具体的值。
+- `PickupSink`：有些 Mod 会在原版拾取之前把掉落物直接收进玩家身上的存储，并取消原版拾取（比如背包的拾取升级），这时没有原版的拾取事件。MCBOT 在拾取前后各调用一次 `stored`，读出这类存储里每种物品的数量。只有"被吃掉的那种物品在某一个存储里正好多了吃掉的数量，其他都没变"时，才把这次拾取记下来，回执里用 `storedIn` 写明去处。对不上就记为 `PICKUP_UNKNOWN`，并在拾取收据里留一个缺口。用 `McbotApi.registerPickupSink` 登记。
 
 在附属模组的构造函数里登记：
 
@@ -99,9 +101,16 @@ public final class McbotExampleCook {
 
 - 内置的 Iron Furnaces 适配（`IronFurnaceAdapter`）：一个完整的 `ContainerAdapter`，用反射访问 Iron Furnaces，锁定 4.3.2 版。
 - [mcbot-kaleidoscope-cookery](../mods/mcbot-kaleidoscope-cookery/README.md)：独立的附属模组。用森罗厨房的炒锅做菜，包括放油、加料、翻炒、出锅四个交互。
-- Sophisticated Backpacks 的示例还在做。
+- [mcbot-sophisticated-backpacks](../mods/mcbot-sophisticated-backpacks/README.md)：独立的附属模组。打开手里的背包（对空使用）、把放在地上的背包当容器（物品处理器型存储）、拾取升级的记账（`PickupSink`）。
 
 ## 测试
 
 - 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`IronFurnaceAdapterTest`。
 - 隔离服：`scripts/server-adapter-smoke.mjs`。测试服要临时装上 Iron Furnaces 4.3.2，并在 `interactions/` 里放一份正确的重生锚声明和一份故意写错的声明。
+- 示例附属模组：`scripts/server-cooking-smoke.mjs`（森罗厨房）、`scripts/server-backpack-smoke.mjs`（SB，开服前先运行 `scripts/server-backpack-fixture.mjs`）。
+
+## 和其他 Mod 一起用时要注意
+
+- 有的 Mod 会在玩家登录时给客户端发自己的网络包。Bot 没有客户端，核心会直接丢掉发给 Bot 的包，不做"客户端有没有这个频道"的检查（否则 Bot 登录会失败）。
+- 像 SB 这样要求客户端也装的 Mod，没装的玩家（包括用原版协议的测试玩家）进不了服。
+- 方块的 `open` 属性（木桶、背包被人打开时会变）不算目标变化，核对 `discover-containers` 的目标时会忽略它。

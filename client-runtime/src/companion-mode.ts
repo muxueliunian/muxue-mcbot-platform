@@ -6,12 +6,12 @@ import { GatherTasks, type BorrowedMining } from './gather-tasks.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
 export interface PickupOptions { items: string[]; radius?: number }
-export interface PickupState { items: string[]; radius: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; lastItem?: string; code?: string; lastCode?: string; countStatus: 'confirmed' | 'partial-or-unknown'; totals: Array<{ item: string; count: number; maxStackSize: number; variant: number }> }
+export interface PickupState { items: string[]; radius: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; lastItem?: string; code?: string; lastCode?: string; countStatus: 'confirmed' | 'partial-or-unknown'; totals: Array<{ item: string; count: number; maxStackSize: number; variant: number; storedIn?: string }> }
 export interface MiningOptions { blockIds: string[]; maxBlocks: number; radius?: number; durationMs?: number }
-export interface MiningState { blockIds: string[]; maxBlocks: number; radius: number; durationMs: number; deadline: number; attemptedBlocks: number; remainingBlocks: number; minedBlocks: number; active: boolean; disabledReason?: string; lastCode?: string; countStatus: 'confirmed' | 'partial-or-unknown'; dropAttribution: 'unconfirmed'; newPickedByItem: Array<{ item: string; count: number; maxStackSize: number; variant: number }> }
-type MiningTracker = { state: MiningState; lastScanAt: number; attempted: Set<string>; cursor: number; generations: Set<number>; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components }>; child?: symbol; childMined: number };
+export interface MiningState { blockIds: string[]; maxBlocks: number; radius: number; durationMs: number; deadline: number; attemptedBlocks: number; remainingBlocks: number; minedBlocks: number; active: boolean; disabledReason?: string; lastCode?: string; countStatus: 'confirmed' | 'partial-or-unknown'; dropAttribution: 'unconfirmed'; newPickedByItem: Array<{ item: string; count: number; maxStackSize: number; variant: number; storedIn?: string }> }
+type MiningTracker = { state: MiningState; lastScanAt: number; attempted: Set<string>; cursor: number; generations: Set<number>; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components; storedIn?: string }>; child?: symbol; childMined: number };
 const miningBlocks = new Set(['minecraft:coal_ore', 'minecraft:deepslate_coal_ore', 'minecraft:iron_ore', 'minecraft:deepslate_iron_ore', 'minecraft:copper_ore', 'minecraft:deepslate_copper_ore']);
-type PickupTracker = { state: PickupState; cursor: number; generations: Set<number>; count: number; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components }>; attempted: Set<string>; pending?: { item: GroundItem; cursor: number; receipts: PickupReceipt[] } };
+type PickupTracker = { state: PickupState; cursor: number; generations: Set<number>; count: number; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components; storedIn?: string }>; attempted: Set<string>; pending?: { item: GroundItem; cursor: number; receipts: PickupReceipt[] } };
 type Intent = { action: 'follow' | 'wait'; player?: string; expectedEntityId?: string; distance?: number; context: Context; pickup?: { items: string[]; radius: number } };
 export interface CompanionState {
   state: 'idle' | 'following' | 'waiting' | 'paused' | 'blocked' | 'stopped';
@@ -58,8 +58,8 @@ export class CompanionMode {
       if (receipt.seq !== mining.cursor + 1 || receipt.seq > state.pickupCursor || receipt.stack.count !== receipt.pickedUpCount || !Number.isSafeInteger(receipt.pickedUpCount) || receipt.pickedUpCount < 1) throw new BodyError('PICKUP_GAP', '陪挖收据序列或实际数量不完整');
       if (receipt.sessionId !== this.intent?.context.sessionId || receipt.dimension !== this.intent?.context.dimension || !mining.generations.has(receipt.controlGeneration)) throw new BodyError('WORLD_CHANGED', '陪挖收据不属于当前模式及已确认代次');
       if (receipt.stack.components === undefined || receipt.stack.maxStackSize === undefined) throw new BodyError('PICKUP_UNKNOWN', '陪挖收据缺少实际组件或上限');
-      let variant = mining.variants.find(item => item.item === receipt.stack.id && item.maxStackSize === receipt.stack.maxStackSize && isDeepStrictEqual(item.components, receipt.stack.components));
-      if (!variant) { if (mining.variants.length >= 64) throw new BodyError('PICKUP_UNKNOWN', '陪挖实际拾取变体账本超过有限上限'); variant = { item: receipt.stack.id, count: 0, maxStackSize: receipt.stack.maxStackSize, components: structuredClone(receipt.stack.components) }; mining.variants.push(variant); }
+      let variant = mining.variants.find(item => item.item === receipt.stack.id && item.maxStackSize === receipt.stack.maxStackSize && item.storedIn === receipt.storedIn && isDeepStrictEqual(item.components, receipt.stack.components));
+      if (!variant) { if (mining.variants.length >= 64) throw new BodyError('PICKUP_UNKNOWN', '陪挖实际拾取变体账本超过有限上限'); variant = { item: receipt.stack.id, count: 0, maxStackSize: receipt.stack.maxStackSize, components: structuredClone(receipt.stack.components), ...(receipt.storedIn ? { storedIn: receipt.storedIn } : {}) }; mining.variants.push(variant); }
       variant.count += receipt.pickedUpCount; mining.cursor = receipt.seq;
     }
     if (mining.cursor !== state.pickupCursor) throw new BodyError('PICKUP_GAP', '陪挖最新游标缺少完整收据');
@@ -130,8 +130,8 @@ export class CompanionMode {
       if (!pickup.state.items.includes(receipt.stack.id)) continue;
       if (receipt.stack.components === undefined || receipt.stack.maxStackSize === undefined) throw new BodyError('PICKUP_UNKNOWN', '拾取片段缺少实际组件或堆叠上限');
       pickup.count += receipt.pickedUpCount; pickup.state.lastItem = receipt.stack.id;
-      let variant = pickup.variants.find(item => item.item === receipt.stack.id && item.maxStackSize === receipt.stack.maxStackSize && isDeepStrictEqual(item.components, receipt.stack.components));
-      if (!variant) { variant = { item: receipt.stack.id, count: 0, maxStackSize: receipt.stack.maxStackSize, components: structuredClone(receipt.stack.components) }; pickup.variants.push(variant); }
+      let variant = pickup.variants.find(item => item.item === receipt.stack.id && item.maxStackSize === receipt.stack.maxStackSize && item.storedIn === receipt.storedIn && isDeepStrictEqual(item.components, receipt.stack.components));
+      if (!variant) { variant = { item: receipt.stack.id, count: 0, maxStackSize: receipt.stack.maxStackSize, components: structuredClone(receipt.stack.components), ...(receipt.storedIn ? { storedIn: receipt.storedIn } : {}) }; pickup.variants.push(variant); }
       variant.count += receipt.pickedUpCount;
     }
     if (pickup.cursor !== state.pickupCursor) throw new BodyError('PICKUP_GAP', '持续拾取最新游标没有完整收据');

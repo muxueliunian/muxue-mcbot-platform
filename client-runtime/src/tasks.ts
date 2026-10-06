@@ -120,7 +120,7 @@ export class ContainerTasks {
     } finally { clearTimeout(limit.timer); }
   }
   private success(op: Operation, epoch: number): void {
-    if (op.status === 'unknown') throw new BodyError('UNKNOWN', `${op.name}: ${op.summary}`);
+    if (op.status === 'unknown') throw new BodyError('UNKNOWN', `${op.name}: ${op.summary}${(op.result as { code?: string } | undefined)?.code ? ` (${(op.result as { code: string }).code}${(op.result as { detail?: string }).detail ? `: ${(op.result as { detail: string }).detail}` : ''})` : ''}`);
     this.check(epoch);
     if (op.status !== 'succeeded') throw new BodyError(op.status === 'cancelled' ? 'CANCELLED' : 'STEP_FAILED', `${op.name}: ${op.summary}`);
   }

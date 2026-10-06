@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.mcbot.servercontrol.api.ContainerAdapter;
 import com.mcbot.servercontrol.api.ItemInteraction;
 import com.mcbot.servercontrol.api.McbotApi;
+import com.mcbot.servercontrol.api.PickupSink;
 import java.nio.file.Path;
 import java.util.*;
 import net.minecraft.core.BlockPos;
@@ -22,7 +23,9 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 final class ModAdapters {
     private ModAdapters() {}
-    record Loaded(List<ContainerAdapter> containers,List<ItemInteraction> interactions,List<String> problems) {}
+    record Loaded(List<ContainerAdapter> containers,List<ItemInteraction> interactions,List<String> problems,List<PickupSink> pickupSinks) {
+        Loaded(List<ContainerAdapter> containers,List<ItemInteraction> interactions,List<String> problems) {this(containers,interactions,problems,List.of());}
+    }
     private static final List<ContainerAdapter> BUILTIN_CONTAINERS=List.of(IronFurnaceAdapter.INSTANCE);
     private static final List<ItemInteraction> BUILTIN_INTERACTIONS=List.of(ItemInteractions.COMPOSTER);
     // Before a server starts only the built-ins are known; installed containers are resolved lazily then.
@@ -33,7 +36,8 @@ final class ModAdapters {
         McbotApi.Registered registered=McbotApi.freeze();
         List<String> problems=new ArrayList<>();
         List<ItemInteraction> fromJson=JsonInteractions.loadDirectory(configDirectory.resolve("interactions"),problems);
-        loaded=combine(BUILTIN_CONTAINERS,registered.containers(),BUILTIN_INTERACTIONS,fromJson,registered.interactions(),problems);
+        Loaded combined=combine(BUILTIN_CONTAINERS,registered.containers(),BUILTIN_INTERACTIONS,fromJson,registered.interactions(),problems);
+        loaded=new Loaded(combined.containers(),combined.interactions(),combined.problems(),installedSinks(registered.pickupSinks()));
         return loaded;
     }
 
@@ -63,6 +67,44 @@ final class ModAdapters {
     }
     private static boolean installed(java.util.function.BooleanSupplier check) {
         try { return check.getAsBoolean(); } catch(RuntimeException | LinkageError broken) { return false; }
+    }
+
+    static List<PickupSink> installedSinks(List<PickupSink> sinks) {
+        List<PickupSink> result=new ArrayList<>();
+        for(PickupSink sink:sinks) if(safeId(sink::id)!=null&&installed(sink::installed)) result.add(sink);
+        return List.copyOf(result);
+    }
+    static List<PickupSink> pickupSinks() {Loaded current=loaded;return current==null?List.of():current.pickupSinks();}
+    /** Each installed sink's stored counts; null when any sink fails, so nothing can be attributed. */
+    static Map<String,Map<String,Integer>> stored(ServerPlayer player) {
+        Map<String,Map<String,Integer>> result=new LinkedHashMap<>();
+        for(PickupSink sink:pickupSinks()) {
+            try {
+                Map<String,Integer> counts=sink.stored(player);
+                if(counts==null) return null;
+                result.put(sink.id(),Map.copyOf(counts));
+            } catch(RuntimeException | LinkageError broken) { return null; }
+        }
+        return result;
+    }
+    /**
+     * The sink that took exactly {@code count} of {@code item}: the only change across all sinks must be that one item id
+     * growing by that count in one sink. Null otherwise.
+     */
+    static String absorbedBy(Map<String,Map<String,Integer>> before,Map<String,Map<String,Integer>> after,String item,int count) {
+        if(before==null||after==null||count<=0||!before.keySet().equals(after.keySet())) return null;
+        String sink=null;
+        for(String id:before.keySet()) {
+            Map<String,Integer> b=before.get(id),a=after.get(id);
+            Set<String> keys=new HashSet<>(b.keySet());keys.addAll(a.keySet());
+            for(String key:keys) {
+                int delta=a.getOrDefault(key,0)-b.getOrDefault(key,0);
+                if(delta==0) continue;
+                if(sink!=null||!key.equals(item)||delta!=count) return null;
+                sink=id;
+            }
+        }
+        return sink;
     }
 
     static List<ContainerAdapter> containers() {
@@ -109,6 +151,18 @@ final class ModAdapters {
         ContainerAdapter adapter=menu(menu);
         if(adapter==null) return MenuSlotSources.storage(menu,inventory);
         try { return adapter.storage(menu,inventory); } catch(RuntimeException | LinkageError broken) { return null; }
+    }
+    static boolean storageSlot(ContainerAdapter adapter,Slot slot,Container storage) {
+        if(storage==null) return false;
+        try { return adapter.storageSlot(slot,storage); } catch(RuntimeException | LinkageError broken) { return false; }
+    }
+    /** Whether an opened menu's verified storage is the targeted block entity's: the entity itself, or vouched for by its adapter. */
+    static boolean storageOf(AbstractContainerMenu menu,Container storage,Object entity) {
+        if(storage==null) return false;
+        if(storage==entity) return true;
+        ContainerAdapter adapter=menu(menu);
+        if(adapter==null) return false;
+        try { return entity instanceof BlockEntity block&&adapter.storageOf(storage,block); } catch(RuntimeException | LinkageError broken) { return false; }
     }
     static MenuSlotSources.Source playerSource(ContainerAdapter adapter,Slot slot,Inventory inventory) {
         try {

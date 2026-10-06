@@ -144,7 +144,7 @@ record Interaction(
 2. 拿物品右键箱子（没登记）：返回 `UNSUPPORTED`，箱子没打开，物品没变。
 3. 用现有测试夹具 `ValidationProtection`（放钻石块当标记，取消右键事件）保护堆肥桶，再右键：返回 failed（`FORBIDDEN`），什么都没变。
 4. 执行中叫停：发包前叫停 → 不执行；发包后叫停 → 结果照常回报。
-5. `use-item` 的实服测试等第 8 步装上 SB 背包再做；首批只做离线测试。
+5. `use-item` 的实服测试等第 8 步装上 SB 背包再做；首批只做离线测试。（10-06 已用 SB 背包实服验收，见 [SB 附属模组](../mods/mcbot-sophisticated-backpacks/README.md)。实际做法和这里不同：`use-item` 也做成了 MCP 工具，只在装了对空使用的交互时发布，因为背包打开后由 AI 自己用 `get-container`、`click-slot` 存取。）
 
 ## 9. 要确认的事
 

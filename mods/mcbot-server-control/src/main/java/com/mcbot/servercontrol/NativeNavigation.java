@@ -23,7 +23,7 @@ import static com.mcbot.servercontrol.Protocol.*;
  */
 final class NativeNavigation {
     static final int MAX_REPLANS=4,MAX_RANGE=48,MAX_VISITED=2048;
-    static final double WAYPOINT=0.45,STUCK_MS=2000;
+    static final double WAYPOINT=0.45,STUCK_MS=2000,FINAL_APPROACH=1.5;
     private final BodyPlayer body;
     private final ControlSession session;
     private final ControlSession.Operation operation;
@@ -78,7 +78,15 @@ final class NativeNavigation {
             if(!session.mayDrive(operation)){stop();return false;}
         }
         while(index<route.size()&&reached(feet,route.get(index)))index++;
-        if(index>=route.size()){replan(now);return false;}
+        if(index>=route.size()){
+            // Route used up but the goal is not met yet (a dropped item still falling, or lying just off the
+            // last block centre): step straight at a close destination, and replan no more than twice a second
+            // so a settling target does not burn the whole replan budget in a few ticks.
+            Vec3 level=new Vec3(destination.x,feet.y,destination.z);
+            if(body.onGround()&&level.subtract(feet).horizontalDistance()<=FINAL_APPROACH&&destination.y-feet.y<2.5&&destination.y-feet.y>-1&&allowed.test(level)&&floored(feet,level)){steer(feet,level);return false;}
+            if(now-lastPlan<500){body.stopInput();return false;}
+            replan(now);return false;
+        }
         Vec3 next=route.get(index);
         if(!allowed.test(next))throw error("OUT_OF_REACH","Next navigation node left its authorized region");
         steer(feet,next);
@@ -125,16 +133,24 @@ final class NativeNavigation {
         BlockPos from=body.blockPosition();int radius=(int)range+8;
         long began=System.nanoTime();
         Path path=finder.findPath(new PathNavigationRegion(body.level(),from.offset(-radius,-radius,-radius),from.offset(radius,radius,radius)),
-            model,Set.of(BlockPos.containing(destination)),range,1,1);
+            model,Set.of(BlockPos.containing(destination)),range,0,1); // reach the target block itself: one block short is outside item pickup reach
         long elapsed=System.nanoTime()-began;searchNanos+=elapsed;maxSearchNanos=Math.max(maxSearchNanos,elapsed);plans++;
         if(path==null||path.getNodeCount()==0)throw error("NO_PATH","No loaded walkable route from the current position");
         List<Vec3> points=new ArrayList<>();
         for(int i=0;i<path.getNodeCount();i++){Node node=path.getNode(i);points.add(new Vec3(node.x+0.5,node.y,node.z+0.5));}
         // The last node is a block centre; a nearby, allowed goal point (an item, a stand spot) is the final steer.
         Vec3 last=points.getLast();
-        if(path.canReach()&&goal.test(destination)&&allowed.test(destination)&&last.subtract(destination).horizontalDistance()<=1&&Math.abs(last.y-destination.y)<0.6)points.add(destination);
+        if(path.canReach()&&goal.test(destination)&&allowed.test(destination)&&last.subtract(destination).horizontalDistance()<=FINAL_APPROACH&&Math.abs(last.y-destination.y)<0.6)points.add(destination);
         if(points.size()==1&&reached(feet,points.getFirst())&&!goal.test(feet)&&!path.canReach())throw error("NO_PATH","No loaded walkable route makes progress toward the destination");
         route=points;index=0;target=destination;lastPlan=now;lastProgress=now;progress=feet;routePoints=points.size();
+    }
+    /** The straight final step stays on solid floor: no hole under its middle or its end. */
+    private boolean floored(Vec3 feet,Vec3 to){
+        for(Vec3 p:List.of(feet.lerp(to,0.5),to)){
+            BlockPos below=BlockPos.containing(p.x,feet.y-0.5,p.z);
+            if(!body.serverLevel().isLoaded(below)||body.serverLevel().getBlockState(below).getCollisionShape(body.serverLevel(),below).isEmpty())return false;
+        }
+        return true;
     }
     /** Vanilla PathNavigation#followThePath: inside the waypoint radius horizontally and less than a block vertically. */
     static boolean reached(Vec3 feet,Vec3 node){

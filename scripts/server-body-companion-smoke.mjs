@@ -129,16 +129,16 @@ try {
 
   await arena();
   await fixture('fill 1613 201 1600 1613 203 1644 stone');
+  // 10-07 起（原版寻路）：走不到时原地等着、不结束跟随，路通了自己接着跟。
   await tool('companion-mode', { action: 'follow', player: 'C2Tester' });
-  const blocked = await until(mode, value => value.state === 'blocked', 'Sealed route should block');
+  const sealed = await until(mode, value => value.state === 'waiting' && !!value.operationId, 'Sealed route should wait in place');
   const blockedAt = await position(); await wait(1500);
-  check('no route blocks without retries or motion', !!blocked.code && distance(blockedAt, await position()) < 0.15);
+  check('no route waits in place without motion or ending the follow', distance(blockedAt, await position()) < 0.15 && distance(blockedAt, await position('C2Tester')) > 3 && (await mode()).state === 'waiting' && (await mode()).operationId === sealed.operationId);
   const eventLines = (await fs.readFile(path.join(runtime, 'events-ServerBot.jsonl'), 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
-  check('blocked mode emits one actionable event', eventLines.filter(event => event.type === 'companion').length === 1);
-  await fixture('fill 1613 201 1600 1613 203 1644 air'); await wait(1000);
-  check('clearing obstacle alone does not resume blocked intent', (await mode()).state === 'blocked' && distance(blockedAt, await position()) < 0.15);
-  await tool('companion-mode', { action: 'resume' }); await settled();
-  check('explicit resume rechecks and traverses cleared route', distance(blockedAt, await position()) > 3);
+  check('waiting for a route emits no blocked event', !eventLines.some(event => event.type === 'companion' && JSON.stringify(event).includes('blocked')));
+  await fixture('fill 1613 201 1600 1613 203 1644 air');
+  await until(position, value => distance(blockedAt, value) > 3, 'Cleared route was not followed', 15000);
+  check('clearing the obstacle lets the same follow walk the route', (await mode()).operationId === sealed.operationId);
   await peerCommand({ type: 'quit' });
   await until(mode, value => value.state === 'blocked', 'Target logout should block');
   await until(async () => peer.exitCode, value => value !== null, 'Peer did not exit');

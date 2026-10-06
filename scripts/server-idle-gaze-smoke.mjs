@@ -60,8 +60,8 @@ async function tool(name, args = {}) {
 }
 
 const home = [4.5, -6.5];
-// spreadplayers 落到地表，测试玩家不会被塞进雪坡里挡住视线
-const place = (x, z) => command(`spreadplayers ${x} ${z} 0 1 false GazePeer`);
+// 落点固定（取自 10-07 通过的一轮，都在地表、互相看得见）：spreadplayers 会在 1 格内随机，偶尔被雪坡挡住视线。
+const place = (x, y, z) => command(`tp GazePeer ${x} ${y} ${z}`);
 const peer = mineflayer.createBot({ host: '127.0.0.1', port: 25568, username: 'GazePeer', auth: 'offline', version: '1.21.1', hideErrors: true });
 peer.on('kicked', reason => { report.peerKicked = String(reason); });
 try {
@@ -75,12 +75,12 @@ try {
   await tool('get-companion-mode');
 
   // 1. 没有动作：测试玩家站在旁边，Bot 转头看她
-  await command(`spreadplayers ${home[0]} ${home[1]} 0 1 false ServerBot`); await wait(1500);
+  await command('tp ServerBot 3.5 96 -6.5'); await wait(1500);
   await command('execute as ServerBot at @s run tp @s ~ ~ ~ 0 0');
-  await place(7.5, -6.5); await wait(2500);
+  await place(6.5, 95, -6.5); await wait(2500);
   let s = await facingError('GazePeer');
   check('没有动作时转头看旁边的玩家（东边 3 格）', s.error <= 20, s);
-  await place(4.5, -10.5); await wait(2500);
+  await place(5.5, 96, -10.5); await wait(2500);
   s = await facingError('GazePeer');
   check('玩家换到另一边，Bot 跟着转过去（北边 4 格，下坡）', s.error <= 20, s);
 
@@ -93,14 +93,14 @@ try {
   check('身边没人时 12 秒内会自己转头看看', spread >= 5, yaws);
 
   // 3. 远处（8～16 格）有人说话：转向说话的人
-  await place(4.5, -18.5); await wait(800);
+  await place(4.5, 95, -17.5); await wait(800);
   peer.chat('小克你看这边'); await wait(2000);
   s = await facingError('GazePeer');
   report.speaker = s;
   check('12 格外（坡下）的玩家说话后，Bot 转向她', s.error <= 25, s);
 
   // 4. 明确的 look-at 之后几秒内不被待机转头覆盖
-  await place(7.5, -6.5); await wait(2500);
+  await place(7.5, 95, -6.5); await wait(2500);
   const bot = await vec('ServerBot', 'Pos');
   const look = await tool('look-at', { x: bot[0], y: bot[1] + 1.6, z: bot[2] - 10 });
   check('look-at 成功', !look.error, look.value);
@@ -114,7 +114,7 @@ try {
   // 5. 跟随停下等人时也会看她
   const follow = await tool('companion-mode', { action: 'follow', player: 'GazePeer' });
   check('开始跟随测试玩家', !follow.error, follow.value);
-  await place(4.5, -10.5); await wait(6000);
+  await place(4.5, 97, -11.5); await wait(6000);
   const state = (await tool('get-companion-mode')).value;
   s = await facingError('GazePeer');
   check('跟随等待中（waiting）也转头看玩家', JSON.stringify(state).includes('waiting') && s.error <= 20, { state, ...s });

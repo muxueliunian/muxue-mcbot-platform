@@ -8,6 +8,7 @@ import { GatherTasks } from './gather-tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop } from './action-stop.js';
+import { interactBlock } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 
 const coordinate = z.coerce.number().finite();
@@ -165,6 +166,11 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
       if (required.every(capability => body.hello.capabilities.includes(capability))) register(task.name, `${task.description} The whole task has a 90-second deadline including reads and actions; expiry stops further work and reports last confirmed progress. A complete source stack can move into a verified empty hotbar slot with ordinary pickup clicks; partial requests remain bounded.`, task.schema, async args => operationResult(await tasks.run(task.name, args)));
     }
   }
+  const interactionIds = body.hello.interactions ?? [];
+  if (serverObserved && body.hello.capabilities.includes('use-item-on-block') && interactionIds.length) register('interact-block', `Right-click one block in reach through a registered interaction: ${interactionIds.join(', ')}. Give exactly one of item (must be in hotbar; use prepare-item first) or emptyHand when the interaction requires it. Unregistered blocks or items are refused before any action. unknown is never retried; observe again.`, {
+    ...blockXyz, interaction: z.enum(interactionIds as [string, ...string[]]), item: registryId.optional(), emptyHand: z.literal(true).optional(),
+    face: z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(), timeoutMs,
+  }, async args => { tasks.assertIdle(); return operationResult(await interactBlock(body, args)); });
   for (const action of actions) {
     if (body.hello.capabilities.includes(action.name)) register(action.name, action.description, action.schema, async args => { if (action.name !== 'send-chat') tasks.assertIdle(); return operationResult(await body.act(action.name, args as ActionArguments[ActionName])); });
   }

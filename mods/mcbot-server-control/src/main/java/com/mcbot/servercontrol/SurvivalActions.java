@@ -55,7 +55,7 @@ final class SurvivalActions {
     private NativeDefenseUse defense;
     private int lastDefenseTick=Integer.MIN_VALUE;
     SurvivalActions(ServerPlayer player,ControlSession session,TargetTokens targets,ResourceTargets resources) { this.player=player;this.session=session;this.targets=targets;this.resources=resources; }
-    boolean handles(String name) { return CAPABILITIES.contains(name); }
+    boolean handles(String name) { return CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name); }
     private ServerPlayerGameModeAccessor mining() { return (ServerPlayerGameModeAccessor)player.gameMode; }
     private static long now() { return System.nanoTime()/1_000_000; }
     static int integer(JsonObject object,String key) {
@@ -221,6 +221,8 @@ final class SurvivalActions {
                 case "swap-inventory" -> swapInventory(operation);
                 case "eat-item" -> eat(operation);
                 case "defend-entity" -> defend(operation);
+                case "use-item-on-block" -> useOnBlock(operation);
+                case "use-item" -> useItem(operation);
                 default -> throw error("UNSUPPORTED","Unknown survival action");
             }
             },()->abort(operation));
@@ -325,6 +327,85 @@ final class SurvivalActions {
         if(actual.is(item.getBlock())&&after.getCount()==before-1&&remainingMatches) operation.finish("succeeded","Native placement and item consumption confirmed",result);
         else if(actual.isAir()&&after.getCount()==before&&itemId(after).equals(string(args,"expectedItem"))&&components(after).equals(object(args,"expectedComponents"))) operation.finish("failed","FORBIDDEN: Native placement refused without block or inventory change",obj("code","FORBIDDEN","block",blockSnapshot(target),"inventory",inventory()));
         else operation.finish("unknown","Placement produced a different authoritative state; do not replay",result);
+    }
+    private JsonObject interactionSnapshot(BlockPos position,ItemInteractions.Interaction interaction) {
+        JsonArray drops=new JsonArray();
+        AABB area=position==null?player.getBoundingBox().inflate(2):new AABB(position).inflate(2);
+        for(ItemEntity entity:player.serverLevel().getEntitiesOfClass(ItemEntity.class,area)) drops.add(obj("entityId",entity.getUUID().toString(),"stack",stackValue(entity.getItem())));
+        AbstractContainerMenu menu=player.containerMenu;
+        String menuType=menu==player.inventoryMenu?"none":menu.getType()==null?menu.getClass().getName():String.valueOf(BuiltInRegistries.MENU.getKey(menu.getType()));
+        JsonObject block=position==null?null:obj("id",BuiltInRegistries.BLOCK.getKey(player.serverLevel().getBlockState(position).getBlock()).toString(),"properties",properties(player.serverLevel().getBlockState(position)));
+        JsonObject snapshot=obj("summary",interaction.summary(player,position),"inventory",inventory(),"menu",menuType,"drops",drops);
+        snapshot.add("block",block==null?JsonNull.INSTANCE:block);
+        return snapshot;
+    }
+    private void finishInteraction(ControlSession.Operation operation,ItemInteractions.Interaction interaction,JsonObject before,int heldSlot,BlockPos position,String forcedUnknown) {
+        JsonObject after=interactionSnapshot(position,interaction);
+        boolean menuOpened=player.containerMenu!=player.inventoryMenu;
+        boolean menuVerified=menuOpened&&interaction.expected().opensMenu()&&interaction.menu(player.containerMenu);
+        ItemInteractions.Verdict verdict=ItemInteractions.judge(before,after,heldSlot,interaction.expected(),interaction::consistent);
+        if(menuOpened&&!menuVerified) {
+            // Never leave an unverified menu open; the receipt still reports that it opened.
+            player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));
+            if(verdict.status().equals("succeeded")) verdict=new ItemInteractions.Verdict("unknown","NATIVE_UNKNOWN","Interaction opened a menu without a verified adapter contract; it was closed",verdict.consumed(),verdict.gained(),verdict.unexpected());
+        }
+        if(forcedUnknown!=null) {
+            JsonArray reasons=verdict.unexpected().deepCopy();reasons.add(forcedUnknown);
+            verdict=new ItemInteractions.Verdict("unknown","NATIVE_UNKNOWN","Interaction started an effect outside this contract; observe again, do not replay",verdict.consumed(),verdict.gained(),reasons);
+        }
+        JsonObject result=obj("interaction",interaction.id(),"consumedCount",verdict.consumed(),"gained",verdict.gained(),"selectedSlot",player.getInventory().selected);
+        if(position!=null) result.add("block",blockSnapshot(position));
+        if(!after.getAsJsonObject("summary").isEmpty()) result.add("summary",after.getAsJsonObject("summary"));
+        if(verdict.code()!=null) result.addProperty("code",verdict.code());
+        // A failed receipt proved nothing changed, so it carries no inventory (which the model view reads as "changed").
+        if(verdict.status().equals("unknown")) { result.add("unexpected",verdict.unexpected());result.add("inventory",inventory());result.add("before",before);result.add("after",after); }
+        operation.finish(verdict.status(),verdict.summary(),result);
+    }
+    private void useOnBlock(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;
+        if(args.has("targetToken")) throw error("INVALID_ARGUMENT","targetToken is not supported for item interactions yet");
+        BlockPos position=block(args);BlockState state=expectedBlock(args,position);
+        ItemInteractions.Interaction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.BLOCK);
+        if(!interaction.block(state)) throw error("UNSUPPORTED","Interaction does not apply to this block");
+        boolean emptyHand=args.has("emptyHand")&&bool(args,"emptyHand");
+        int slot;ItemStack held;
+        if(emptyHand) {
+            if(args.has("slot")) throw error("INVALID_ARGUMENT","emptyHand and slot are mutually exclusive");
+            slot=-1;for(int i=0;i<9;i++) if(player.getInventory().getItem(i).isEmpty()) {slot=i;break;}
+            if(slot<0) throw error("EMPTY_HAND_REQUIRED","An empty hotbar slot is needed for an empty-hand interaction");
+            held=ItemStack.EMPTY;
+        } else {
+            slot=hotbar(args);held=player.getInventory().getItem(slot);
+            expectedItem(args,"expectedItem","expectedCount","expectedComponents",held);
+        }
+        ItemInteractions.requireHeld(emptyHand,interaction,held);
+        interaction.precondition(player,position,state,held);
+        Direction face=null;
+        if(args.has("face")) { face=Direction.byName(string(args,"face"));if(face==null) throw error("INVALID_ARGUMENT","Invalid block face"); }
+        BlockHitResult hit=hit(position,face);
+        JsonObject before=interactionSnapshot(position,interaction);
+        int previous=player.getInventory().selected;
+        nativeEffects.sent();select(slot);look(hit.getLocation());guard(operation);
+        try {
+            nativeEffects.sent();player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence));
+        } finally { if(emptyHand) select(previous); }
+        finishInteraction(operation,interaction,before,slot,position,null);
+    }
+    private void useItem(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;
+        ItemInteractions.Interaction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.ITEM);
+        int slot=hotbar(args);ItemStack held=player.getInventory().getItem(slot);
+        expectedItem(args,"expectedItem","expectedCount","expectedComponents",held);
+        ItemInteractions.requireHeld(false,interaction,held);
+        interaction.precondition(player,null,null,held);
+        if(!player.inventoryMenu.getCarried().isEmpty()) throw error("BUSY","Item use requires an empty own inventory cursor");
+        JsonObject before=interactionSnapshot(null,interaction);
+        nativeEffects.sent();select(slot);guard(operation);
+        nativeEffects.sent();player.connection.handleUseItem(new ServerboundUseItemPacket(InteractionHand.MAIN_HAND,++sequence,player.getYRot(),player.getXRot()));
+        // Held-use items (bows, shields, food) are outside this contract; never leave one in progress.
+        boolean heldUse=player.isUsingItem();
+        if(heldUse) stopNativeFoodUse();
+        finishInteraction(operation,interaction,before,slot,null,heldUse?"held-use started and was stopped":null);
     }
     private void open(ControlSession.Operation operation) {
         worldAction();JsonObject args=operation.args;BlockPos position=block(args);BlockState state=expectedBlock(args,position);

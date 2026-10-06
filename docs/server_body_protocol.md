@@ -211,3 +211,18 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 同一仲裁器在普通观察之外独立采样紧凑生存状态；模式切换、慢普通观察与原生战斗等待不能挤掉感知。防卫抢占前阻断新普通写入，撤销容器／采集／陪伴／进食后等待身体停止确认，再获得写锁；不新增第二个控制者或偷偷接纳外部generation。人工停止解除armed，读状态与危险仍存在都不能重新授权。危险事件只按有意义的状态变化生成，不因距离微调、每次挥击、空气补回或跳跃下落数值变化反复唤醒模型。
 
 分段时间字段sensedAt、stopRequestedAt、stopConfirmedAt、actionRequestedAt、actionAcceptedAt记录运行端时间；actionAcceptedAt是收到回执的时刻，不是服务器最后实际写入tick。真实反应延迟与更长运行的结果须看本批验收，工具数量不代表通用Mod、任意武器或全地形支持。
+
+## 手持物品使用（2026-10-06）
+
+设计见 [use_item_design.md](use_item_design.md)，实测见 [验收记录](archive/use_item_validation.md)。
+
+- `hello` 新增 `interactions`：当前已安装、版本核对通过的交互 ID 列表。只有存在方块类交互时才声明 `use-item-on-block`，只有存在物品类交互时才声明 `use-item`。首批内置 `minecraft:composter/add`（拿可堆肥物品右键堆肥桶），没有物品类交互，所以不声明 `use-item`。
+- `use-item-on-block`：`{x,y,z,interaction,expectedBlock,expectedProperties,face?,timeoutMs?}` 加上二选一的手持守卫：`{slot:0..8,expectedItem,expectedCount>0,expectedComponents}`，或 `{emptyHand:true}`（只有交互声明必须空手时才允许，服务端自己挑空快捷栏槽，用完切回原来的选中槽）。不支持 `targetToken`。
+- `use-item`：`{interaction,slot,expectedItem,expectedCount>0,expectedComponents,timeoutMs?}`，主手对空使用。开始了按住使用（弓、盾、食物）会立即停止并判为 unknown；吃东西继续用 `eat-item`。
+- 发包前拒绝（不产生任何原生效果）：交互没登记或版本不对、交互不适用这个方块、手持物品不被接受、要求空手却给了物品（或反过来）、交互的前置检查不满足（`INTERACTION_NOT_READY`，例如堆肥桶 level≥7），以及原有的 `STALE_BLOCK`／`STALE_ITEM`／`OUT_OF_REACH`／`NO_LINE_OF_SIGHT`。
+- 发包后按前后快照判定：快照包含方块 ID 和属性、适配器摘要、整个背包（带完整组件）、当前菜单类型、目标周围 2 格内的掉落物。
+  - `succeeded`：所有变化都在交互声明的范围内（允许变的方块属性和摘要字段、手持物品消耗数量的上下限、是否允许耐久损耗、允许多出的物品、是否允许打开菜单），并通过适配器自己的数值检查。
+  - `failed` + `NO_EFFECT`：前后快照完全一样（包括被保护事件取消的情况）。回执不带 inventory。
+  - `unknown` + `NATIVE_UNKNOWN`：其他所有情况。回执带 `unexpected`（逐条原因）、`inventory`、`before`、`after`，不自动重试。
+  - 打开了没有适配器菜单契约核验的菜单：立即原生关闭，判为 unknown。
+- Node 只向模型发布一个 `interact-block` 工具（参数：坐标、交互 ID、`item` 或 `emptyHand`、可选 `face`），由运行端读最新观察来填方块守卫、挑快捷栏槽；物品不在快捷栏时返回 `NOT_IN_HOTBAR`，提示先 `prepare-item`。`use-item-on-block`／`use-item` 本身不作为模型工具。

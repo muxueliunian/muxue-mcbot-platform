@@ -24,11 +24,12 @@
 - 单格挖放、标准容器、走近取物再交还
 - 有限采集：石料、原木，煤、铁、铜等 6 种矿石
 - 背包整理、工具选择、自动进食、有限高差寻路、近距自卫
+- 手持物品右键方块（`interact-block`），按登记的交互放行，首批只有原版堆肥桶
 - 内容 Mod 只验过 Iron Furnaces 的普通铁炉
 
 还没有：持续陪挖（已提交，有一个问题待查）、建筑、单人模式、DeepSeek Harness 和原生 API、Mod 适配接口、多版本。详见[交付计划](docs/delivery_plan.md)。
 
-用 `start-server-play.ps1` 启动。39 个 MCP 工具不代表所有 Mod 或服务器都能用。
+用 `start-server-play.ps1` 启动。40 个 MCP 工具不代表所有 Mod 或服务器都能用。
 
 ## 目录
 

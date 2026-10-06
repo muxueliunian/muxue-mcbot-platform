@@ -25,6 +25,7 @@ export const CODEX_SERVER_TOOLS = Object.freeze([
   'companion-mode', 'get-companion-mode',
   'discover-resources', 'gather-resources', 'collect-items',
   'get-survival-state', 'assess-tool', 'prepare-item', 'eat-food', 'set-reflexes', 'defend-self',
+  'interact-block',
 ]);
 
 // Windows 的 npm .ps1/.cmd shim 不能直接交给 spawn；用 Node 启动官方 npm 入口。

@@ -65,6 +65,8 @@ export interface BodyHello {
   protocol: 1 | 2; backend?: 'client' | 'server'; instanceId?: string; worldId?: string;
   platform: { minecraft: string; loader: string; loaderVersion: string };
   capabilities: string[]; connected: boolean; username: string | null; sessionId: string | null;
+  /** Registered held-item interaction IDs; only these may be sent with use-item-on-block / use-item. */
+  interactions?: string[];
 }
 export interface ActionArguments {
   'send-chat': { message: string };
@@ -87,6 +89,9 @@ export interface ActionArguments {
   'eat-item': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number; timeoutMs?: number };
   'defend-entity': { entityId: string; expectedDimension: string; maxDistance: number; minHealth: number; maxAttacks: number; timeoutMs: number; slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number };
   'retreat-from-entity': { entityId: string; expectedDimension: string; distance?: number; timeoutMs?: number };
+  'use-item-on-block': Position & { interaction: string; expectedBlock: string; expectedProperties: Components; face?: 'up' | 'down' | 'north' | 'south' | 'east' | 'west'; timeoutMs?: number }
+    & ({ emptyHand: true } | { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components });
+  'use-item': { interaction: string; slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';

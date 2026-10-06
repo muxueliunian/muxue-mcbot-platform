@@ -28,6 +28,7 @@ const helloSchema = z.object({
   protocol: z.literal(2), backend: z.literal('server'), instanceId: identifier, worldId: identifier, username: identifier,
   platform: z.object({ minecraft: z.string(), loader: z.string(), loaderVersion: z.string() }),
   capabilities: z.array(z.string()), connected: z.boolean(), sessionId: identifier.nullable(),
+  interactions: z.array(z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).max(256).optional(),
 });
 const observationSchema = z.object({
   instanceId: identifier, controlGeneration: generation,
@@ -77,7 +78,7 @@ interface ServerOptions {
   onLease?: (lease: ServerLease) => void | Promise<void>;
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
-const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity'];
+const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item'];
 const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION', 'COMPANION_PROTECTED', 'COMPANION_MINING_CONFLICT']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
@@ -131,7 +132,10 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    this.hello = { ...hello, capabilities: hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup', 'companion-mining', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name)) };
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup', 'companion-mining', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name));
+    // Interaction actions are only usable together with the IDs the server actually registered.
+    const interactions = [...new Set(hello.interactions ?? [])];
+    this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
     const controllerId = this.options.controllerId ?? randomUUID();
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(controllerId)) throw new BodyError('INVALID_ARGUMENT', 'controller-id 格式无效');
     const deadline = this.now() + (this.options.claimWaitMs ?? 12000);
@@ -358,6 +362,13 @@ export class ServerBody implements Body {
       'retreat-from-entity': z.object({ entityId: z.string().uuid(), expectedDimension: identifier, distance: z.number().finite().min(1.5).max(6).optional(), timeoutMs: z.number().int().min(500).max(5000).optional() }).strict(),
       'drop-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, count: z.number().int().min(1).max(64), recipient: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), expectedEntityId: z.string().uuid().optional() }).refine(args => (args.recipient === undefined) === (args.expectedEntityId === undefined)),
     };
+    const face = z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(), interaction = z.string().refine(id => this.hello.interactions?.includes(id) ?? false);
+    const handStack = { slot: guardedStack.slot, expectedItem: guardedStack.expectedItem, expectedCount: z.number().int().positive(), expectedComponents: components };
+    schemas['use-item-on-block'] = z.union([
+      z.object({ ...guardedBlock, interaction, face, emptyHand: z.literal(true), timeoutMs: z.number().int().min(500).max(120000).optional() }).strict(),
+      z.object({ ...guardedBlock, interaction, face, ...handStack, timeoutMs: z.number().int().min(500).max(120000).optional() }).strict(),
+    ]);
+    schemas['use-item'] = z.object({ interaction, ...handStack, timeoutMs: z.number().int().min(500).max(120000).optional() }).strict();
     if (schemas[name] && !schemas[name]!.safeParse(args).success) throw new BodyError('INVALID_ARGUMENT', '服务端生存动作缺少有效的状态／数量／完整组件／窗口版本前置核验');
   }
   private validateOperation(op: Operation, id: string, name?: string, expectedGeneration?: number): void {

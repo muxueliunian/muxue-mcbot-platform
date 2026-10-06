@@ -1,6 +1,6 @@
 # 设计：手持物品使用（交付计划第 1 步）
 
-2026-10-06 草案，待用户确认后实施。目标是给 ServerBody 加两个通用能力，为森罗物语：厨房和 Sophisticated Backpacks 的适配打底：
+2026-10-06 定稿并实现（用户确认按推荐做：内置堆肥桶测试交互、只加一个 `interact-block` 工具、森罗厨房用反射适配）。实测见 [验收记录](archive/use_item_validation.md)；实现时的调整：失败回执不带 inventory，`use-item` 只在有物品类交互时才声明。目标是给 ServerBody 加两个通用能力，为森罗物语：厨房和 Sophisticated Backpacks 的适配打底：
 
 - **对方块使用**（`use-item-on-block`）：手持某个物品（或空手）右键某个方块，比如往炒锅里放油、加料、拿锅铲翻炒、出锅。
 - **对空使用**（`use-item`）：手持物品右键空气，比如打开手里的背包。

@@ -17,8 +17,8 @@ final class InteractionObservationTest {
         check(defaults.radius()==4&&defaults.maxResults()==8&&defaults.centerPlayer()==null,"bounded default discovery");
         NearbyBlocks.Options limits=NearbyBlocks.options(obj("radius",8,"maxResults",16,"centerPlayer","muxue"));
         check(limits.radius()==8&&limits.maxResults()==16&&limits.centerPlayer().equals("muxue"),"explicit player center and maximum bounds");
-        for(JsonObject params:List.of(obj("radius",0),obj("radius",9),obj("radius",1.5),obj("maxResults",0),obj("maxResults",17),obj("maxResults",1.5),obj("centerPlayer",true))) invalid(params);
-        check(NearbyBlocks.MAX_VISITED==1445&&NearbyBlocks.VERTICAL_RADIUS==2,"fixed scan bound");
+        for(JsonObject params:List.of(obj("radius",0),obj("radius",17),obj("radius",1.5),obj("maxResults",0),obj("maxResults",17),obj("maxResults",1.5),obj("centerPlayer",true))) invalid(params);
+        check(NearbyBlocks.options(obj("radius",16)).radius()==16&&NearbyBlocks.MAX_VISITED==5445&&NearbyBlocks.VERTICAL_RADIUS==2,"fixed scan bound up to sixteen blocks");
 
         Object player=new Object(),storage=new Object(),other=new Object();
         List<MenuSlotSources.BackingSlot> slots=new ArrayList<>();

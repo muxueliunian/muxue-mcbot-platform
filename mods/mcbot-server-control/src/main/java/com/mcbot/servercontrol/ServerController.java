@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -191,6 +191,7 @@ final class ServerController implements ControlSession.Game {
         return NearbyBlocks.discover(player,center,options,targets);
     }
     @Override public JsonObject nearbyResources(JsonObject params) {return NearbyResources.discover(player,params,resources);}
+    @Override public JsonObject lookAround(JsonObject params) {return LookAround.summarize(player,params);}
     @Override public JsonObject survivalState(JsonObject params) {return survival.survivalState(params);}
     @Override public JsonObject assessTool(JsonObject params) {return ToolAssessment.assess(player,params);}
     private void receiveFoodFinish(LivingEntityUseItemEvent.Finish event) {
@@ -309,7 +310,7 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;
     }
-    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","survival-state","assess-tool","navigation-3d").contains(name);}
+    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","survival-state","assess-tool","navigation-3d","look-around").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }

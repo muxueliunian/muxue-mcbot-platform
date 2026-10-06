@@ -134,7 +134,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup', 'companion-mining', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -263,6 +263,13 @@ export class ServerBody implements Body {
       return result;
     } catch (error) { throw this.invalidate(error); }
   }
+  /** Read-only summary of loaded surroundings; identity fields are checked here and not passed on. */
+  async lookAround(options: { radius?: number } = {}): Promise<Record<string, unknown>> {
+    const args = z.object({ radius: z.number().int().min(8).max(32).optional() }).strict().parse(options);
+    const { instanceId: _i, sessionId: _s, worldId: _w, controlGeneration: _g, operationBudget: _b, ...summary } = await this.survivalRead('look-around', args,
+      z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, controlGeneration: generation, operationBudget: z.unknown().optional() }).passthrough());
+    return summary;
+  }
   survivalState(options: { details?: boolean } = {}): Promise<SurvivalState> { return this.survivalRead('survival-state', { details: options.details ?? true }, survivalSchema); }
   assessTool(options: ToolAssessmentOptions): Promise<ToolAssessment> {
     const args = toolOptionsSchema.safeParse(options);
@@ -272,7 +279,7 @@ export class ServerBody implements Body {
   async nearbyBlocks(options: { centerPlayer?: string; radius: number; maxResults: number }): Promise<NearbyBlocks> {
     this.assertActive();
     if (!this.hello.capabilities.includes('nearby-blocks')) throw new BodyError('UNSUPPORTED', '身体不支持附近容器发现');
-    const args = z.object({ centerPlayer: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), radius: z.number().int().min(1).max(8), maxResults: z.number().int().min(1).max(16) }).parse(options);
+    const args = z.object({ centerPlayer: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), radius: z.number().int().min(1).max(16), maxResults: z.number().int().min(1).max(16) }).parse(options);
     const revision = this.revision;
     try {
       const value = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: z.string(), controlGeneration: generation,
@@ -288,7 +295,7 @@ export class ServerBody implements Body {
     this.assertActive();
     if (!this.hello.capabilities.includes('nearby-resources')) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
     if (options.companionMiningGuard && !this.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '游戏端未声明持续陪挖的玩家保护能力');
-    const parsed = z.object({ blockIds: z.array(identifier).min(1).max(8), radius: z.number().int().min(1).max(6), maxResults: z.number().int().min(1).max(64), center: position.optional(),
+    const parsed = z.object({ blockIds: z.array(identifier).min(1).max(8), radius: z.number().int().min(1).max(16), maxResults: z.number().int().min(1).max(64), center: position.optional(),
       companionMiningGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().int().min(3).max(4) }).strict().optional(),
     }).strict().refine(value => !value.companionMiningGuard || value.center === undefined && value.radius <= value.companionMiningGuard.maxDistance).safeParse(options);
     if (!parsed.success) throw new BodyError('INVALID_ARGUMENT', '资源扫描范围或陪挖玩家守卫无效；陪挖中心必须由服务端确定');

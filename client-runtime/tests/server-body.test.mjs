@@ -369,3 +369,23 @@ test('MCP process cleanup preserves replacement control file belonging to anothe
   await client.close(); await until(() => mock.calls.some(call => call.method === 'release'));
   assert.equal(fs.readFileSync(controlFile, 'utf8'), replacement);
 });
+
+test('look-around is a checked read: identity stays out of the summary, radius is bounded to 8..32; scans reach 16 blocks', async t => {
+  const identity = { instanceId: 'instance-1', sessionId: 'server-session-1', worldId: 'test-world', controlGeneration: 0 };
+  const seen = [];
+  const { body } = await setup(t, {
+    hello: () => ({ protocol: 2, backend: 'server', instanceId: 'instance-1', worldId: 'test-world', username: 'ServerBot', connected: false, sessionId: null,
+      capabilities: ['look-around', 'nearby-blocks'], platform: { minecraft: '1.21.1', loader: 'neoforge', loaderVersion: 'test' } }),
+    'look-around': params => { seen.push(params.radius); return { ...identity, biome: 'minecraft:snowy_plains', players: [{ name: 'Alex', distance: 20, direction: 'north' }], creatures: [], items: [], blocks: [{ id: 'minecraft:coal_ore', category: 'ore', count: 3 }] }; },
+    'nearby-blocks': params => { seen.push(params.radius); return { ...identity, dimension: 'minecraft:overworld', center: { player: 'ServerBot', position: { x: 0, y: 64, z: 0 } }, candidates: [] }; },
+  });
+  assert.equal(body.hello.capabilities.includes('look-around'), true);
+  const summary = await body.lookAround({ radius: 32 });
+  assert.equal(summary.players[0].name, 'Alex'); assert.equal(summary.blocks[0].category, 'ore');
+  for (const key of ['instanceId', 'sessionId', 'worldId', 'controlGeneration']) assert.equal(key in summary, false, key);
+  await assert.rejects(body.lookAround({ radius: 33 }));
+  await assert.rejects(body.lookAround({ radius: 7 }));
+  await body.nearbyBlocks({ radius: 16, maxResults: 8 });
+  await assert.rejects(body.nearbyBlocks({ radius: 17, maxResults: 8 }));
+  assert.deepEqual(seen, [32, 16]);
+});

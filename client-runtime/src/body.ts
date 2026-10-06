@@ -109,6 +109,7 @@ export interface Body {
   act<N extends ActionName>(name: N, args: ActionArguments[N], taskToken?: string): Promise<Operation>;
   nearbyBlocks?(options: { centerPlayer?: string; radius: number; maxResults: number }): Promise<NearbyBlocks>;
   nearbyResources?(options: ResourceScanOptions): Promise<NearbyResources>;
+  lookAround?(options?: { radius?: number }): Promise<Record<string, unknown>>;
   survivalState?(options?: { details?: boolean }): Promise<SurvivalState>;
   assessTool?(options: ToolAssessmentOptions): Promise<ToolAssessment>;
   acquireTask?(taskToken: string): void;

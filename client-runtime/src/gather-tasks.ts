@@ -90,8 +90,9 @@ export class GatherTasks {
     // Same margin as ServerBody CompanionMiningGuard.DROP_REACH_MARGIN: a mined drop may slide past the
     // player radius; the body still has to stay inside it, and the server also bounds the drop to its source ore.
     if (miningOwner(task.borrowed)) return Math.hypot(position.x - task.center.x, position.y - task.center.y, position.z - task.center.z) <= task.radius + MINING_DROP_MARGIN;
-    // The catalog scans block cells at y +/-2; drops may spawn inside their outer half-cell.
-    return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && Math.abs(position.y - Math.floor(task.center.y)) <= 3;
+    // The catalog scans block cells from 2 below to 4 above the centre; drops may spawn inside their outer half-cell.
+    const dy = position.y - Math.floor(task.center.y);
+    return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && dy >= -3 && dy <= 5;
   }
   private done(task: Active): boolean { return !miningOwner(task.borrowed) && task.progress.targetCount !== undefined && (task.progress.pickedUpCount ?? 0) >= task.progress.targetCount; }
   private capacity(task: Active, state: Observation): void {

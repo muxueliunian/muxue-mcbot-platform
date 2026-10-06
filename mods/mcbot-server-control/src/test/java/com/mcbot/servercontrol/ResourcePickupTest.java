@@ -50,7 +50,8 @@ final class ResourcePickupTest {
         errorCode("UNSUPPORTED",()->NearbyResources.options(obj("blockIds",List.of("example:copper_ore")),origin));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of()),origin));
         errorCode("UNSUPPORTED",()->NearbyResources.options(obj("blockIds",List.of("minecraft:diamond_ore")),origin));
-        errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",7),origin));
+        check(NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",16),origin).radius()==16,"scan reaches sixteen blocks");
+        errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",17),origin));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"center",obj("x",9,"y",1,"z",0)),origin));
         Object dimension=new Object();var target=new ResourceTargets.Target("session",1,dimension,BlockPos.ZERO,null,new Object(),100,null);
         check(ResourceTargets.valid(target,"session",1,dimension,99),"resource ref live in bound epoch");

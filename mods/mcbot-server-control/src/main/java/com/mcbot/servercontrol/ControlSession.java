@@ -17,6 +17,7 @@ final class ControlSession {
         JsonObject observe(JsonObject params);
         default JsonObject nearbyBlocks(JsonObject params) {throw error("UNSUPPORTED","Nearby discovery is not available");}
         default JsonObject nearbyResources(JsonObject params) {throw error("UNSUPPORTED","Resource discovery is not available");}
+        default JsonObject lookAround(JsonObject params) {throw error("UNSUPPORTED","Look-around summary is not available");}
         default JsonObject survivalState(JsonObject params) {throw error("UNSUPPORTED","Survival state is not available");}
         default JsonObject assessTool(JsonObject params) {throw error("UNSUPPORTED","Native tool assessment is not available");}
         JsonObject watch();
@@ -163,13 +164,14 @@ final class ControlSession {
             case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return withOperationBudget(obj("ttlMs",TTL_MS,"controlGeneration",generation));
             case "release": revokeCurrent("Controller released control");requireNativeStopped(); return obj("released",true);
             case "stop": cancel("Stopped by controller");requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
-            case "observe", "nearby-blocks", "nearby-resources", "survival-state", "assess-tool": {
+            case "observe", "nearby-blocks", "nearby-resources", "look-around", "survival-state", "assess-tool": {
                 if(!method.equals("observe")&&!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree(method)))
                     throw error("UNSUPPORTED","Nearby discovery capability is not available");
                 JsonObject observation=switch(method) {
                     case "observe" -> game.observe(p);
                     case "nearby-resources" -> game.nearbyResources(p);
                     case "nearby-blocks" -> game.nearbyBlocks(p);
+                    case "look-around" -> game.lookAround(p);
                     case "survival-state" -> game.survivalState(p);
                     default -> game.assessTool(p);
                 };

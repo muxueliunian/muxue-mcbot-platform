@@ -15,13 +15,13 @@ import static com.mcbot.servercontrol.Protocol.*;
 
 /** Loaded-only discovery of identity. Never opens a menu or reads inventory contents. */
 final class NearbyBlocks {
-    static final int MAX_VISITED=17*17*5,MAX_BLOCK_READS=8192,VERTICAL_RADIUS=2;
+    static final int MAX_RADIUS=16,MAX_VISITED=33*33*5,MAX_BLOCK_READS=32768,VERTICAL_RADIUS=2;
     record Options(int radius,int maxResults,String centerPlayer) {}
     private record Candidate(BlockPos position,BlockState state,double distance) {}
     private NearbyBlocks() {}
 
     static Options options(JsonObject params) {
-        return new Options(integer(params,"radius",4,1,8),integer(params,"maxResults",8,1,16),
+        return new Options(integer(params,"radius",4,1,MAX_RADIUS),integer(params,"maxResults",8,1,16),
             params.has("centerPlayer")?string(params,"centerPlayer"):null);
     }
     private static int integer(JsonObject params,String key,int fallback,int min,int max) {

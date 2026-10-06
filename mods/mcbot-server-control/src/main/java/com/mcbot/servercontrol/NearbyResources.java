@@ -10,7 +10,9 @@ import net.minecraft.world.phys.Vec3;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class NearbyResources {
-    static final int VERTICAL_RADIUS=2,MAX_VISITED=13*13*5;
+    // Up to sixteen blocks around, two below and four above the centre: tree trunks and hillsides a walk away,
+    // still never below the body's feet (ResourceCatalog.requireSafe). Matches are checked nearest first.
+    static final int MAX_RADIUS=16,BELOW=2,ABOVE=4,MAX_VISITED=33*33*(BELOW+ABOVE+1);
     record Options(Set<String> blockIds,int radius,int maxResults,Vec3 center) {}
     static Options options(JsonObject args,Vec3 body) {
         var mining=args.has("companionMiningGuard")?CompanionMiningGuard.options(object(args,"companionMiningGuard")):null;
@@ -23,7 +25,7 @@ final class NearbyResources {
             ids.add(entry.getAsString());
         }
         if(mining!=null&&ids.stream().anyMatch(id->!ResourceCatalog.ore(id)))throw error("UNSUPPORTED","Companion mining scans only the six ordinary ore catalog blocks");
-        int radius=integer(args,"radius",mining==null?4:mining.maxDistance(),1,mining==null?6:mining.maxDistance()),limit=integer(args,"maxResults",32,1,64);
+        int radius=integer(args,"radius",mining==null?4:mining.maxDistance(),1,mining==null?MAX_RADIUS:mining.maxDistance()),limit=integer(args,"maxResults",32,1,64);
         Vec3 center=body;
         if(args.has("center")) {JsonObject p=object(args,"center");center=new Vec3(number(p,"x"),number(p,"y"),number(p,"z"));}
         if(center.distanceTo(body)>8) throw error("INVALID_ARGUMENT","Resource scan center must remain within eight blocks of the body");
@@ -36,23 +38,28 @@ final class NearbyResources {
         CompanionMiningGuard mining=args.has("companionMiningGuard")?CompanionMiningGuard.create(body,object(args,"companionMiningGuard")):null;
         if(mining!=null){mining.validateBody();options=new Options(options.blockIds(),options.radius(),options.maxResults(),mining.center());}
         BlockPos origin=BlockPos.containing(options.center());
-        List<Candidate> found=new ArrayList<>();int visited=0,unloaded=0,rejected=0;boolean exhausted=false;
+        List<Candidate> matches=new ArrayList<>(),found=new ArrayList<>();int visited=0,unloaded=0,rejected=0;boolean exhausted=false;
         FlatApproach geometry=new FlatApproach(body);
-        scan:for(int x=-options.radius();x<=options.radius();x++) for(int z=-options.radius();z<=options.radius();z++) {
+        for(int x=-options.radius();x<=options.radius();x++) for(int z=-options.radius();z<=options.radius();z++) {
             if(x*x+z*z>options.radius()*options.radius())continue;
-            for(int y=-VERTICAL_RADIUS;y<=VERTICAL_RADIUS;y++) {
+            for(int y=-BELOW;y<=ABOVE;y++) {
                 visited++;BlockPos pos=origin.offset(x,y,z);
                 if(body.serverLevel().isOutsideBuildHeight(pos)||!body.serverLevel().getWorldBorder().isWithinBounds(pos))continue;
                 var chunk=body.serverLevel().getChunkSource().getChunkNow(pos.getX()>>4,pos.getZ()>>4);
                 if(chunk==null){unloaded++;continue;}
                 BlockState state=chunk.getBlockState(pos);
                 if(!options.blockIds().contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()))continue;
-                try {if(mining!=null)mining.validateTarget(pos);ResourceCatalog.requireSafe(body,pos,geometry);if(!geometry.blockVisible(pos)){rejected++;continue;}}
-                catch(Protocol.Error unsafe){if(unsafe.code.equals("PATH_BUDGET")){exhausted=true;break scan;}rejected++;continue;}
-                found.add(new Candidate(pos,state,Vec3.atCenterOf(pos).distanceTo(options.center())));
+                matches.add(new Candidate(pos,state,Vec3.atCenterOf(pos).distanceTo(options.center())));
             }
         }
-        found.sort(Comparator.comparingDouble(Candidate::distance).thenComparingInt(c->c.position().getX()).thenComparingInt(c->c.position().getY()).thenComparingInt(c->c.position().getZ()));
+        matches.sort(Comparator.comparingDouble(Candidate::distance).thenComparingInt(c->c.position().getX()).thenComparingInt(c->c.position().getY()).thenComparingInt(c->c.position().getZ()));
+        // Safety and line-of-sight checks cost terrain reads: run them nearest first, one past the limit to report truncation.
+        for(Candidate match:matches) {
+            if(found.size()>options.maxResults())break;
+            try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry);if(!geometry.blockVisible(match.position())){rejected++;continue;}}
+            catch(Protocol.Error unsafe){if(unsafe.code.equals("PATH_BUDGET")){exhausted=true;break;}rejected++;continue;}
+            found.add(match);
+        }
         JsonArray candidates=new JsonArray();
         var inventory=ToolAssessment.inventory(body);
         for(Candidate candidate:found.subList(0,Math.min(found.size(),options.maxResults()))) {
@@ -69,7 +76,7 @@ final class NearbyResources {
             candidates.add(value);
         }
         return obj("dimension",body.serverLevel().dimension().location().toString(),"center",position(options.center()),"candidates",candidates,
-            "truncated",found.size()>options.maxResults()||exhausted,"budget",obj("radius",options.radius(),"verticalRadius",VERTICAL_RADIUS,"visited",visited,"maxVisited",MAX_VISITED,"unloaded",unloaded,"rejected",rejected,"loadedOnly",true,"blockReads",geometry.reads(),"maxBlockReads",FlatApproach.MAX_READS));
+            "truncated",found.size()>options.maxResults()||exhausted,"budget",obj("radius",options.radius(),"below",BELOW,"above",ABOVE,"matches",matches.size(),"visited",visited,"maxVisited",MAX_VISITED,"unloaded",unloaded,"rejected",rejected,"loadedOnly",true,"blockReads",geometry.reads(),"maxBlockReads",FlatApproach.MAX_READS));
     }
     private static JsonObject position(Vec3 p){return obj("x",p.x,"y",p.y,"z",p.z);}
 }

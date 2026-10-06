@@ -13,6 +13,8 @@ final class NearbyResources {
     static final int VERTICAL_RADIUS=2,MAX_VISITED=13*13*5;
     record Options(Set<String> blockIds,int radius,int maxResults,Vec3 center) {}
     static Options options(JsonObject args,Vec3 body) {
+        var mining=args.has("companionMiningGuard")?CompanionMiningGuard.options(object(args,"companionMiningGuard")):null;
+        if(mining!=null&&args.has("center"))throw error("INVALID_ARGUMENT","Companion mining scan center is always the live bound player position");
         if(!args.has("blockIds")||!args.get("blockIds").isJsonArray()||args.getAsJsonArray("blockIds").isEmpty()||args.getAsJsonArray("blockIds").size()>8)
             throw error("INVALID_ARGUMENT","blockIds requires one to eight explicit catalog IDs");
         Set<String> ids=new LinkedHashSet<>();
@@ -20,7 +22,8 @@ final class NearbyResources {
             if(!entry.isJsonPrimitive()||!entry.getAsJsonPrimitive().isString()||!ResourceCatalog.allowed(entry.getAsString())) throw error("UNSUPPORTED","Resource ID is not in the finite stone/log/coal/iron/copper catalog");
             ids.add(entry.getAsString());
         }
-        int radius=integer(args,"radius",4,1,6),limit=integer(args,"maxResults",32,1,64);
+        if(mining!=null&&ids.stream().anyMatch(id->!ResourceCatalog.ore(id)))throw error("UNSUPPORTED","Companion mining scans only the six ordinary ore catalog blocks");
+        int radius=integer(args,"radius",mining==null?4:mining.maxDistance(),1,mining==null?6:mining.maxDistance()),limit=integer(args,"maxResults",32,1,64);
         Vec3 center=body;
         if(args.has("center")) {JsonObject p=object(args,"center");center=new Vec3(number(p,"x"),number(p,"y"),number(p,"z"));}
         if(center.distanceTo(body)>8) throw error("INVALID_ARGUMENT","Resource scan center must remain within eight blocks of the body");
@@ -29,7 +32,10 @@ final class NearbyResources {
     private static int integer(JsonObject args,String key,int fallback,int min,int max) {double value=bounded(args,key,fallback,min,max);if(value!=Math.rint(value))throw error("INVALID_ARGUMENT",key+" must be an integer");return (int)value;}
     private record Candidate(BlockPos position,BlockState state,double distance) {}
     static JsonObject discover(ServerPlayer body,JsonObject args,ResourceTargets targets) {
-        Options options=options(args,body.position());BlockPos origin=BlockPos.containing(options.center());
+        Options options=options(args,body.position());
+        CompanionMiningGuard mining=args.has("companionMiningGuard")?CompanionMiningGuard.create(body,object(args,"companionMiningGuard")):null;
+        if(mining!=null){mining.validateBody();options=new Options(options.blockIds(),options.radius(),options.maxResults(),mining.center());}
+        BlockPos origin=BlockPos.containing(options.center());
         List<Candidate> found=new ArrayList<>();int visited=0,unloaded=0,rejected=0;boolean exhausted=false;
         FlatApproach geometry=new FlatApproach(body);
         scan:for(int x=-options.radius();x<=options.radius();x++) for(int z=-options.radius();z<=options.radius();z++) {
@@ -41,7 +47,7 @@ final class NearbyResources {
                 if(chunk==null){unloaded++;continue;}
                 BlockState state=chunk.getBlockState(pos);
                 if(!options.blockIds().contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()))continue;
-                try {ResourceCatalog.requireSafe(body,pos,geometry);if(!geometry.blockVisible(pos)){rejected++;continue;}}
+                try {if(mining!=null)mining.validateTarget(pos);ResourceCatalog.requireSafe(body,pos,geometry);if(!geometry.blockVisible(pos)){rejected++;continue;}}
                 catch(Protocol.Error unsafe){if(unsafe.code.equals("PATH_BUDGET")){exhausted=true;break scan;}rejected++;continue;}
                 found.add(new Candidate(pos,state,Vec3.atCenterOf(pos).distanceTo(options.center())));
             }
@@ -57,7 +63,7 @@ final class NearbyResources {
             var recommended=ToolAssessment.recommend(tools,body.getInventory().selected,policy,true);
             var inventoryRecommended=ToolAssessment.recommend(tools,body.getInventory().selected,policy,false);
             JsonObject value=obj("position",position(Vec3.atLowerCornerOf(candidate.position())),"id",BuiltInRegistries.BLOCK.getKey(candidate.state().getBlock()).toString(),"properties",properties,
-                "targetToken",targets.issue(body,candidate.position(),candidate.state()),"distance",candidate.distance(),"visible",true,"requiresCorrectTool",candidate.state().requiresCorrectToolForDrops(),"suitableToolSlots",suitable);
+                "targetToken",targets.issue(body,candidate.position(),candidate.state(),mining),"distance",candidate.distance(),"visible",true,"requiresCorrectTool",candidate.state().requiresCorrectToolForDrops(),"suitableToolSlots",suitable);
             if(recommended!=null)value.addProperty("recommendedToolSlot",recommended.slot());
             if(inventoryRecommended!=null)value.addProperty("recommendedInventorySlot",inventoryRecommended.slot());
             candidates.add(value);

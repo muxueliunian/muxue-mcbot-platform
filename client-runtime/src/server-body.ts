@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
-import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions } from './body.js';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions } from './body.js';
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -78,7 +78,7 @@ interface ServerOptions {
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
 const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity'];
-const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION']);
+const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION', 'COMPANION_PROTECTED', 'COMPANION_MINING_CONFLICT']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
   hello!: BodyHello;
@@ -131,7 +131,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    this.hello = { ...hello, capabilities: hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name)) };
+    this.hello = { ...hello, capabilities: hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'companion-pickup', 'companion-mining', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name)) };
     const controllerId = this.options.controllerId ?? randomUUID();
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(controllerId)) throw new BodyError('INVALID_ARGUMENT', 'controller-id 格式无效');
     const deadline = this.now() + (this.options.claimWaitMs ?? 12000);
@@ -277,10 +277,15 @@ export class ServerBody implements Body {
       return value;
     } catch (error) { throw this.invalidate(error); }
   }
-  async nearbyResources(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position }): Promise<NearbyResources> {
+  async nearbyResources(options: ResourceScanOptions): Promise<NearbyResources> {
     this.assertActive();
     if (!this.hello.capabilities.includes('nearby-resources')) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
-    const args = z.object({ blockIds: z.array(identifier).min(1).max(8), radius: z.number().int().min(1).max(6), maxResults: z.number().int().min(1).max(64), center: position.optional() }).parse(options);
+    if (options.companionMiningGuard && !this.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '游戏端未声明持续陪挖的玩家保护能力');
+    const parsed = z.object({ blockIds: z.array(identifier).min(1).max(8), radius: z.number().int().min(1).max(6), maxResults: z.number().int().min(1).max(64), center: position.optional(),
+      companionMiningGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().int().min(3).max(4) }).strict().optional(),
+    }).strict().refine(value => !value.companionMiningGuard || value.center === undefined && value.radius <= value.companionMiningGuard.maxDistance).safeParse(options);
+    if (!parsed.success) throw new BodyError('INVALID_ARGUMENT', '资源扫描范围或陪挖玩家守卫无效；陪挖中心必须由服务端确定');
+    const args = parsed.data;
     const revision = this.revision;
     try {
       const value = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation, center: position,
@@ -332,11 +337,12 @@ export class ServerBody implements Body {
   }
   private validateSurvivalArguments(name: ActionName, args: unknown): void {
     if (name === 'pickup-item' && args && typeof args === 'object' && 'companionGuard' in args && !this.hello.capabilities.includes('companion-pickup')) throw new BodyError('UNSUPPORTED', '游戏端未声明持续拾取玩家保护能力');
+    if (name === 'pickup-item' && args && typeof args === 'object' && 'resourceTargetToken' in args && !this.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '游戏端未声明陪挖引用的拾取保护能力');
     const guardedStack = { slot: z.number().int().min(0).max(8), expectedItem: identifier, expectedCount: z.number().int().nonnegative(), expectedComponents: components };
     const guardedBlock = { x: z.number().int(), y: z.number().int(), z: z.number().int(), expectedBlock: identifier, expectedProperties: components };
     const schemas: Partial<Record<ActionName, z.ZodTypeAny>> = {
       'approach-resource': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
-      'pickup-item': z.object({ entityId: z.string().uuid(), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components, expectedMaxStackSize: maxStackSize, companionGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().finite().min(1.5).max(4) }).optional(), timeoutMs: z.number().int().min(500).max(30000).optional() }),
+      'pickup-item': z.object({ entityId: z.string().uuid(), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components, expectedMaxStackSize: maxStackSize, companionGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().finite().min(1.5).max(4) }).optional(), resourceTargetToken: z.string().uuid().optional(), timeoutMs: z.number().int().min(500).max(30000).optional() }),
       'follow-companion': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), distance: z.number().finite().min(1.5).max(6).optional() }).strict(),
       'approach-container': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'approach-player': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid().optional(), distance: z.number().finite().min(1).max(1.5).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }),

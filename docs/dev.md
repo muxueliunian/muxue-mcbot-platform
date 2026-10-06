@@ -32,6 +32,8 @@ Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；应�
 先由服主准备获授权的MC1.21.1／NeoForge21.1.217隔离服务器，备份后安装自行构建的控制Mod；配置见模块README。控制Mod生成的`connection.json`只留本地。
 
 ```pwsh
+./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent codex -Effort low -PrepareOnly
+./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent codex -Effort low
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent claude -PrepareOnly
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent claude
 ```
@@ -46,12 +48,16 @@ Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；应�
 
 ## 进度与证据
 
-2026-10-04 [第一轮容器与矿石](r8_ore_offline_validation.md)增加整栈两次点击、容器90秒总期限、操作额度诊断及煤／铁／铜普通产物目录，2026-10-05纳入主线整理提交。用户要求本轮只编码，未开服／连服或安装产物，当前运行中的服务器不因此自动获得新能力；实服和真实模型仍待下一轮验收。服务器仍供用户使用，须待用户明确恢复测试；接续顺序见交付计划顶部。
+**2026-10-05最新约束：用户需要内存，暂不使用服务器。** 已保存关服并停止空闲Java／Gradle进程；在用户明确恢复前，不开服、连服、运行Java构建或真实游戏模型测试。可以继续源码、轻量Node测试和文档。持续陪挖源码／离线检查已完成，完整实服矩阵仍待排查拾取越界并继续；当前测试服已恢复上一轮已验证的Mod，新构建留在build目录，详见交付计划顶部，不能把首个定向通过当作完整陪挖验收。
+
+2026-10-05用户已明确恢复隔离服测试，本轮只使用已有登录的Codex。新组件已安装并完成[首版受限基础搭档验收](server_alpha_release_validation.md)：导航／防卫55项、R8容器24项、矿石14场景53项真实程序检查；Codex受控10阶段（叫停212ms、首新任务一次）及普通世界自然3阶段短跟随通过。四个自然目标点的采样累计位移约23.09格、高度63–64.2522，生命核对20；自然叫停323ms。本轮未新增30分钟运行，也未用Claude验证新增矿石。结束已保存关闭、相关端口无监听，服务器配置按备份实际字节恢复，普通验证世界保留本地；本轮新脚本与文档尚未提交／推送。
+
+历史：2026-10-04 [第一轮容器与矿石](r8_ore_offline_validation.md)只编码／离线验证，2026-10-05先纳入主线整理提交，随后才完成上述实服验收。不能用前一日离线记录替代实际游戏证据。
 
 2026-10-03 网页评审后的 R1／R2／R3 修复见[边界修复记录](boundary_review_fixes.md)。ServerBody Claude 游戏模式现移除全部内置宿主工具，仅使用 Minecraft MCP；人设由宿主固定只读注入，不依赖 Agent 的 Read／Write。要求支持 `--restricted` 的 Claude CLI（本机核对 2.1.287，最低 2.1.248）；参数不支持时不能降级宽权限。
 
 后续[混合故障回归](server_mixed_validation.md)已完成并补齐R4的共享写锁和停止确认边界：运行端157项、实服基线24项、3轮108项、约5分钟10轮349项及Claude-b真实10阶段通过；新验证副本已保存关闭。新脚本`server-mixed-smoke.mjs`、`server-mixed-agent-trial.mjs`仍要求获授权隔离服及本批备份，不对普通存档运行。
 
-[基础生存Alpha](survival_alpha_plan.md)第一批背包／工具／进食已完成。第二批有限高差导航、自卫／退让、威胁与AI策略已通过227项运行端、732项Java、55项真实程序及Claude-b五阶段；已完成30分钟受控运行及独立短复验（生命值检查缺口见记录），见[第二批记录](server_navigation_defense_validation.md)。所有本能共用写权，未知不自动重试；策略修改先停止旧活动任务。当前完整39工具；根规则中的33是较早快照数量，实际以capabilities和最新记录为准。复杂Mod、持续陪挖／完整建筑及新增Agent/API随后。R6仅完成自身库存退化；R5／R7、R6剩余部分、多小时稳定性、真实Mod异常和Node24.15原生退出仍待做，R8已编码并通过离线检查、实服待验。文字“暂停”当前走宿主硬停止，Agent软暂停另有实际模式状态。
+[基础生存Alpha](survival_alpha_plan.md)第一批背包／工具／进食已完成。10月3日第二批有限高差导航、自卫／退让、威胁与AI策略通过227项运行端、732项Java、55项真实程序及Claude-b五阶段；此前30分钟受控运行及独立短复验（生命值检查缺口见记录）见[第二批记录](server_navigation_defense_validation.md)。10月5日新增R8、矿石实服及Codex生存／自然短回归见上方首版记录。所有本能共用写权，未知不自动重试；策略修改先停止旧活动任务。当前完整39工具；根规则中的33是较早快照数量，实际以capabilities和最新记录为准。持续陪挖与小型建筑随后分别交付。R6仅完成自身库存退化；R5／R7、R6剩余部分、多小时稳定性、真实Mod异常和Node24.15原生退出仍待做。文字“暂停”当前走宿主硬停止，Agent软暂停另有实际模式状态。
 
 进度见`delivery_plan.md`；架构评审从`review_guide.md`开始。整理前最近一次为143项Node检查、387项Java检查、23项真实程序检查，Claude和Codex各5个实际阶段。真实报告是历史执行记录，原始日志／存档仍留本地，不代表网页评审者已复现。整理版自己的离线复验另见`export_validation.md`。

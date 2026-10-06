@@ -8,10 +8,14 @@ import type { SurvivalPolicy } from './survival-reflexes.js';
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
 type Request = { resourceRef?: string; item: string; count?: number; stacks?: number; radius?: number; say?: string; maxSteps?: number; timeoutMs?: number };
 type Name = 'gather-resources' | 'collect-items';
-export interface BorrowedPickup { taskToken: string; context: Context; entityId: string; source: GroundItem; center: Position; companionGuard: CompanionGuard; check: () => void; priorPicked: (state: Observation) => number }
+export interface BorrowedOwner { taskToken: string; context: Context; center: Position; companionGuard: CompanionGuard; check: () => void }
+export interface BorrowedPickup extends BorrowedOwner { entityId: string; source: GroundItem; priorPicked: (state: Observation) => number }
+export interface BorrowedMining extends BorrowedOwner { kind: 'mining'; candidate: NearbyResources['candidates'][number]; deadline: number; onProgress?: (operation: Operation) => void }
+type Borrowed = BorrowedPickup | BorrowedMining;
+const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
 type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string };
-type Active = { id: string; taskToken: string; borrowed?: BorrowedPickup; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean };
+type Active = { id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
 // Fixed vanilla ordinary outputs authorize targets, never predict actual loot/yield or stack limits.
@@ -75,6 +79,7 @@ export class GatherTasks {
       return;
     }
     task.variant = structuredClone(stack); task.progress.variantComponents = structuredClone(stack.components); task.progress.maxStackSize = stack.maxStackSize;
+    if (miningOwner(task.borrowed)) return;
     const goal = task.request.count ?? task.request.stacks! * stack.maxStackSize;
     if (!Number.isSafeInteger(goal) || goal > 256) throw new BodyError('UNSUPPORTED', '实际组数解析超过当前有限目标256个，未截断数量');
     task.progress.targetCount = goal;
@@ -84,7 +89,7 @@ export class GatherTasks {
     // The catalog scans block cells at y +/-2; drops may spawn inside their outer half-cell.
     return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && Math.abs(position.y - Math.floor(task.center.y)) <= 3;
   }
-  private done(task: Active): boolean { return task.progress.targetCount !== undefined && (task.progress.pickedUpCount ?? 0) >= task.progress.targetCount; }
+  private done(task: Active): boolean { return !miningOwner(task.borrowed) && task.progress.targetCount !== undefined && (task.progress.pickedUpCount ?? 0) >= task.progress.targetCount; }
   private capacity(task: Active, state: Observation): void {
     const main = state.inventory.filter(item => item.slot >= 0 && item.slot < 36);
     if (main.some(item => item.count === 0 && item.id === 'minecraft:air')) return;
@@ -100,7 +105,7 @@ export class GatherTasks {
       task.cursor = receipt.seq;
       if (receipt.sessionId !== task.context.sessionId || receipt.controlGeneration !== task.context.controlGeneration || receipt.dimension !== task.context.dimension) throw new BodyError('WORLD_CHANGED', '拾取收据不属于当前任务会话／代次');
       task.progress.totalNativePickedUpCount += receipt.pickedUpCount;
-      if (task.borrowed && receipt.entityId !== task.borrowed.entityId) {
+      if (task.borrowed && !miningOwner(task.borrowed) && receipt.entityId !== task.borrowed.entityId) {
         // A mode owns the broader policy ledger. Natural collision with another UUID must not
         // become this single-target goal or falsely block an otherwise authorized companion pickup.
         task.progress.unexpectedPickedUpCount += receipt.pickedUpCount;
@@ -108,12 +113,13 @@ export class GatherTasks {
         continue;
       }
       try {
+        if (miningOwner(task.borrowed) && task.oldGround?.has(receipt.entityId)) throw new BodyError('UNEXPECTED_PICKUP', '自然碰撞收取了子任务开始前的地面物品；不把它当作本轮采矿目标');
         if (!this.inside(task, receipt.position) || (task.name === 'collect-items' && !task.allowed.has(receipt.entityId))) throw new BodyError('OUTSIDE_AUTHORIZATION', '原生拾取了冻结范围之外的掉落；已保留实际结果并停止');
         if (receipt.stack.id !== task.request.item) throw new BodyError('UNEXPECTED_PICKUP', '原生拾取了其他物品，未把它算入目标');
         this.bind(task, receipt.stack);
         task.collectedEntities.set(receipt.entityId, (task.collectedEntities.get(receipt.entityId) ?? 0) + receipt.pickedUpCount);
         task.progress.pickedUpCount! += receipt.pickedUpCount;
-        task.progress.overage = Math.max(0, task.progress.pickedUpCount! - task.progress.targetCount!);
+        if (!miningOwner(task.borrowed)) task.progress.overage = Math.max(0, task.progress.pickedUpCount! - task.progress.targetCount!);
       } catch (error) {
         task.progress.unexpectedPickedUpCount += receipt.pickedUpCount;
         task.progress.items.push({ item: receipt.stack.id, count: receipt.pickedUpCount, maxStackSize: receipt.stack.maxStackSize });
@@ -134,8 +140,17 @@ export class GatherTasks {
     while (this.operations.get(accepted.operationId)?.status === 'running') { owner.check(); await new Promise(resolve => setTimeout(resolve, 50)); }
     owner.check(); return this.operation(accepted.operationId)!;
   }
+  /** One observed ore block, without a predicted item yield or an old-ground pickup goal. */
+  async mineCompanionBlock(candidate: NearbyResources['candidates'][number], owner: BorrowedMining): Promise<Operation> {
+    if (!this.body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体没有持续陪挖原生玩家边界保护能力');
+    const item = oreDrops[candidate.id];
+    if (!item || !candidate.visible || !candidate.targetToken || !isDeepStrictEqual(candidate, owner.candidate)) throw new BodyError('INVALID_ARGUMENT', '陪挖只接受一个已观察的明确普通矿石候选');
+    const accepted = await this.startOwned('gather-resources', { item, count: 1, radius: owner.companionGuard.maxDistance, maxSteps: 16, timeoutMs: 60000 }, owner);
+    while (this.operations.get(accepted.operationId)?.status === 'running') { owner.check(); await new Promise(resolve => setTimeout(resolve, 50)); }
+    owner.check(); return this.operation(accepted.operationId)!;
+  }
   async start(name: Name, request: Request): Promise<Operation> { return this.startOwned(name, request); }
-  private async startOwned(name: Name, request: Request, borrowed?: BorrowedPickup): Promise<Operation> {
+  private async startOwned(name: Name, request: Request, borrowed?: Borrowed): Promise<Operation> {
     this.validate(request, !!borrowed); this.assertIdle();
     if (!this.body.acquireTask || !this.body.releaseTask) throw new BodyError('UNSUPPORTED', '有限任务需要共享身体写锁');
     borrowed?.check();
@@ -146,6 +161,7 @@ export class GatherTasks {
     try {
       // Reserve synchronously even while the initial read or chat acknowledgement is in flight.
       task = { id, taskToken: borrowed?.taskToken ?? id, borrowed, name, epoch, context: {}, center: { x: 0, y: 0, z: 0 }, radius: request.radius ?? 4, deadline: this.now() + (request.timeoutMs ?? 60000), cursor: 0, allowed: new Set(), collectedEntities: new Map(), request, progress } as Active;
+      if (miningOwner(borrowed)) { task.deadline = Math.min(task.deadline, borrowed.deadline); delete progress.requestedCount; delete progress.targetCount; progress.limitation = '单块原生破坏与本子任务新拾取分开确认；物品掉落归属未确认，不预测产量。'; }
       this.active = task;
       const state = await this.body.observe(); this.check(task);
       if (!state.connected || state.health <= 0 || state.container) throw new BodyError('BUSY', '需要在线、安全、菜单关闭的身体');
@@ -155,20 +171,27 @@ export class GatherTasks {
         if (!isDeepStrictEqual(task.context, borrowed.context)) throw new BodyError('WORLD_CHANGED', '内部拾取不属于外层陪伴会话');
         task.center = { ...borrowed.center };
       }
+      if (miningOwner(borrowed)) {
+        if (state.groundItemsTruncated) throw new BodyError('PICKUP_UNKNOWN', '地面观察截断，不能区分子任务开始前的物品；未开挖');
+        task.oldGround = new Set(state.groundItems.map(item => item.entityId));
+      }
       let candidates: NearbyResources['candidates'] = [];
       if (name === 'gather-resources') {
         if (Object.hasOwn(oreDrops, request.item)) throw new BodyError('UNSUPPORTED', '首轮矿石采集只支持煤／粗铁／粗铜普通产物，精准矿石块目标尚未支持');
-        const ref = this.references.get(request.resourceRef ?? '');
-        if (!ref || ref.expires <= this.now()) throw new BodyError('STALE_REFERENCE', '资源引用过期，请重新观察授权区域');
-        if (!isDeepStrictEqual(ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
-        task.center = ref.scan.center; task.radius = ref.radius; candidates = structuredClone(ref.scan.candidates);
+        if (miningOwner(borrowed)) candidates = [structuredClone(borrowed.candidate)];
+        else {
+          const ref = this.references.get(request.resourceRef ?? '');
+          if (!ref || ref.expires <= this.now()) throw new BodyError('STALE_REFERENCE', '资源引用过期，请重新观察授权区域');
+          if (!isDeepStrictEqual(ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
+          task.center = ref.scan.center; task.radius = ref.radius; candidates = structuredClone(ref.scan.candidates);
+        }
         const compatible = candidates.filter(candidate => dropPreference(candidate.id, request.item) !== undefined);
         if (candidates.length > 0 && compatible.length === 0) throw new BodyError('UNSUPPORTED', '冻结资源候选与所需物品的已知掉落不匹配，未开挖');
         candidates = compatible;
       }
       const currentTask = task;
-      for (const item of state.groundItems) if (item.stack.id === request.item && (!borrowed || item.entityId === borrowed.entityId) && this.inside(currentTask, item.position)) currentTask.allowed.add(item.entityId);
-      if (borrowed) {
+      for (const item of state.groundItems) if (item.stack.id === request.item && !miningOwner(borrowed) && (!borrowed || item.entityId === borrowed.entityId) && this.inside(currentTask, item.position)) currentTask.allowed.add(item.entityId);
+      if (borrowed && !miningOwner(borrowed)) {
         const prior = borrowed.priorPicked(state); this.check(task);
         const current = state.groundItems.find(item => item.entityId === borrowed.entityId);
         if (!currentTask.allowed.has(borrowed.entityId)) {
@@ -198,8 +221,8 @@ export class GatherTasks {
     } catch (error) {
       if (task && !this.operations.has(id)) this.finish(task, (error as BodyError).code === 'CANCELLED' ? 'cancelled' : 'failed', (error as Error).message, error instanceof BodyError ? error.code : 'UNKNOWN');
       if (!borrowed && this.operations.has(id)) this.events.deliverOperation(this.operations.get(id)!);
-      if (this.active?.id === id) this.active = undefined;
-      if (!borrowed) this.body.releaseTask(id); throw error;
+      if (this.active?.id === id && !task?.stopPending) this.active = undefined;
+      if (!borrowed && !task?.stopPending) this.body.releaseTask(id); throw error;
     }
   }
   private async step<N extends ActionName>(task: Active, name: N, args: ActionArguments[N]): Promise<void> {
@@ -237,7 +260,8 @@ export class GatherTasks {
     pickupLoop: for (;;) {
       const state = await this.observe(task); if (this.done(task)) return;
       const items = state.groundItems ?? [];
-      let item = items.find(item => item.stack.id === task.request.item && this.inside(task, item.position) && (task.name === 'gather-resources' || task.allowed.has(item.entityId)) && item.visibility === 'visible');
+      if (miningOwner(task.borrowed) && state.groundItemsTruncated) throw new BodyError('PICKUP_UNKNOWN', '采矿后的地面观察已截断，未声称掉落已完整收取');
+      let item = items.find(item => item.stack.id === task.request.item && !task.oldGround?.has(item.entityId) && this.inside(task, item.position) && (task.name === 'gather-resources' || task.allowed.has(item.entityId)) && item.visibility === 'visible');
       if (!item) return;
       this.capacity(task, state);
       // Newly mined drops may still be falling. Wait within a fixed budget before binding a movement guard.
@@ -267,14 +291,14 @@ export class GatherTasks {
       }
       this.bind(task, item.stack); task.allowed.add(item.entityId); task.progress.stage = 'picking-up';
       const before = task.progress.pickedUpCount;
-      await this.step(task, 'pickup-item', { entityId: item.entityId, expectedItem: item.stack.id, expectedCount: item.stack.count, expectedComponents: item.stack.components!, expectedMaxStackSize: item.stack.maxStackSize, ...(task.borrowed ? { companionGuard: task.borrowed.companionGuard } : {}), timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+      await this.step(task, 'pickup-item', { entityId: item.entityId, expectedItem: item.stack.id, expectedCount: item.stack.count, expectedComponents: item.stack.components!, expectedMaxStackSize: item.stack.maxStackSize, ...(task.borrowed ? { companionGuard: task.borrowed.companionGuard } : {}), ...(miningOwner(task.borrowed) ? { resourceTargetToken: task.borrowed.candidate.targetToken } : {}), timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
       if (task.progress.pickedUpCount === before) throw new BodyError('PICKUP_UNKNOWN', '动作没有对应新增原生拾取收据，未依据实体消失或背包净变化猜测成功');
       if (!this.done(task) && (await this.observe(task)).groundItems?.some(next => next.entityId === item.entityId)) throw new BodyError('INVENTORY_FULL', '目标实体仍有余量；未自动重复拾取，请检查背包空间');
     }
   }
   private async run(task: Active, candidates: NearbyResources['candidates']): Promise<void> {
     try {
-      await this.pickups(task);
+      if (!miningOwner(task.borrowed)) await this.pickups(task);
       for (const candidate of candidates) {
         if (this.done(task)) break;
         let state = await this.observe(task);
@@ -331,6 +355,10 @@ export class GatherTasks {
         await this.pickups(task);
       }
       await this.observe(task);
+      if (miningOwner(task.borrowed)) {
+        if (task.progress.minedBlocks !== 1) throw new BodyError('UNKNOWN', '单块原生破坏未完整确认，未自动重试');
+        this.finish(task, 'succeeded', '单块原生破坏已确认；新拾取按独立收据记录，掉落归属未确认'); return;
+      }
       if (!this.done(task)) throw new BodyError('INSUFFICIENT_RESOURCES', '冻结候选已用完，实际拾取数量不足；未重新向外搜索');
       this.finish(task, 'succeeded', task.progress.overage ? '目标已达到；原生一次拾取产生额外数量，已如实记录' : '实际原生拾取数量已达到明确目标');
     } catch (error) {
@@ -354,7 +382,9 @@ export class GatherTasks {
   }
   private remember(task: Active, status: Operation['status'], summary: string): Operation {
     const op = { operationId: task.id, name: task.name, sessionId: task.context.sessionId ?? '', controlGeneration: task.context.controlGeneration, status, summary, result: structuredClone(task.progress) };
-    this.operations.set(task.id, op); if (this.operations.size > 64) this.operations.delete(this.operations.keys().next().value!); return op;
+    this.operations.set(task.id, op); if (this.operations.size > 64) this.operations.delete(this.operations.keys().next().value!);
+    if (miningOwner(task.borrowed)) task.borrowed.onProgress?.(structuredClone(op));
+    return op;
   }
   private finish(task: Active, status: Operation['status'], summary: string, code?: string): void {
     if (this.operations.get(task.id)?.status !== 'running' && this.operations.has(task.id)) return;

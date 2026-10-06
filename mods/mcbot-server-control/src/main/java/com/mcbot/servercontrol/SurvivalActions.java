@@ -240,6 +240,7 @@ final class SurvivalActions {
         BlockHitResult hit=hit(position,null);look(hit.getLocation());guard(operation);
         digging=operation;digPosition=position;digFace=hit.getDirection();digState=state;digSlot=player.getInventory().selected;
         deadline=now()+(long)bounded(args,"timeoutMs",15_000,500,120_000);lastDigTick=Integer.MIN_VALUE;
+        if(args.has("targetToken"))resources.require(player,string(args,"targetToken"));
         nativeEffects.sent();action(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK,position,digFace);
         digHand=hand();
         if(!player.serverLevel().getBlockState(position).equals(state)) { completeDig();return; }
@@ -274,8 +275,10 @@ final class SurvivalActions {
             // Native gameMode ticks, not both BodyPlayer callbacks. Never send premature STOP:
             // vanilla would schedule delayed destruction, which ABORT alone does not clear.
             float value=digState.getDestroyProgress(player,player.serverLevel(),digPosition)*(progress.mcbot$gameTicks()-progress.mcbot$destroyProgressStart()+1);
+            if(operation.args.has("targetToken"))resources.require(player,string(operation.args,"targetToken"));
             if(value>=1.0f) {
-                guard(operation);nativeEffects.sent();action(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK,digPosition,digFace);
+                guard(operation);if(operation.args.has("targetToken"))resources.require(player,string(operation.args,"targetToken"));
+                nativeEffects.sent();action(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK,digPosition,digFace);
                 if(player.serverLevel().getBlockState(digPosition).equals(digState)) { nativeEffects.confirmed();throw error("FORBIDDEN","Native break was refused; block unchanged"); }
                 completeDig();
             } else player.swing(InteractionHand.MAIN_HAND,true);

@@ -49,6 +49,10 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   const register = (name: string, description: string, shape: ZodRawShape, handler: (args: any) => Promise<unknown>) => {
     server.registerTool(name, { description, inputSchema: shape }, async args => {
       try {
+        if (name === 'companion-mode' && args.mining) {
+          if (!body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体未声明持续陪挖保护，未降级为普通跟随');
+          if (args.action !== 'follow' || args.pickup || (args.distance ?? 2.5) > args.mining.radius || new Set(args.mining.blockIds).size !== args.mining.blockIds.length) throw new BodyError('INVALID_ARGUMENT', '陪挖仅用于跟随，不能同时开启独立拾取，跟随距离须在陪挖半径内，矿石列表不能重复');
+        }
         if (!readTools.has(name)) reflexes?.authorizeAction();
         const result = await handler(args);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
@@ -94,11 +98,19 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
     ...(body.hello.capabilities.includes('defend-entity') ? { autoDefend: z.boolean().optional(), defenseRadius: z.number().finite().min(1).max(3).optional(), lowHealth: z.number().finite().min(1).max(20).optional(), excludedEntityIds: z.array(z.string().uuid()).max(64).optional(), maxAttacks: z.number().int().min(1).max(3).optional(), defenseTimeoutMs: z.number().int().min(500).max(5000).optional() } : {}),
   }, args => reflexes.configure(args));
   if (companion) {
-    register('companion-mode', `Start persistent follow of an explicitly named visible player on ${navigation}, or wait in place. Optional pickup actively pursues only the listed items near the same player while following is waiting; it never digs. Native collision pickup remains Minecraft behavior. Chat remains available. wait owns the task lock and clears pickup; pause stops/releases while retaining intent; resume explicitly rechecks session/identity and preserves pickup. Failures do not retry. stop-action discards intent and pickup. Only follow accepts player/distance/pickup.`, {
+    register('companion-mode', `Start persistent follow of an explicitly named visible player on ${navigation}, or wait in place. Optional pickup only pursues listed drops. Optional mining requires companion-mining capability (${body.hello.capabilities.includes('companion-mining') ? 'available' : 'unavailable on this body'}): explicitly authorize a subset of six coal/iron/copper ores and a finite candidate-attempt budget. Each selected visible block is guarded against live player proximity and competing player mining, then mined and picked up before following resumes. No tunnels, support digging, arbitrary ores or automatic budget renewal. pickup and mining are mutually exclusive. maxBlocks caps attempted block candidates, not an item quantity promise; report confirmed mined blocks and native picked items separately, without claiming per-block drop provenance. Expiry/exhaustion disables mining but keeps following. pause/resume preserves used budget and the original deadline; unknown or blocked does not retry. Chat remains available. wait clears both options; stop-action discards intent. Only follow accepts player/distance/pickup/mining.`, {
       action: z.enum(['follow', 'wait', 'pause', 'resume']), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(),
       distance: z.number().finite().min(1.5).max(6).optional(), say: z.string().min(1).max(256).optional(),
       ...(body.hello.capabilities.includes('companion-pickup') ? { pickup: z.object({ items: z.array(registryId).min(1).max(8), radius: z.number().finite().min(1.5).max(4).default(3) }).optional() } : {}),
-    }, async args => { tasks.assertIdle(); return companion.request(args); });
+      mining: z.object({
+        blockIds: z.array(z.enum(['minecraft:coal_ore', 'minecraft:deepslate_coal_ore', 'minecraft:iron_ore', 'minecraft:deepslate_iron_ore', 'minecraft:copper_ore', 'minecraft:deepslate_copper_ore'])).min(1).max(6),
+        maxBlocks: z.number().int().min(1).max(32).describe('Required finite candidate-attempt cap, chosen by the Agent and explained to the player. Not a target item count.'),
+        radius: z.number().int().min(3).max(4).default(4), durationMs: z.number().int().min(10000).max(600000).default(300000),
+      }).strict().optional(),
+    }, async args => {
+      if (args.mining && !body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体未声明持续陪挖保护，未降级为普通跟随');
+      tasks.assertIdle(); return companion.request(args);
+    });
     register('get-companion-mode', 'Read the current persistent companion mode without starting, resuming or stopping any action.', {}, async () => companion.read());
   }
   register('wait-for-events', 'Read new chat and lifecycle events. Hosted agents should use timeoutSeconds 0 and end their turn when idle.', {

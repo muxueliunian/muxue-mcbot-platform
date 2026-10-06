@@ -52,7 +52,7 @@ final class ResourcePickupTest {
         errorCode("UNSUPPORTED",()->NearbyResources.options(obj("blockIds",List.of("minecraft:diamond_ore")),origin));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",7),origin));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"center",obj("x",9,"y",1,"z",0)),origin));
-        Object dimension=new Object();var target=new ResourceTargets.Target("session",1,dimension,BlockPos.ZERO,null,new Object(),100);
+        Object dimension=new Object();var target=new ResourceTargets.Target("session",1,dimension,BlockPos.ZERO,null,new Object(),100,null);
         check(ResourceTargets.valid(target,"session",1,dimension,99),"resource ref live in bound epoch");
         check(!ResourceTargets.valid(target,"session",1,dimension,100)&&!ResourceTargets.valid(target,"session",2,dimension,1)&&!ResourceTargets.valid(target,"session",1,new Object(),1),"expiry stop generation and real dimension invalidate references");
         JsonObject dropPosition=obj("x",3,"y",201.25,"z",3),dropStack=stack(1,99);

@@ -108,10 +108,13 @@ final class PickupItem {
     }
     void fail(String code,String message){operation.finish("failed",code+": "+message,result(code));stop();}
     void stop(){stopped=true;route=null;view.cancelNavigation();view.stop();}
-    static PickupItem create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,SurvivalActions survival) {
+    static PickupItem create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,SurvivalActions survival,ResourceTargets resources) {
         UUID uuid;
         try {uuid=UUID.fromString(string(operation.args,"entityId"));}catch(IllegalArgumentException invalid){throw error("INVALID_ARGUMENT","entityId must be a UUID");}
         ItemEntity item=body.serverLevel().getEntity(uuid) instanceof ItemEntity drop?drop:null;
+        String resourceToken=operation.args.has("resourceTargetToken")?string(operation.args,"resourceTargetToken"):null;
+        ResourceTargets.Target resource=resourceToken==null?null:resources.requirePickup(body,resourceToken,item==null?body.position():item.position(),string(operation.args,"expectedItem"));
+        CompanionMiningGuard mining=resource==null?null:resource.miningGuard();
         CompanionPickupGuard companion=operation.args.has("companionGuard")?new CompanionPickupGuard(object(operation.args,"companionGuard"),new CompanionPickupGuard.View(){
             public Object dimension(){return body.serverLevel();}
             public Vec3 bodyPosition(){return body.position();}
@@ -128,7 +131,11 @@ final class PickupItem {
             public boolean mayDrive(){return session.mayDrive(operation);}
             public void refresh(){NativeNavigation.conditions(body);geometry=new FlatApproach(body);}
             public boolean nativeNavigation(){return true;}
-            public void navigate(){navigation.tick(target(),feet->routeAllowed(feet)&&inReach(feet),this::routeAllowed);}
+            public void navigate(){
+                validateCompanion();
+                try {navigation.tick(target(),feet->routeAllowed(feet)&&inReach(feet),this::routeAllowed);}
+                catch(Protocol.Error failure){if(mining!=null&&failure.code.equals("OUT_OF_REACH"))throw error("COMPANION_OUT_OF_RANGE","Ore pickup left the live companion radius");throw failure;}
+            }
             public void cancelNavigation(){navigation.stop();}
             public JsonObject navigationDetails(){return navigation.diagnostics();}
             public Vec3 feet(){return body.position();}public float health(){return body.getHealth();}
@@ -138,8 +145,11 @@ final class PickupItem {
             public JsonObject stack(){return survival.stackValue(item.getItem());}
             public Vec3 target(){return item==null?body.position():item.position();}
             public boolean safe(Vec3 from,Vec3 to){return geometry.safe(from,to);}
-            public void validateCompanion(){if(companion!=null)companion.validate();}
-            public boolean routeAllowed(Vec3 feet){return companion==null||companion.allows(feet);}
+            public void validateCompanion(){
+                if(companion!=null)companion.validate();
+                if(resourceToken!=null)resources.requirePickup(body,resourceToken,target(),string(operation.args,"expectedItem"));
+            }
+            public boolean routeAllowed(Vec3 feet){return (companion==null||companion.allows(feet))&&(mining==null||mining.allows(feet));}
             public boolean inReach(Vec3 feet){return geometry.itemReach(feet,item.getBoundingBox());}
             public List<Vec3> plan(){
                 FlatRoute.Cell origin=new FlatRoute.Cell(body.blockPosition().getX(),body.blockPosition().getZ());

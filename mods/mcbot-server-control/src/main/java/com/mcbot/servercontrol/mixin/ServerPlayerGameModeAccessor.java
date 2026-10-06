@@ -1,6 +1,7 @@
 package com.mcbot.servercontrol.mixin;
 
 import net.minecraft.server.level.ServerPlayerGameMode;
+import net.minecraft.core.BlockPos;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -13,4 +14,6 @@ public interface ServerPlayerGameModeAccessor {
     @Accessor("isDestroyingBlock") void mcbot$destroying(boolean value);
     @Accessor("hasDelayedDestroy") boolean mcbot$hasDelayedDestroy();
     @Accessor("hasDelayedDestroy") void mcbot$delayed(boolean value);
+    @Accessor("destroyPos") BlockPos mcbot$destroyPos();
+    @Accessor("delayedDestroyPos") BlockPos mcbot$delayedDestroyPos();
 }

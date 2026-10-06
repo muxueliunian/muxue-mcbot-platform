@@ -145,8 +145,8 @@ try {
   client = new Client({ name: 'survival-alpha-real-smoke', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools.map(value => value.name);
   check('新五项语义工具已在真实MCP注册', ['get-survival-state', 'assess-tool', 'prepare-item', 'eat-food', 'set-reflexes'].every(name => tools.includes(name)), { toolCount: tools.length });
-  const original = await state(); check('自动进食默认开启，自动防卫尚未声称交付', original.policy.autoEat === true && original.policy.autoDefend?.supported === false);
-  await policy({ autoEat: false, armed: false }); await tool('stop-action');
+  const original = await state(); check('当前主线默认进食／有限防卫及支持事实已交付', original.policy.autoEat === true && original.policy.autoDefend === true && original.policy.defenseSupported === true);
+  await policy({ autoEat: false, autoDefend: false, armed: false }); await tool('stop-action');
   peer = track('peer', spawn(process.execPath, [path.join(root, 'scripts/server-play-test-peer.mjs'), '--commands', input, '--events', peerFile], { cwd: root, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] }));
   await until(() => lines(peerFile), values => values.some(value => value.type === 'spawn'), '协议玩家未进服');
   const forceBefore = await command('forceload query'); report.forceloadBefore = forceBefore;

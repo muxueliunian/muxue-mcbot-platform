@@ -99,6 +99,7 @@ final class NativeNavigation {
             if(!geometry.stand(next))throw error("BLOCKED","Jump/drop landing changed or became unsafe");
         }
         if(!session.mayDrive(operation)){stop();return false;}
+        if(!allowed.test(body.position())||!allowed.test(next))throw error("OUT_OF_REACH","Navigation region changed before native input");
         Vec3 delta=next.subtract(feet);
         body.stopInput();
         Input input=inputs(delta,jumping&&!sawAir);

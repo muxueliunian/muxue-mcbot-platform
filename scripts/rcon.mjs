@@ -22,33 +22,47 @@ const pkt = (id, type, body) => {
   return p;
 };
 
-// 依次执行命令，返回每条命令的回复；连不上、认证失败、超时都会 reject
+// Minecraft's command output capture can mix replies from concurrent RCON connections.
+// Serialize this process's calls to the same localhost port, including different directory aliases.
+const portQueues = new Map();
+// 依次执行命令，返回每条命令的回复；连不上、认证失败、超时都会 reject。
+// timeoutMs仍从实际TCP连接开始计时，不把等待其他调用的时间算成网络超时。
 export function rcon(cmds, { serverDir, timeoutMs = 5000 } = {}) {
+  let props;
+  try { props = readServerProps(serverDir); }
+  catch (e) { return Promise.reject(new Error(`读不到 server.properties：${e.message}`)); }
+  const port = +props['rcon.port'];
+  const previous = portQueues.get(port) ?? Promise.resolve();
+  const request = previous.then(() => rconRequest(cmds, props, timeoutMs));
+  // Keep the failure on the caller's promise; a rejected request must not poison its successors.
+  const tail = request.then(() => {}, () => {});
+  portQueues.set(port, tail);
+  void tail.then(() => { if (portQueues.get(port) === tail) portQueues.delete(port); });
+  return request;
+}
+
+function rconRequest(cmds, props, timeoutMs) {
   return new Promise((resolve, reject) => {
-    let props;
-    try {
-      props = readServerProps(serverDir);
-    } catch (e) {
-      reject(new Error(`读不到 server.properties：${e.message}`));
-      return;
-    }
     const replies = [];
     let buf = Buffer.alloc(0);
     let next = 0;
     let settled = false;
+    let failure;
     const done = (err) => {
       if (settled) return;
       settled = true;
+      failure = err;
       clearTimeout(timer);
       s.destroy();
-      if (err) reject(err); else resolve(replies);
+      // Resolve/reject only on local socket close, before the queue admits another connection.
     };
     const s = net.connect(+props['rcon.port'], '127.0.0.1');
     const timer = setTimeout(() => done(new Error('RCON 超时')), timeoutMs);
     s.on('connect', () => s.write(pkt(1, 3, props['rcon.password'] ?? '')));
     s.on('data', (d) => {
+      if (settled) return;
       buf = Buffer.concat([buf, d]);
-      while (buf.length >= 4 && buf.length >= 4 + buf.readInt32LE(0)) {
+      while (!settled && buf.length >= 4 && buf.length >= 4 + buf.readInt32LE(0)) {
         const len = buf.readInt32LE(0), id = buf.readInt32LE(4), body = buf.toString('utf8', 12, 4 + len - 2);
         buf = buf.subarray(4 + len);
         if (id === -1) { done(new Error('RCON auth failed')); return; }
@@ -57,7 +71,10 @@ export function rcon(cmds, { serverDir, timeoutMs = 5000 } = {}) {
       }
     });
     s.on('error', (e) => done(e));
-    s.on('close', () => done(new Error('RCON 连接被关闭')));
+    s.on('close', () => {
+      if (!settled) done(new Error('RCON 连接被关闭'));
+      if (failure) reject(failure); else resolve(replies);
+    });
   });
 }
 

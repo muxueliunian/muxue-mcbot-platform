@@ -201,6 +201,7 @@ public final class ControlSessionTest {
         IronFurnaceAdapterTest.run();
         FollowCompanionTest.run();
         ResourcePickupTest.run();
+        CompanionMiningTest.run();
         CompanionPickupTest.run();
         NativeActionBoundaryTest.run();
         ToolAssessmentTest.run();

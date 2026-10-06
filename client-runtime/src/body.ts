@@ -7,6 +7,7 @@ export interface ItemValue { id: string; count: number; components?: Components;
 export interface ItemStack extends ItemValue { slot: number; source?: 'container' | 'player' | 'unknown'; playerSlot?: number; active?: boolean; mayPickup?: boolean }
 export interface GroundItem { entityId: string; position: Position; stack: ItemValue; onGround?: boolean; visible?: boolean | null; visibility: 'visible' | 'occluded' | 'unknown' }
 export interface CompanionGuard { player: string; expectedEntityId: string; maxDistance: number }
+export interface ResourceScanOptions { blockIds: string[]; radius: number; maxResults: number; center?: Position; companionMiningGuard?: CompanionGuard }
 export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string }
 export interface NearbyResources {
   instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number; center: Position;
@@ -74,7 +75,7 @@ export interface ActionArguments {
   'approach-container': { targetToken: string; timeoutMs?: number };
   'approach-player': { player: string; expectedEntityId?: string; distance?: number; timeoutMs?: number };
   'approach-resource': { targetToken: string; timeoutMs?: number };
-  'pickup-item': { entityId: string; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number; companionGuard?: CompanionGuard; timeoutMs?: number };
+  'pickup-item': { entityId: string; expectedItem: string; expectedCount: number; expectedComponents: Components; expectedMaxStackSize?: number; companionGuard?: CompanionGuard; resourceTargetToken?: string; timeoutMs?: number };
   'dig-block': Position & { expectedBlock: string; expectedProperties?: Components; targetToken?: string; timeoutMs?: number };
   'place-block': Position & { face: 'up' | 'down' | 'north' | 'south' | 'east' | 'west'; slot: number; expectedItem: string; expectedBlock: string; expectedProperties?: Components; expectedCount?: number; expectedComponents?: Components; timeoutMs?: number };
   'open-container': Position & { expectedBlock: string; expectedProperties?: Components; targetToken?: string; timeoutMs?: number };
@@ -98,7 +99,7 @@ export interface Body {
   observe(block?: Position): Promise<Observation>;
   act<N extends ActionName>(name: N, args: ActionArguments[N], taskToken?: string): Promise<Operation>;
   nearbyBlocks?(options: { centerPlayer?: string; radius: number; maxResults: number }): Promise<NearbyBlocks>;
-  nearbyResources?(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position }): Promise<NearbyResources>;
+  nearbyResources?(options: ResourceScanOptions): Promise<NearbyResources>;
   survivalState?(options?: { details?: boolean }): Promise<SurvivalState>;
   assessTool?(options: ToolAssessmentOptions): Promise<ToolAssessment>;
   acquireTask?(taskToken: string): void;

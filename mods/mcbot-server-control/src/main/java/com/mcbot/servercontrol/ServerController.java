@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -237,7 +237,7 @@ final class ServerController implements ControlSession.Game {
         }
         if(operation.name.equals("look-at")) { look(point(args)); operation.finish("succeeded","Server view rotated",null); return; }
         if(operation.name.equals("approach-container")||operation.name.equals("approach-player")||operation.name.equals("approach-resource")) { beginApproach(operation);return; }
-        if(operation.name.equals("pickup-item")) {pickup=PickupItem.create(operation,player,session,survival);active=operation;pickup.tick();if(!operation.status.equals("running"))stop();return;}
+        if(operation.name.equals("pickup-item")) {pickup=PickupItem.create(operation,player,session,survival,resources);active=operation;pickup.tick();if(!operation.status.equals("running"))stop();return;}
         if(operation.name.equals("follow-companion")) {
             companion=FollowCompanion.create(operation,player,session,server);active=operation;
             companion.tick();if(!operation.status.equals("running")) stop();return;
@@ -254,7 +254,7 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;
     }
-    static boolean atomicAction(String name){return CAPABILITIES.contains(name)&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","survival-state","assess-tool","navigation-3d").contains(name);}
+    static boolean atomicAction(String name){return CAPABILITIES.contains(name)&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","survival-state","assess-tool","navigation-3d").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }
@@ -315,8 +315,11 @@ final class ServerController implements ControlSession.Game {
         if(now()>=actionDeadline)throw error("TIMEOUT","Approach time limit reached");
         FlatApproach geometry=new FlatApproach(player);Vec3 destination;
         java.util.function.Predicate<Vec3> goal;
+        CompanionMiningGuard miningGuard=null;
         if(active.name.equals("approach-container")||active.name.equals("approach-resource")) {
-            BlockPos pos=active.name.equals("approach-resource")?resources.require(player,string(active.args,"targetToken")).position():targets.require(player,string(active.args,"targetToken")).position();
+            ResourceTargets.Target resource=active.name.equals("approach-resource")?resources.require(player,string(active.args,"targetToken")):null;
+            BlockPos pos=resource!=null?resource.position():targets.require(player,string(active.args,"targetToken")).position();
+            miningGuard=resource==null?null:resource.miningGuard();
             destination=Vec3.atCenterOf(pos);goal=feet->geometry.containerReach(feet,pos);
         } else {
             ServerPlayer actual=findPlayer(string(active.args,"player"));
@@ -324,7 +327,14 @@ final class ServerController implements ControlSession.Game {
             if(actual.position().distanceTo(approachPlayerStart)>0.5)throw error("TARGET_MOVED","Recipient moved during bounded approach");
             destination=actual.position();goal=feet->geometry.playerReach(feet,actual,bounded(active.args,"distance",1.3,1,1.5));
         }
-        if(navigation.tick(destination,goal))finish("succeeded","Reached verified interaction position",approachResult(active,approachPlayer));
+        boolean arrived;
+        if(miningGuard==null)arrived=navigation.tick(destination,goal);
+        else {
+            CompanionMiningGuard bound=miningGuard;
+            try {arrived=navigation.tick(destination,goal,bound::allows);}
+            catch(Protocol.Error failure){if(failure.code.equals("OUT_OF_REACH"))throw error("COMPANION_OUT_OF_RANGE","Mining approach left the live companion radius");throw failure;}
+        }
+        if(arrived)finish("succeeded","Reached verified interaction position",approachResult(active,approachPlayer));
     }
     private void requireWalkable() {
         NativeNavigation.conditions(player);

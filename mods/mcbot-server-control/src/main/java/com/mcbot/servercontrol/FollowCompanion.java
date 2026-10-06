@@ -57,7 +57,7 @@ final class FollowCompanion {
     private long unreachableSince;
     // Idle stroll: after standing by a still player for a while, walk a few steps somewhere nearby and stay there
     // until the player moves. Only while waiting on native navigation; never with pickup or mining.
-    static final long STROLL_AFTER_MS=20_000,STROLL_SPREAD_MS=20_000,STROLL_LIMIT_MS=10_000,STROLL_RETRY_MS=5_000;
+    static final long STROLL_AFTER_MS=8_000,STROLL_SPREAD_MS=10_000,STROLL_LIMIT_MS=10_000,STROLL_RETRY_MS=5_000;
     static final double STROLL_MIN=2.5,STROLL_MAX=4.5,STROLL_LEASH=1.5;
     private final boolean wander;
     private final Random random;

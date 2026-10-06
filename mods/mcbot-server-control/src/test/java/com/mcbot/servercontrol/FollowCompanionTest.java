@@ -195,18 +195,18 @@ final class FollowCompanionTest {
         Fixture f=new Fixture(new NativeTerrain());NativeTerrain t=(NativeTerrain)f.terrain;f.start();
         for(int i=0;i<80&&!f.state().equals("waiting");i++)f.tick(50);
         check(f.state().equals("waiting")&&f.follower.waiting(),"native follow arrives and waits");
-        for(int i=0;i<19;i++)f.tick(1000);
-        check(t.strollTicks==0&&f.follower.waiting(),"no stroll in the first 20 seconds of waiting");
-        long waited=19_000;
-        while(!f.follower.strolling()&&waited<45_000){f.tick(500);waited+=500;}
-        check(f.follower.strolling()&&waited>=20_000&&waited<=40_500,"a stroll starts 20..40 seconds after the player stood still");
+        for(int i=0;i<7;i++)f.tick(1000);
+        check(t.strollTicks==0&&f.follower.waiting(),"no stroll in the first 8 seconds of waiting");
+        long waited=7_000;
+        while(!f.follower.strolling()&&waited<25_000){f.tick(500);waited+=500;}
+        check(f.follower.strolling()&&waited>=8_000&&waited<=18_500,"a stroll starts 8..18 seconds after the player stood still");
         check(!f.follower.waiting()&&f.state().equals("waiting"),"strolling is reported as waiting but turns off idle gaze");
         check(f.operation.result.getAsJsonObject().get("strolling").getAsBoolean(),"result marks the stroll");
         Vec3 spot=t.target.add(0,0,3.5);
         for(int i=0;i<60&&f.follower.strolling();i++)f.tick(50);
         check(!f.follower.strolling()&&t.feet.subtract(spot).horizontalDistance()<=0.6&&t.strollEnds==1,"walks to the stroll spot and ends the stroll");
         Vec3 rested=t.feet;int moves=t.moves;
-        for(int i=0;i<15;i++)f.tick(1000);
+        for(int i=0;i<7;i++)f.tick(1000);
         check(t.feet.equals(rested)&&t.moves==moves&&f.state().equals("waiting"),"stays at the stroll spot instead of walking back while the player stands still");
         for(int i=0;i<40&&!f.follower.strolling();i++)f.tick(1000);
         check(f.follower.strolling(),"strolls again later");

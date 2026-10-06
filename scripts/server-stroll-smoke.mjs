@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 跟随等人时闲逛实测：测试玩家 StrollPeer（原版协议、创造模式）站着不动，Bot 用真实的 companion-mode 跟随，
-// 看它会不会在 20～40 秒后自己走几步、走到的地方离玩家不远也没往下掉、走完就停在那里，玩家一走又接着跟。
+// 看它会不会在 8～18 秒后自己走几步、走到的地方离玩家不远也没往下掉、走完就停在那里，玩家一走又接着跟。
 // 不启停服务器、不调用模型、不计算哈希。需要：隔离服开着、没装要求客户端的 Mod（测试玩家才能进），
 // 世界是 10-05 生成的自然世界的副本（雪原坡地）。
 import assert from 'node:assert/strict';
@@ -33,7 +33,7 @@ const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: 
 const secrets = [connection.token, props['rcon.password']].filter(Boolean);
 const redact = text => { let value = String(text); for (const secret of secrets) value = value.replaceAll(secret, '[redacted]'); return value; };
 const report = { started: new Date().toISOString(), serverDir, checks: [], samples: [],
-  limitations: ['没有使用真实模型；测试玩家用 RCON tp 换位置。闲逛的起始时间是随机的（20～40 秒），只跑了一次。'] };
+  limitations: ['没有使用真实模型；测试玩家用 RCON tp 换位置。闲逛的起始时间是随机的（8～18 秒），只跑了一次。'] };
 const save = () => fs.writeFile(path.join(dir, 'report.json'), redact(JSON.stringify(report, null, 2)) + '\n');
 function check(name, passed, detail) { report.checks.push({ name, passed: !!passed, ...(detail === undefined ? {} : { detail }) }); assert(passed, name + (detail ? ' ' + redact(JSON.stringify(detail)).slice(0, 2000) : '')); console.log('PASS ' + name); }
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
@@ -86,7 +86,7 @@ try {
   await save();
   check('跟随没有失败', !bad, bad);
   check('玩家站着不动时，Bot 在 50 秒内自己走动了', strollStart, report.samples.at(-1));
-  check('不是一停下就走（至少等了 15 秒）', strollStart.t >= 15, strollStart);
+  check('不是一停下就走（至少等了 6 秒）', strollStart.t >= 6, strollStart);
   check('走完停下了', strollEnd, report.samples.at(-1));
   const during = report.samples.filter(s => s.t >= strollStart.t);
   check('闲逛一直在玩家身边 6 格内', during.every(s => s.toPlayer <= 6), during.map(s => s.toPlayer));
@@ -94,10 +94,10 @@ try {
   check('真的换了个地方（离原位置至少 1.5 格）', flat(strollEnd.bot, first) >= 1.5, { first, end: strollEnd.bot });
 
   // 停下后玩家不动：留在原地，不走回去
-  const rest = await posOf('ServerBot'); await wait(8000);
+  const rest = await posOf('ServerBot'); await wait(6000);
   const later = await posOf('ServerBot');
   report.rest = { rest, later };
-  check('走完后玩家不动就留在那里（8 秒内没走回去）', dist(rest, later) < 0.5, report.rest);
+  check('走完后玩家不动就留在那里（6 秒内没走回去）', dist(rest, later) < 0.5, report.rest);
 
   // 玩家走开：接着跟
   await command(`tp StrollPeer ${away.join(' ')}`);

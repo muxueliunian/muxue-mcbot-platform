@@ -1,12 +1,12 @@
 # MCBOT 架构可行性复评
 
-2026-10-02复评，2026-10-03同步进度。本文保留选型依据与验证关口。**ServerBody是当前原型主线；A／B／C、真人体验、平地走近与实例核验、新任务实际Claude验证及首个内容Mod有限样本已完成。** 最新状态见[交付清单](delivery_plan.md)、[走近记录](server_approach_validation.md)与[D样本](server_content_D_validation.md)，不把独服已验能力外推为任意Mod、单机或异机全部支持。
+2026-10-02复评，2026-10-03同步进度。本文保留选型依据与验证关口。**ServerBody是当前原型主线；A／B／C、真人体验、平地走近与实例核验、新任务实际Claude验证及首个内容Mod有限样本已完成。** 最新状态见[交付清单](delivery_plan.md)、[走近记录](archive/server_approach_validation.md)与[D样本](archive/server_content_D_validation.md)，不把独服已验能力外推为任意Mod、单机或异机全部支持。
 
 ## 1. 已确认的需求
 
-2026-10-03 外部评审继续支持 ServerBody 路线，近期先修异步切换归属、原生写后未知结果和 Claude 宿主权限三处边界。实现、离线证据与未关闭项见[边界修复记录](boundary_review_fixes.md)；混合故障回归优先于新增持续玩法。
+2026-10-03 外部评审继续支持 ServerBody 路线，近期先修异步切换归属、原生写后未知结果和 Claude 宿主权限三处边界。实现、离线证据与未关闭项见[边界修复记录](archive/boundary_review_fixes.md)；混合故障回归优先于新增持续玩法。
 
-随后[混合故障回归](server_mixed_validation.md)已完成，补齐R4容器任务的共享锁与停止确认；包含约5分钟真实程序连续运行及Claude-b实际10阶段。R5/R6由下一批不同Mod样本推动，当前依然不外推为任意Mod或长期稳定。
+随后[混合故障回归](archive/server_mixed_validation.md)已完成，补齐R4容器任务的共享锁与停止确认；包含约5分钟真实程序连续运行及Claude-b实际10阶段。R5/R6由下一批不同Mod样本推动，当前依然不外推为任意Mod或长期稳定。
 
 1. Agent 框架默认在用户本机运行，尤其保留现有 Claude Code 运行／登录环境；用户也可以主动选择另一台 Agent 机器。
 2. 本机不要有大量额外负载，不能把“再开一套大型整合包客户端”作为普通用户的默认前提。
@@ -67,7 +67,7 @@ ServerBody 的可适配范围重点是服务器已经具备的注册表、碰撞
 | 单机与独服完全一样 | IntegratedServer 暂停时不执行常规世界 tick；心跳、超时、租约及恢复第一步需要单独定义 |
 | ServerBody 可以保留所有客户端视觉 | 服务端没有 Bot 的渲染视角；结构化观察可保留，第一人称图片能力需另做选择，不能默认承诺 |
 
-依据：本地 MC 1.21.1／NeoForge 21.1.217 编译源码中的 `FakePlayer`、`PlayerList.placeNewPlayer`、`ClientPacketListener.createEntityFromPacket`、`ChunkMap.addEntity/updatePlayerStatus`、`ServerGamePacketListenerImpl.tick/handleUseItemOn`、`ServerPlayerGameMode`、`IntegratedServer.tickServer`。该段源码预查时尚未运行实验；随后已完成的 ServerBody 实测另见 [验证记录](server_body_validation.md)。
+依据：本地 MC 1.21.1／NeoForge 21.1.217 编译源码中的 `FakePlayer`、`PlayerList.placeNewPlayer`、`ClientPacketListener.createEntityFromPacket`、`ChunkMap.addEntity/updatePlayerStatus`、`ServerGamePacketListenerImpl.tick/handleUseItemOn`、`ServerPlayerGameMode`、`IntegratedServer.tickServer`。该段源码预查时尚未运行实验；随后已完成的 ServerBody 实测另见 [验证记录](archive/server_body_validation.md)。
 
 [NeoForge 1.21.1 FakePlayer 源码](https://raw.githubusercontent.com/neoforged/NeoForge/1.21.1/src/main/java/net/neoforged/neoforge/common/util/FakePlayer.java)可复核基础限制。[Carpet 的 ServerPlayer 实现](https://github.com/gnembon/fabric-carpet/blob/master/src/main/java/carpet/patches/EntityPlayerMPFake.java)证明有可参考的实现模式，但它的当前版本／加载器不同，不能当成 NeoForge 原型已经可用；复用第三方代码还要核对许可证。
 
@@ -82,15 +82,15 @@ ServerBody 的可适配范围重点是服务器已经具备的注册表、碰撞
 | 客户端挖放结果确认补丁 | 已构建、16 项 Java 测试通过，但未加载进游戏；不能标为实测通过 |
 | `client-runtime/src/http-body.ts` | 开始拆实现时生成的未引用副本，尚未泛化或构建；保留，不计作交付 |
 
-首轮 `mods/mcbot-server-spike/` 证明角色与基础物理；后续 A 已交付 `mods/mcbot-server-control/`、ServerBody v2 和实际 MCP 接线。hello 区分服务可达／角色存在，观察支持 server-observed，显式接管后创建或附着角色；见 [协议](server_body_protocol.md)和 [A 验收](server_control_A_validation.md)。旧实验命令没有进入产品。
+首轮 `mods/mcbot-server-spike/` 证明角色与基础物理；后续 A 已交付 `mods/mcbot-server-control/`、ServerBody v2 和实际 MCP 接线。hello 区分服务可达／角色存在，观察支持 server-observed，显式接管后创建或附着角色；见 [协议](server_body_protocol.md)和 [A 验收](archive/server_control_A_validation.md)。旧实验命令没有进入产品。
 
-ServerBody托管入口支持本机Claude／Codex；C和真人体验已完成。真人反馈后新增任务接口、平地走近及实例核验；10月3日进一步交付持续跟随／等待、暂停与显式恢复，Claude-b／Codex均已实际回归，见[持续陪伴记录](server_companion_validation.md)。最新[有限采集](server_gather_validation.md)补有效堆叠上限、Agent自主选数量、原生拾取收据与固定范围任务，完整33工具，Claude-b真实验证通过。随后[跟随拾取](server_escort_validation.md)在33工具内新增follow可选白名单拾取，Claude-b／Codex实际通过，并补Codex有限采集短回归。持续陪挖、建筑及ClientBody原有限制保留。
+ServerBody托管入口支持本机Claude／Codex；C和真人体验已完成。真人反馈后新增任务接口、平地走近及实例核验；10月3日进一步交付持续跟随／等待、暂停与显式恢复，Claude-b／Codex均已实际回归，见[持续陪伴记录](archive/server_companion_validation.md)。最新[有限采集](archive/server_gather_validation.md)补有效堆叠上限、Agent自主选数量、原生拾取收据与固定范围任务，完整33工具，Claude-b真实验证通过。随后[跟随拾取](archive/server_escort_validation.md)在33工具内新增follow可选白名单拾取，Claude-b／Codex实际通过，并补Codex有限采集短回归。持续陪挖、建筑及ClientBody原有限制保留。
 
 ## 6. 可行性关口（已进入有限验证）
 
 每个能力与部署关口给出独立证据，失败先修订假设，不把通过的场景外推到未验场景。关口编号不是要求所有平台全部串行完成：首次独服试玩只依赖该部署的控制、交互与 Agent 验收；单机、异机和内容 Mod 分别约束相应支持声明。具体 A–E 批次见 [交付清单](delivery_plan.md)。
 
-当前 G0／G1 独服基础物理、A 的真实租约与宿主停止、B 的原版重生／生存交互／保护及 C 本机真实 Agent 均有实测。D已有普通未运转Iron Furnace有限样本；单机暂停、异机及更多Mod玩法仍待各自关口。最新交互增量见[有限采集记录](server_gather_validation.md)。
+当前 G0／G1 独服基础物理、A 的真实租约与宿主停止、B 的原版重生／生存交互／保护及 C 本机真实 Agent 均有实测。D已有普通未运转Iron Furnace有限样本；单机暂停、异机及更多Mod玩法仍待各自关口。最新交互增量见[有限采集记录](archive/server_gather_validation.md)。
 
 | 关口 | 最小实验 | 通过标准／失败时的处理 |
 | --- | --- | --- |

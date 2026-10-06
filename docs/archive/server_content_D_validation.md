@@ -1,7 +1,7 @@
 # D：Iron Furnaces普通炉菜单验证（2026-10-03）
 
 > 这是原开发环境的历史验证记录。原始日志、账号环境与测试存档未随整理版上传；整理版自己的复验见 [export_validation.md](export_validation.md)。
-在独立 `runtime/v1-content-server/` 上验证 Iron Furnaces 4.3.2、Minecraft 1.21.1、NeoForge 21.1.217 与 ServerBody共享任务接口。游戏端口25567／RCON25577／控制口8767仅监听127.0.0.1；角色ModBot，worldId为`ironfurnaces-validation`。脚本 [server-body-content-smoke.mjs](../scripts/server-body-content-smoke.mjs) 使用实际stdio MCP，不启动模型、协议测试玩家或额外Minecraft客户端。
+在独立 `runtime/v1-content-server/` 上验证 Iron Furnaces 4.3.2、Minecraft 1.21.1、NeoForge 21.1.217 与 ServerBody共享任务接口。游戏端口25567／RCON25577／控制口8767仅监听127.0.0.1；角色ModBot，worldId为`ironfurnaces-validation`。脚本 [server-body-content-smoke.mjs](../../scripts/server-body-content-smoke.mjs) 使用实际stdio MCP，不启动模型、协议测试玩家或额外Minecraft客户端。
 
 ## 环境备份
 

@@ -1,7 +1,7 @@
 # A 批次：服务端安全控制验收
 
 > 这是原开发环境的历史验证记录。原始日志、账号环境与测试存档未随整理版上传；整理版自己的复验见 [export_validation.md](export_validation.md)。
-本文保留 A 交付时的历史范围与计数。后续 B 的生存交互、物品／容器和原生重生已完成，当前状态见 [B 验收](server_control_B_validation.md)及 [交付清单](delivery_plan.md)。
+本文保留 A 交付时的历史范围与计数。后续 B 的生存交互、物品／容器和原生重生已完成，当前状态见 [B 验收](server_control_B_validation.md)及 [交付清单](../delivery_plan.md)。
 
 2026-10-02。已完成独服控制通道、ServerBody／MCP 和 Agent 无关的宿主停止。范围为 MC 1.21.1／NeoForge 21.1.217、单个生存角色、本机控制。B 的挖放／容器、C 的真实 Claude 模型陪玩、D 内容 Mod、E 单机／异机尚未验收。
 
@@ -11,7 +11,7 @@
 - `client-runtime/src/server-body.ts`：独立 ServerBody；原 ClientBody v1 保留。MCP 只公开 13 个已支持的查询／事件／控制工具，不声明挖放、容器或记忆工具。
 - `scripts/server-body-control.mjs` 与 `scripts/companion.mjs`：独立 watch／revoke；模型忙或 MCP journal 不更新时，宿主仍可叫停。撤销后旧 MCP 终止；缓存的只读 watch 等到新明确任务后才重开，旧停止不会重放。
 - `start-server-play.ps1`：默认本机 Claude、low，可选 Codex；沿用所选 Agent 配置环境，不迁移账号。PrepareOnly 只生成接线配置。
-- 控制协议见 [server_body_protocol.md](server_body_protocol.md)。角色保持在线与继续接受旧控制是两回事：stop／release／revoke／失心跳都停止控制，不让角色退服。
+- 控制协议见 [server_body_protocol.md](../server_body_protocol.md)。角色保持在线与继续接受旧控制是两回事：stop／release／revoke／失心跳都停止控制，不让角色退服。
 
 ## 真实验证
 

@@ -2,7 +2,7 @@
 
 2026-10-02。状态：V1 最小 ClientBody／客户端控制 Mod 正在实现，游戏兼容验收与适配 SDK 尚未交付。
 
-**当前约束与复评优先：Agent 默认本机、可选另一台机器；本机低负载；用户已接受服主安装组件。[架构可行性复评](architecture_reassessment.md)覆盖下文的旧选型：本地双客户端撤出默认主线，ServerBody 已获准有限验证，实验已有部分实测，尚非正式交付，见 [验证记录](server_body_validation.md)。下文保留此前客户端方案依据，不能继续当作开工指令；当前排期见 [交付清单](delivery_plan.md)。**
+**当前约束与复评优先：Agent 默认本机、可选另一台机器；本机低负载；用户已接受服主安装组件。[架构可行性复评](../architecture_reassessment.md)覆盖下文的旧选型：本地双客户端撤出默认主线，ServerBody 已获准有限验证，实验已有部分实测，尚非正式交付，见 [验证记录](server_body_validation.md)。下文保留此前客户端方案依据，不能继续当作开工指令；当前排期见 [交付清单](../delivery_plan.md)。**
 
 用户进一步明确服务端正常运行开销是合理成本，不纳入本轮方案取舍；下文旧客户端资源预算不再作为 ServerBody 的验收前提。
 
@@ -14,7 +14,7 @@
 
 从一开始就面向多数 Mod／服务器的适配，服务于其他玩家和不同服务器，不以玩家自己的服务器或服主权限为默认前提。提供开放接口和容易使用的适配方式，并考虑多个 Minecraft 版本。
 
-同时支持不同 Agent 与原生 API Key 接入：首批目标包括 DeepSeek 官方 Harness、Codex、Antigravity；另提供不依赖外部 Harness 的内置 Agent 循环。详细设计见 [多 Agent 与原生 API 接入计划](agent_integration_plan.md)。
+同时支持不同 Agent 与原生 API Key 接入：首批目标包括 DeepSeek 官方 Harness、Codex、Antigravity；另提供不依赖外部 Harness 的内置 Agent 循环。详细设计见 [多 Agent 与原生 API 接入计划](../agent_integration_plan.md)。
 
 ### 根据目标确定的工程方向
 
@@ -154,4 +154,4 @@ MCP 工具、记忆、行为规划、任务与权限策略
 - 已对外部评审证据索引所引用的 30 个文件、1,387 行摘录与本地代码逐行核对，无差异。这只确认源码依据，不是游戏验收。
 - [NeoForge 1.21.1：物理端与逻辑端](https://docs.neoforged.net/docs/1.21.1/concepts/sides/)说明客户端与服务端职责、客户端专属代码边界；[自定义负载](https://docs.neoforged.net/docs/1.21.1/networking/payload/)用于评估网络组件边界。查阅日期：2026-10-02；不能替代未安装服务端桥的真实连接测试。
 - [HeadlessMC 官方说明](https://github.com/headlesshq/headlessmc)涉及账号验证及无头启动；不将其视为现成的通用身体。
-- 当前已开始在独立 `client-runtime/` 实现最小 Body／ClientBody／MCP，在 `mods/mcbot-control/` 实现 1.21.1 NeoForge 客户端绑定，见 [V1 说明](client_v1.md)。尚未完成真实客户端游戏验收，适配 SDK 未交付。Codex V0 的 Mineflayer 试玩不证明内容 Mod、多服务器或多版本兼容。当前排期与验收状态以 [交付清单](delivery_plan.md) 为准。
+- 当前已开始在独立 `client-runtime/` 实现最小 Body／ClientBody／MCP，在 `mods/mcbot-control/` 实现 1.21.1 NeoForge 客户端绑定，见 [V1 说明](client_v1.md)。尚未完成真实客户端游戏验收，适配 SDK 未交付。Codex V0 的 Mineflayer 试玩不证明内容 Mod、多服务器或多版本兼容。当前排期与验收状态以 [交付清单](../delivery_plan.md) 为准。

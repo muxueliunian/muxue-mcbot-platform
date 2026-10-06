@@ -28,7 +28,7 @@
 
 修复仅保留最近一个发给本体的绝对速度，下一次 `SpikePlayer.doTick()` 在普通物理之前取出、清空并替换 delta；不累加速度、不运行原版 listener tick、不修改 `hurtMarked`，`stop` 只清主动输入。移除时丢弃待消费速度，重新创建的 listener 使用全新队列和计数。`status` 的 `ownMotionPacketsQueued`、`ownMotionPacketsConsumed` 和 `ownMotionPending` 用于观察本体速度包的排队与消费。该修复针对已经复现的原版玩家攻击路径；其他 Mod 在发包后再次修改 delta 的次序尚未验证。
 
-修复后真实 hit 回归通过：空手一次攻击扣 1 血，水平击退约 1.989 格，自身速度包排队和消费各 1 次；观察者同步与运动收敛通过。G0 的 61 项、G1 的 43 项、hit 的 34 项断言均通过，彼此有重复，不相加成独立场景数量。详情与证据路径见 [验证记录](../../docs/server_body_validation.md)。从项目根目录用 `node scripts/server-body-spike-smoke.mjs --help` 查看隔离服测试方式；必须先备份，脚本不负责开服。
+修复后真实 hit 回归通过：空手一次攻击扣 1 血，水平击退约 1.989 格，自身速度包排队和消费各 1 次；观察者同步与运动收敛通过。G0 的 61 项、G1 的 43 项、hit 的 34 项断言均通过，彼此有重复，不相加成独立场景数量。详情与证据路径见 [验证记录](../../docs/archive/server_body_validation.md)。从项目根目录用 `node scripts/server-body-spike-smoke.mjs --help` 查看隔离服测试方式；必须先备份，脚本不负责开服。
 
 已知边界：没有交互动作、权限保护兼容验收、跨维度/死亡重生策略和客户端视觉。
 首次生成会走原版登录加载 playerdata；显式 fixture 定位覆盖持久位置，重复生成并不清空背包/血量。

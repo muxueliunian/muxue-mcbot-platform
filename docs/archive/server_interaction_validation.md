@@ -5,7 +5,7 @@
 
 ## 证据与结论
 
-- 真实 MCP 检查结果（本地证据未随仓库分发：`../output/serverbody-interaction.json`）：**29／29 通过**。脚本为 [server-body-interaction-smoke.mjs](../scripts/server-body-interaction-smoke.mjs)，需显式 `--allow-fixture`。
+- 真实 MCP 检查结果（本地证据未随仓库分发：`../output/serverbody-interaction.json`）：**29／29 通过**。脚本为 [server-body-interaction-smoke.mjs](../../scripts/server-body-interaction-smoke.mjs)，需显式 `--allow-fixture`。
 - 测试玩家事件（本地证据未随仓库分发：`../output/serverbody-interaction-peer.jsonl`）：记录发言、拾取及实际背包。服务器独立 `data get entity TestPlayer Inventory` 同样确认3个原木，不能仅以掉落实体消失判定交还。
 - Java 21 `D:/Java/jdk-21` 下 `mods/mcbot-server-control/.\gradlew.bat build` 通过，离线检查104项。本页不将不同矩阵相加。
 - 最终 `client-runtime` 构建＋测试 **62／62**，日志 `output/server-interaction-runtime-regression.log`；包括摘要不改原组件、来源隔离、终态两种到达顺序去重、任务取消／窗口变化／部分丢物／超时停止及实际 MCP 接线。

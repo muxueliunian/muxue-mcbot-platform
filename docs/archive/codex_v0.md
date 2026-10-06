@@ -1,6 +1,6 @@
 # Codex V0 试玩
 
-2026-10-02。Codex CLI app-server 托管已实现，首轮真实试玩完成；最新快捷停止和停止后首次交还修复待复验。V0 处于收尾，仍使用现有 Mineflayer 身体，之后按 [交付清单](delivery_plan.md) 优先推进 ClientBody。
+2026-10-02。Codex CLI app-server 托管已实现，首轮真实试玩完成；最新快捷停止和停止后首次交还修复待复验。V0 处于收尾，仍使用现有 Mineflayer 身体，之后按 [交付清单](../delivery_plan.md) 优先推进 ClientBody。
 
 ## 启动
 

@@ -21,7 +21,7 @@ $env:JAVA_HOME = 'D:/Java/jdk-21' # 换成自己的 JDK 21 路径
 
 安装并启动后，仅监听 `127.0.0.1:8765`，每次进程启动重新生成随机凭据并写入**实例目录**的 `config/mcbot-control/connection.json`。不向日志输出 token。多个 Bot 实例要通过 JVM 参数 `-Dmcbot.control.port=8766` 等指定不同端口。文件包含 token，请仅交给本机控制进程，不上传或提交。
 
-协议见仓库 [`docs/client_body_protocol.md`](../../docs/client_body_protocol.md)。控制端读取 connection.json 后校验真实用户名、明确 worldId，申请独占租约，每 2 秒心跳；10 秒未续租会取消任务、松开按键。停止不退出游戏。离开世界、死亡、换维度或玩家实例变化立即使旧租约和句柄失效。死亡后不自动复活、回到旧任务。
+协议见仓库 [`docs/archive/client_body_protocol.md`](../../docs/archive/client_body_protocol.md)。控制端读取 connection.json 后校验真实用户名、明确 worldId，申请独占租约，每 2 秒心跳；10 秒未续租会取消任务、松开按键。停止不退出游戏。离开世界、死亡、换维度或玩家实例变化立即使旧租约和句柄失效。死亡后不自动复活、回到旧任务。
 
 `hello` 的 `username`／`sessionId` 在未进世界时明确返回 `null`；观察中的空 `container` 也保留为 `null`。`hello.screen` 只读返回当前菜单类名（无菜单为 `null`），用于辨别首启引导或连接界面，不提供操作界面的接口。
 

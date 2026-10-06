@@ -14,7 +14,7 @@
 - 独立 `--respawn-only` 只重生，不取得控制权、不启动 MCP；重生后必须明确重新接管，旧任务与旧租约均失效。
 - ServerBody 按能力发布 **21 个 MCP 工具（11 个动作＋10 个观察／控制工具）**，Claude／Codex 接线同步。ClientBody v1 参数兼容，仍为可选路线。
 
-接口及具体字段见 [协议 v2](server_body_protocol.md)，启动和菜单支持列表见 [服务端模块说明](../mods/mcbot-server-control/README.md)。
+接口及具体字段见 [协议 v2](../server_body_protocol.md)，启动和菜单支持列表见 [服务端模块说明](../../mods/mcbot-server-control/README.md)。
 
 ## 真实服务器结果
 

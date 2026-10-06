@@ -17,7 +17,7 @@
 
 只使用已授权的`runtime/serverbody-validation/`，MC1.21.1／NeoForge21.1.217，25568／25578／8766。本批停服备份在`backups/serverbody-escort-20261003-133253/`，139文件、54,206,994字节，直接比较实际字节全部一致，未遍历libraries联接。备份记录（本地证据未随仓库分发：`../output/serverbody-escort-backup.json`）。
 
-真实程序脚本为[`server-escort-smoke.mjs`](../scripts/server-escort-smoke.mjs)，真实模型脚本为[`server-escort-agent-trial.mjs`](../scripts/server-escort-agent-trial.mjs)。独立平台位于x/z2400..2444、地面y200。RCON只准备夹具和读取独立事实，产品控制与任务不使用RCON。真实Claude使用用户2026-10-03指定的Claude-b；Codex用现有本机登录，均沿用low，不以模型TPS解释架构问题。
+真实程序脚本为[`server-escort-smoke.mjs`](../../scripts/server-escort-smoke.mjs)，真实模型脚本为[`server-escort-agent-trial.mjs`](../../scripts/server-escort-agent-trial.mjs)。独立平台位于x/z2400..2444、地面y200。RCON只准备夹具和读取独立事实，产品控制与任务不使用RCON。真实Claude使用用户2026-10-03指定的Claude-b；Codex用现有本机登录，均沿用low，不以模型TPS解释架构问题。
 
 ## 验收记录
 

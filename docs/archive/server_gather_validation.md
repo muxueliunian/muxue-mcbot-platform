@@ -78,7 +78,7 @@ Codex的33工具清单与离线驱动检查已更新，本批未运行其真实�
 
 仅使用已授权的`runtime/serverbody-validation/`隔离服，MC1.21.1／NeoForge21.1.217，端口25568／25578／8766。停服备份（本地证据未随仓库分发：`../output/serverbody-gather-backup.json`）在`backups/serverbody-gather-20261003-122109/`，130文件、48,811,463字节，逐文件直接比较实际字节一致，未遍历libraries联接。正式服、启动器、25567内容Mod验证服未动；模型账号环境留在本机。
 
-实际程序矩阵由[server-gather-smoke.mjs](../scripts/server-gather-smoke.mjs)完成，模型测试由[server-gather-agent-trial.mjs](../scripts/server-gather-agent-trial.mjs)通过真实玩家聊天发起。RCON仅用于夹具和独立观察，产品任务不依赖RCON。Claude使用用户当天指定的b账号，Sonnet5.5／low，不自动换其他账号。
+实际程序矩阵由[server-gather-smoke.mjs](../../scripts/server-gather-smoke.mjs)完成，模型测试由[server-gather-agent-trial.mjs](../../scripts/server-gather-agent-trial.mjs)通过真实玩家聊天发起。RCON仅用于夹具和独立观察，产品任务不依赖RCON。Claude使用用户当天指定的b账号，Sonnet5.5／low，不自动换其他账号。
 
 最终已结束Claude宿主和测试玩家，移除本次强制加载；独立查询确认只有ServerBot在线、生命20、无强制加载区块，然后`save-all flush`、`stop`。Java进程已退出，25568／25578／8766无监听，无本批残留控制文件或进程。收尾证据（本地证据未随仓库分发：`../output/serverbody-gather-cleanup.json`）确认10个配置／固定文件均与备份实际字节相同，配置文件集合也一致；其中connection.json和server.properties运行期间有变化，恢复后相同，ops／whitelist未变。当前验证jar保留152,826字节且与最终构建直接字节相同，25567旧内容Mod验证jar未更新。
 

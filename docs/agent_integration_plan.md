@@ -1,16 +1,16 @@
 # MCBOT 多 Agent 与原生 API 接入计划
 
-2026-10-03 进度核对。Codex V0 已实现并完成首轮试玩；ServerBody 上本机 Claude／Codex 的 C 验收也已完成。最终通用接入层、其他新增 Agent 和原生 API 通道尚未完成。与 [通用适配主计划](platform_compat_plan.md) 一起作为架构方向，近期顺序以 [交付清单](delivery_plan.md) 为准。
+2026-10-03 进度核对。Codex V0 已实现并完成首轮试玩；ServerBody 上本机 Claude／Codex 的 C 验收也已完成。最终通用接入层、其他新增 Agent 和原生 API 通道尚未完成。与 [通用适配主计划](archive/platform_compat_plan.md) 一起作为架构方向，近期顺序以 [交付清单](delivery_plan.md) 为准。
 
-**最新部署约束：Agent默认在用户本机运行；另一台Agent主机是保留的设计目标，异机安全传输与部署尚未交付。保留Claude Code账号环境，模型凭据不交给MC服务器；本机避免额外完整MC客户端，服务端正常成本可接受。C与真人体验已完成；10月3日Claude-b与Codex均实际跑通取物和持续陪伴新接口，见[本批记录](server_companion_validation.md)。**
+**最新部署约束：Agent默认在用户本机运行；另一台Agent主机是保留的设计目标，异机安全传输与部署尚未交付。保留Claude Code账号环境，模型凭据不交给MC服务器；本机避免额外完整MC客户端，服务端正常成本可接受。C与真人体验已完成；10月3日Claude-b与Codex均实际跑通取物和持续陪伴新接口，见[本批记录](archive/server_companion_validation.md)。**
 
-真实 Claude 测试账号遵守[开发手册](dev.md#接入游戏)：2026-10-03 用户指定 Claude-b，之后每轮测试前先询问；历史 `<selected-claude-config>` 实测不代表持续授权。玩法与数量决策遵守[交付清单](delivery_plan.md)：持续跟随／等待、Agent决定省略的有限目标数量、实际堆叠上限及有限采集首批已交付；持续陪挖与建筑仍待实现。随后[跟随拾取批次](server_escort_validation.md)由Claude-b／Codex分别完成真实5阶段，Codex新增三个采集工具的短回归也已补；持续陪挖仍待实现。
+真实 Claude 测试账号遵守[开发手册](dev.md#接入游戏)：2026-10-03 用户指定 Claude-b，之后每轮测试前先询问；历史 `<selected-claude-config>` 实测不代表持续授权。玩法与数量决策遵守[交付清单](delivery_plan.md)：持续跟随／等待、Agent决定省略的有限目标数量、实际堆叠上限及有限采集首批已交付；持续陪挖与建筑仍待实现。随后[跟随拾取批次](archive/server_escort_validation.md)由Claude-b／Codex分别完成真实5阶段，Codex新增三个采集工具的短回归也已补；持续陪挖仍待实现。
 
 ## 1. 用户要求与现状
 
-2026-10-03 评审后的 ServerBody Claude 启动策略已收窄为仅游戏 MCP 工具，禁止通用宿主读写／执行，并使旧宽权限会话失效；旧身体策略尚未迁移。详细验证范围见[边界修复记录](boundary_review_fixes.md)。此修复不等于 R7 的统一 Agent 会话及公共工具执行入口已经交付。
+2026-10-03 评审后的 ServerBody Claude 启动策略已收窄为仅游戏 MCP 工具，禁止通用宿主读写／执行，并使旧宽权限会话失效；旧身体策略尚未迁移。详细验证范围见[边界修复记录](archive/boundary_review_fixes.md)。此修复不等于 R7 的统一 Agent 会话及公共工具执行入口已经交付。
 
-后续[真实Claude-b混合回归](server_mixed_validation.md)10阶段通过，包含收窄权限后的取物交还、忙时独立叫停及受控Agent强杀后首个新任务；未以这次Claude结果替代新的Codex/API回归或真实模型网络失联专项。
+后续[真实Claude-b混合回归](archive/server_mixed_validation.md)10阶段通过，包含收窄权限后的取物交还、忙时独立叫停及受控Agent强杀后首个新任务；未以这次Claude结果替代新的Codex/API回归或真实模型网络失联专项。
 
 用户要求支持不同 Agent，并提供原生 API Key 接入通道。明确举例：
 
@@ -22,10 +22,10 @@
 
 当前代码事实：
 
-- `scripts/companion.mjs` 和 `start-companion.ps1` 已接受 `gemini`／`claude`／`codex`。Claude／agy 的命令与消息转换位于 `scripts/agents/process-protocols.mjs`；Codex 的握手、线程、回合、取消与配置适配位于 `scripts/agents/codex-app-server.mjs`。驱动器消费统一事件；进程生命周期、MCP 和身体仍有耦合，尚不是最终完整 AgentAdapter。Codex 首轮真实试玩已完成，最新快捷停止和首次交还修复待复验，见 [试玩说明](codex_v0.md)。
+- `scripts/companion.mjs` 和 `start-companion.ps1` 已接受 `gemini`／`claude`／`codex`。Claude／agy 的命令与消息转换位于 `scripts/agents/process-protocols.mjs`；Codex 的握手、线程、回合、取消与配置适配位于 `scripts/agents/codex-app-server.mjs`。驱动器消费统一事件；进程生命周期、MCP 和身体仍有耦合，尚不是最终完整 AgentAdapter。Codex 首轮真实试玩已完成，最新快捷停止和首次交还修复待复验，见 [试玩说明](archive/codex_v0.md)。
 - 当前存在 MCP 工具服务，但“能配置 MCP 工具”不等于已经完成自动事件唤醒、会话恢复、中断、错误处理等托管适配。
 - 旧身体层直接依赖Mineflayer；`client-runtime/`已实现ClientBody v1与ServerBody v2，共用Body／MCP边界。ServerBody完整能力集现为39工具（此前33工具＋5生存／工具／进食入口＋defend-self）；游戏端follow-companion、approach-resource及pickup-item供任务层内部调用，不要求模型逐步操作。新生存工具已有Claude实际模型证据，Codex本批仅同步允许列表并通过宿主检查，实际短回归仍待完成。长期记忆未迁移；不把测试观察者的Mineflayer依赖当产品依赖。
-- `companion --body server`已接Claude／Codex，独立watch／revoke不等待模型或MCP journal。C已通过；10月3日早一批Sonnet5.5／low实测见[真实体验](server_agent_interaction_trial_2026-10-03.md)，最新Claude-b／Codex分别通过取物、持续跟随、聊天、等待、叫停和新查询，见[持续陪伴记录](server_companion_validation.md)。这些是功能及单轮耗时样本，性能结论不外推。
+- `companion --body server`已接Claude／Codex，独立watch／revoke不等待模型或MCP journal。C已通过；10月3日早一批Sonnet5.5／low实测见[真实体验](archive/server_agent_interaction_trial_2026-10-03.md)，最新Claude-b／Codex分别通过取物、持续跟随、聊天、等待、叫停和新查询，见[持续陪伴记录](archive/server_companion_validation.md)。这些是功能及单轮耗时样本，性能结论不外推。
 - 不把现有 `gemini` 名称同时当成 Agent 产品、模型供应商、人物身份和游戏用户名。
 
 ## 2. 相互独立的选择

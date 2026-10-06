@@ -10,13 +10,13 @@
 - 无路、目标离线／超范围、受伤等进入受阻；不会无限重试或在障碍消失后自行恢复。stop、失租约及宿主退出废弃旧执行，下一条明确任务才能开始。
 - 普通 following／waiting 变化不唤醒模型；需要说明的失败发一次通知，主动查询与异步通知按操作标识去重。原有限 follow-player 和 ClientBody 保持兼容；完整 ServerBody MCP 工具数为30。
 
-协议和边界见 [ServerBody v2](server_body_protocol.md)，本批不声称复杂地形、楼梯、开门、跨维度或任意内容 Mod 均可跟随。
+协议和边界见 [ServerBody v2](../server_body_protocol.md)，本批不声称复杂地形、楼梯、开门、跨维度或任意内容 Mod 均可跟随。
 
 游戏聊天中的“停／停下／等等”仍按原宿主叫停处理，会取消意图；“在这里等我”可进入wait，之后“重新跟着我”创建明确的新跟随。工具pause保留意图供显式resume；不要将宿主取消当作可恢复暂停。
 
 ## 程序与真实服务器证据
 
-[隔离服脚本](../scripts/server-body-companion-smoke.mjs) 通过实际 stdio MCP 操作身体，测试玩家使用真实 MC 协议走动／发言；RCON 仅准备专用夹具及独立读取坐标和方块。最终 19项检查（本地证据未随仓库分发：`../output/serverbody-companion-latest.json`） 全部通过：
+[隔离服脚本](../../scripts/server-body-companion-smoke.mjs) 通过实际 stdio MCP 操作身体，测试玩家使用真实 MC 协议走动／发言；RCON 仅准备专用夹具及独立读取坐标和方块。最终 19项检查（本地证据未随仓库分发：`../output/serverbody-companion-latest.json`） 全部通过：
 
 | 场景 | 实际核验 |
 | --- | --- |
@@ -31,7 +31,7 @@
 
 ## 实际 Agent 聊天
 
-[模型测试脚本](../scripts/server-companion-agent-trial.mjs) 只让测试玩家发真实游戏聊天和走动，实际动作由 Agent 自己调用产品 MCP；夹具不代替模型做任务。Claude 使用用户当天指定的 **b账号、Sonnet5.5、low**；Codex 使用本机现有登录、宿主默认模型、low。两者均通过6个阶段：取3原木交还→持续跟随→跟随时闲聊→原地等待→重新跟随→叫停后首次新任务查询。
+[模型测试脚本](../../scripts/server-companion-agent-trial.mjs) 只让测试玩家发真实游戏聊天和走动，实际动作由 Agent 自己调用产品 MCP；夹具不代替模型做任务。Claude 使用用户当天指定的 **b账号、Sonnet5.5、low**；Codex 使用本机现有登录、宿主默认模型、low。两者均通过6个阶段：取3原木交还→持续跟随→跟随时闲聊→原地等待→重新跟随→叫停后首次新任务查询。
 
 | 单次样本 | Claude-b | Codex |
 | --- | --- | --- |

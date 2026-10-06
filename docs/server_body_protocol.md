@@ -42,7 +42,7 @@ act 通过身份与操作去重核验后，动作级失败可返回 `ok:true` �
 
 错误码包括 FORBIDDEN、INVALID_ARGUMENT、WRONG_INSTANCE、WRONG_WORLD、WRONG_PLAYER、WORLD_CHANGED、DEAD_BODY、LEASE_BUSY、LEASE_LOST、STALE_CONTROL、BUSY、UNSUPPORTED、UNKNOWN_OPERATION、OPERATION_CONFLICT。生存动作还可能在 result.code 返回 STALE_ITEM、STALE_BLOCK、STALE_CONTAINER、UNLOADED、NO_LINE_OF_SIGHT、OUT_OF_REACH、NOT_DIGGABLE、TARGET_OCCUPIED、EMPTY_HAND_REQUIRED、DROP_PARTIAL、NATIVE_UNKNOWN 等。网络超时或原生调用已产生但无法完整确认的效果为 unknown，不自动重放动作；部分效果须核对实际库存、方块和掉落物。
 
-2026-10-03 R2 修复：原生调用入口前置待确认标记；调用内部或其后回执构造抛出协议错误（包括 UNSUPPORTED）／运行时异常时，尚未建立可靠结果的操作保留 unknown。写前拒绝、已证实无变化的拒绝仍是 failed；drop 的已确认 droppedCount 与独立已知 removedCount 保留，即使后续单件结果未知。重复 operationId 继续返回原回执。详见[边界修复与故障注入范围](boundary_review_fixes.md)，不把该离线验证称为真实 Mod 故障验收。
+2026-10-03 R2 修复：原生调用入口前置待确认标记；调用内部或其后回执构造抛出协议错误（包括 UNSUPPORTED）／运行时异常时，尚未建立可靠结果的操作保留 unknown。写前拒绝、已证实无变化的拒绝仍是 failed；drop 的已确认 droppedCount 与独立已知 removedCount 保留，即使后续单件结果未知。重复 operationId 继续返回原回执。详见[边界修复与故障注入范围](archive/boundary_review_fixes.md)，不把该离线验证称为真实 Mod 故障验收。
 
 ## B 的快照与动作核验
 
@@ -123,13 +123,13 @@ ResourceTargets随机token固定120秒、最多256个，绑定session／generati
 
 guard只阻止后续驾驶，不能回滚普通物理已经发生的碰撞拾取。每tick在picked成功之前先核验anchor；如果原生Post已证明获得物品、之后anchor越界或失效，则失败result仍保留实际pickedUpCount／stack与`pickup:"confirmed"`，不伪造0或以成功为由继续越界。没有Post就没有获得证据。指定物品过滤用于主动追逐，不改变原版可能自然拾取其它相碰物品的规则。
 
-本批Java21 build为**387项离线检查**（前批330＋CompanionPickupTest57），日志见`output/server-escort-java.log`（本地证据未随仓库分发：`../output/server-escort-java.log`），其中保留首次测试helper编译错误及修正后的最终成功。Node可选拾取已接线，143项Node、23项真实程序矩阵、Claude-b／Codex各5阶段通过；证据见[跟随拾取验收](server_escort_validation.md)，不把有限样本外推到任意玩法。
+本批Java21 build为**387项离线检查**（前批330＋CompanionPickupTest57），日志见`output/server-escort-java.log`（本地证据未随仓库分发：`../output/server-escort-java.log`），其中保留首次测试helper编译错误及修正后的最终成功。Node可选拾取已接线，143项Node、23项真实程序矩阵、Claude-b／Codex各5阶段通过；证据见[跟随拾取验收](archive/server_escort_validation.md)，不把有限样本外推到任意玩法。
 
 任务开箱额外携可选`targetToken`，原子旧调用仍兼容只比较方块字段。任务交物额外携`recipient`／`expectedEntityId`，游戏端在原生drop前再次核验玩家身份和1.5格可见距离；这只保证丢出时指向已授权接收者，不能推导后来一定由该玩家拾取。
 
 原生菜单白名单为 ChestMenu、HopperMenu、DispenserMenu、ShulkerBoxMenu、AbstractFurnaceMenu；对应当前方块白名单为普通箱子／陷阱箱、木桶、漏斗、发射器／投掷器、潜影盒、熔炉／高炉／烟熏炉。其它 GUI、工作台、交易或内容 Mod 特殊菜单不宣称通用支持；继承白名单类仍需后续具体 Mod 验证。
 
-内容Mod窄Adapter `IronFurnaceAdapter` 显式限定 Iron Furnaces4.3.2／MC1.21.1／NeoForge21.1.217 的`ironfurnaces:iron_furnace`、确切方块／实体／菜单类及55槽契约，只接受普通未点燃炉与普通菜单。机器库存19槽核对真实实体，玩家SlotItemHandler经InvWrapper核对实际Inventory与原索引；隐藏工厂／升级槽不成为任务来源。原生交互仍由Mod useWithoutItem→openMenu完成，不直接替它打开GUI；高级炉等级、Factory／发电、运行中的lit/type变化、GUI设置不自动支持。实际支持证据见[D验收](server_content_D_validation.md)。
+内容Mod窄Adapter `IronFurnaceAdapter` 显式限定 Iron Furnaces4.3.2／MC1.21.1／NeoForge21.1.217 的`ironfurnaces:iron_furnace`、确切方块／实体／菜单类及55槽契约，只接受普通未点燃炉与普通菜单。机器库存19槽核对真实实体，玩家SlotItemHandler经InvWrapper核对实际Inventory与原索引；隐藏工厂／升级槽不成为任务来源。原生交互仍由Mod useWithoutItem→openMenu完成，不直接替它打开GUI；高级炉等级、Factory／发电、运行中的lit/type变化、GUI设置不自动支持。实际支持证据见[D验收](archive/server_content_D_validation.md)。
 
 ## Node 与宿主约定
 
@@ -151,7 +151,7 @@ count和stacks必须二选一、1–256整数，最终解析目标最多256，�
 
 已取得当前上下文、指定UUID的新增完整原生收据时，可处理自然拾取导致旧实体消失或已知拾取移动失败的竞争；没有收据、unknown／取消、保护拒绝、游标缺口或变体／会话变化不能吞错误。BLOCKED也可能表示受伤或危险，目标未到量时不会因此继续采集。普通跟随未迁移自动陪挖、战斗、任意矿石采集或整树识别。
 
-此前有限采集批次最终Java21 build通过**330项离线检查**；历史B为80项、第二批交互为163项、持续陪伴为227项，均保留为各自当时的结果，不与当前重复相加。该采集批次程序矩阵及真实Claude-b四阶段的最终证据见[有限采集验收](server_gather_validation.md)，不是当前可选陪伴拾取批次的实测证据。33工具是能力齐备时的接线数量，不代表逐一验收所有参数、任意Mod或自动陪挖。
+此前有限采集批次最终Java21 build通过**330项离线检查**；历史B为80项、第二批交互为163项、持续陪伴为227项，均保留为各自当时的结果，不与当前重复相加。该采集批次程序矩阵及真实Claude-b四阶段的最终证据见[有限采集验收](archive/server_gather_validation.md)，不是当前可选陪伴拾取批次的实测证据。33工具是能力齐备时的接线数量，不代表逐一验收所有参数、任意Mod或自动陪挖。
 
 `client-runtime --body server --connection-file ... --username ServerBot --world-id ...` 接此协议，原 `--body client`／默认路径保留。stdio MCP 仅发布 capabilities 允许的动作。
 
@@ -167,7 +167,7 @@ ServerBody 取得租约后，将本机 `runtimeDir/server-control-<username>.jso
 
 普通 MCP stop 更新本地 generation，已发出的旧请求不能因迟到回执变成新动作；并发 stop 不等待 act 返回才能发送。宿主收到新的叫停事件后使用 revoke，让旧 MCP 进入终止态，并取消／结束旧 Agent 轮次；后续新任务明确重新接管。只取消模型推理不算停止身体。宿主 watch 从控制文件 chatCursor 起跳，跳过接管前历史与自己消息；watch 的非停止聊天仍由现有事件通道正常处理，避免重复唤醒。
 
-R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。cancel先废弃旧步骤并保留写锁，只有最新匹配停止句柄的`stopped:true`确认才能收尾；停止失败不准新任务写入。停止确认后首新任务不等待旧HTTP回执，旧finally／旧停止确认不释放新任务锁。迟到可靠部分回执仍保留确认数量，迟到unknown不降级为确定失败或无副作用。`stopped:true`确认的是控制输入与任务被停止；正常重力／惯性不被冻结，最后实际物理位移另测，见[混合回归](server_mixed_validation.md)。
+R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。cancel先废弃旧步骤并保留写锁，只有最新匹配停止句柄的`stopped:true`确认才能收尾；停止失败不准新任务写入。停止确认后首新任务不等待旧HTTP回执，旧finally／旧停止确认不释放新任务锁。迟到可靠部分回执仍保留确认数量，迟到unknown不降级为确定失败或无副作用。`stopped:true`确认的是控制输入与任务被停止；正常重力／惯性不被冻结，最后实际物理位移另测，见[混合回归](archive/server_mixed_validation.md)。
 
 明确的动作参数／BUSY 拒绝不废弃当前租约。心跳只核对 controlGeneration，不静默同步外部改变。停止请求未确认时，Node 终止旧控制并尽力 release，防止本地取消记录掩盖远端仍执行的动作；stop 的明确可恢复拒绝转为 STOP_UNCONFIRMED，其余保留原失联／失租约错误码。不自动重试 stop／act 或 claim。
 
@@ -189,7 +189,7 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - 工具policy为`fastest_valid|conserve_durability`，默认保留2耐久；dropPreference为`any|silk_touch|no_silk_touch`。返回eligible true/false/null及基础资格依据，预计ticks不含所有玩家／Mod钩子，原生执行重查。nearby-resources保留0..8的recommendedToolSlot，另可带0..35的recommendedInventorySlot。
 - `set-reflexes`使用预期revision避免旧决策覆盖；策略改变先阻断／取消旧任务并确认停写。默认自动进食，默认防卫仍未实现且公开supported:false。硬停清armed，查询不复活。普通进食借父token只在安全间隙执行，未知结果向同一仲裁器上报并解除自动授权；停止确认也不代表允许自动重试该未知动作。
 
-该批实际证据和限制见[第一批验收](server_survival_alpha_validation.md)；下节记录第二批新增合同，其实服验收另行记录。
+该批实际证据和限制见[第一批验收](archive/server_survival_alpha_validation.md)；下节记录第二批新增合同，其实服验收另行记录。
 
 ## 生存Alpha第二批：导航与防卫合同
 

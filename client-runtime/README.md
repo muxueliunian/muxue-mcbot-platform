@@ -1,6 +1,6 @@
 # Body 运行端（ServerBody 与 ClientBody V1）
 
-2026-10-03增量：能力齐备的ServerBody现在提供39个MCP工具，包含主背包准备、工具基础评估、自动进食、有限防卫及revision策略；高差导航通过`navigation-3d`声明。生存终态单独记录，不因静默进食或取消而丢历史，也不逐击唤醒模型。当前验收与限制见[生存第二批](../docs/server_navigation_defense_validation.md)；下文13／21／33等数量属于相应历史阶段。
+2026-10-03增量：能力齐备的ServerBody现在提供39个MCP工具，包含主背包准备、工具基础评估、自动进食、有限防卫及revision策略；高差导航通过`navigation-3d`声明。生存终态单独记录，不因静默进食或取消而丢历史，也不逐击唤醒模型。当前验收与限制见[生存第二批](../docs/archive/server_navigation_defense_validation.md)；下文13／21／33等数量属于相应历史阶段。
 
 这是独立的 TypeScript／MCP 包，使用同一 Body 契约连接两种后端。ServerBody 连接安装 `mcbot-server-control` 的独立服务器，显式接管服务端生存角色，无额外 Bot Minecraft 客户端；A／B／C、持续陪伴及有限采集首批已有对应真实验证。ClientBody 是保留的可选 V1 原型，连接安装 `mcbot-control` 的真实客户端，客户端须先由用户进入世界，游戏服务器无需安装该客户端控制 Mod。
 
@@ -99,7 +99,7 @@ RuntimeMonitor后台更新持续状态；显式模式变化记录 `companion_sta
 
 ServerBody `get-status`／`get-container`／`get-operation` 默认摘要，原子调试需 `details:true`；`list-inventory` 仍返回完整字段。容器摘要明确区分 container／player／cursor／unknown。完整终态保留在本地 operation trace；已交付终态不再重复唤醒，内部任务步骤不产生逐步 Agent 回合。ClientBody 原工具默认形状保留。
 
-槽位可携 `active`／`mayPickup`：通用任务忽略隐藏槽的内容，不从不可取槽拿物品；空槽的mayPickup=false不代表不能放入，存入仍服从原生mayPlace。特定内容Mod由服务端Adapter提供准确来源和槽语义，任务层不添加Mod名称分支；已实现的窄Iron Furnaces范围及实际证据见[D记录](../docs/server_content_D_validation.md)。
+槽位可携 `active`／`mayPickup`：通用任务忽略隐藏槽的内容，不从不可取槽拿物品；空槽的mayPickup=false不代表不能放入，存入仍服从原生mayPlace。特定内容Mod由服务端Adapter提供准确来源和槽语义，任务层不添加Mod名称分支；已实现的窄Iron Furnaces范围及实际证据见[D记录](../docs/archive/server_content_D_validation.md)。
 
 移动是短距普通行走，不是完整寻路；不会传送或擅自挖路。`place-block` 使用快捷栏 0–8，坐标指所点击的支撑格。容器先观察 id／slots／carried，再逐次带前置核验；服务端还须携 revision 和完整组件。ServerBody 普通菜单白名单为 ChestMenu、HopperMenu、DispenserMenu、ShulkerBoxMenu、AbstractFurnaceMenu，对应箱子／木桶、漏斗、发射器／投掷器、潜影盒、熔炉系列；工作台、交易或特殊 Mod 界面尚未通用支持。命名空间 ID 原样保留，例如 `example:custom_block`。
 
@@ -107,18 +107,18 @@ ServerBody `get-status`／`get-container`／`get-operation` 默认摘要，原�
 
 ## 已验证与待验证
 
-2026-10-03最新[跟随拾取批次](../docs/server_escort_validation.md)：构建与 **143／143** Node测试通过（含17项新边界）；真实程序 **23／23**，Claude-b／Codex各 **5阶段**通过，包含连续两批拾取、聊天继续、独立叫停与首个新采集。Codex三个资源工具实际短回归已补。本批不增加MCP工具，仍为33个；没有持续挖矿或建筑交付。
+2026-10-03最新[跟随拾取批次](../docs/archive/server_escort_validation.md)：构建与 **143／143** Node测试通过（含17项新边界）；真实程序 **23／23**，Claude-b／Codex各 **5阶段**通过，包含连续两批拾取、聊天继续、独立叫停与首个新采集。Codex三个资源工具实际短回归已补。本批不增加MCP工具，仍为33个；没有持续挖矿或建筑交付。
 
-2026-10-03数量与有限采集首批：当时本包 **126／126** Node离线检查通过，保留已有世界／租约／组件／取消守卫。真实程序矩阵 **27／27** 与Claude-b／Sonnet5.5／low四阶段通过，详见[数量与有限采集验收](../docs/server_gather_validation.md)。实际模型自主选择6个圆石并确认挖6／收6；只捡组件有效上限99的一组圆石；任务中独立叫停约310毫秒；叫停后的首个明确任务成功收取一组16雪球。程序矩阵另覆盖有效上限16／64／99、99个容器取物交还的64＋35原子丢物、部分结果、变体、满包和停止。该历史批次没有Codex有限采集／拾取模型证据，后续跟随拾取批次已补；持续陪挖与建筑仍未验收；不将不同测试阶段计数相加。
+2026-10-03数量与有限采集首批：当时本包 **126／126** Node离线检查通过，保留已有世界／租约／组件／取消守卫。真实程序矩阵 **27／27** 与Claude-b／Sonnet5.5／low四阶段通过，详见[数量与有限采集验收](../docs/archive/server_gather_validation.md)。实际模型自主选择6个圆石并确认挖6／收6；只捡组件有效上限99的一组圆石；任务中独立叫停约310毫秒；叫停后的首个明确任务成功收取一组16雪球。程序矩阵另覆盖有效上限16／64／99、99个容器取物交还的64＋35原子丢物、部分结果、变体、满包和停止。该历史批次没有Codex有限采集／拾取模型证据，后续跟随拾取批次已补；持续陪挖与建筑仍未验收；不将不同测试阶段计数相加。
 
-此前持续陪伴批次为100／100离线基线；[实际验证](../docs/server_companion_validation.md)包含19项程序矩阵、Claude-b／Codex各6个真实聊天阶段，以及Claude受阻说明和明确恢复。该历史首批仅跟随和等待；目前跟随拾取已交付，持续陪挖与建筑仍待迁移。
+此前持续陪伴批次为100／100离线基线；[实际验证](../docs/archive/server_companion_validation.md)包含19项程序矩阵、Claude-b／Codex各6个真实聊天阶段，以及Claude受阻说明和明确恢复。该历史首批仅跟随和等待；目前跟随拾取已交付，持续陪挖与建筑仍待迁移。
 
-此前交互验证见[走近与替换核验](../docs/server_approach_validation.md)、[真实Claude任务体验](../docs/server_agent_interaction_trial_2026-10-03.md)和[D内容Mod记录](../docs/server_content_D_validation.md)；10月2日第一批近距证据保留在[交互修复记录](../docs/server_interaction_validation.md)。同Sonnet5.5／low的短会话已证实先回应、绕墙返回和停止后新任务，多轮性能统计与复杂场景仍待扩展，不能把工具直连耗时当模型回复时间。以下41项是B阶段历史基线。
+此前交互验证见[走近与替换核验](../docs/archive/server_approach_validation.md)、[真实Claude任务体验](../docs/archive/server_agent_interaction_trial_2026-10-03.md)和[D内容Mod记录](../docs/archive/server_content_D_validation.md)；10月2日第一批近距证据保留在[交互修复记录](../docs/archive/server_interaction_validation.md)。同Sonnet5.5／low的短会话已证实先回应、绕墙返回和停止后新任务，多轮性能统计与复杂场景仍待扩展，不能把工具直连耗时当模型回复时间。以下41项是B阶段历史基线。
 
 2026-10-02：`npm test`（含 TypeScript 构建）41 项通过；原 ClientBody 15 项保留，ServerBody A／失效边界 18 项及 B 8 项。覆盖真实 mock HTTP、互斥、停止与迟到回执、失联未知结果不重放、租约过期、世界代次、续租故障、claim 重试边界、事件游标、单实例、托管心跳，以及独立 Node 进程的 MCP stdio 调用。服务端新增验证包含代次屏障、心跳拒绝静默同步、宿主撤销后的 MCP 终止态、控制文件凭据隔离和仅自身租约清理；首轮事件以 claim 游标为界，保留接管后、MCP 首次观察前到达的新聊天。B 验证覆盖完整组件字段、菜单版本必填、21 工具按能力启用、生存拒绝保持租约，以及独立重生 CLI 不隐式 claim。明确 HTTP BUSY 拒绝可继续当前租约；主线程 TIMEOUT 为 unknown；停止请求未确认时终止旧控制，防止本地取消记录掩盖远端仍运行的动作。
 
 stdio 测试使用模块加载器拒绝导入 `mineflayer`、`minecraft-protocol`、`minecraft-data` 和 `prismarine`；独立 `npm ls --omit=dev --all` 依赖树没有这些运行依赖。测试比较实际字段，没有哈希校验流程。
 
-上述 41 项是离线与模拟传输证据；ServerBody 已另在真实隔离服完成 A 生命周期控制链与 B 生存交互／原生重生验证，见 [A 验收](../docs/server_control_A_validation.md) 和 [B 验收](../docs/server_control_B_validation.md)。实际 stdio MCP、保护拒绝、组件／容器守卫、丢物与独立重生分别有游戏证据，不能与离线计数相加。
+上述 41 项是离线与模拟传输证据；ServerBody 已另在真实隔离服完成 A 生命周期控制链与 B 生存交互／原生重生验证，见 [A 验收](../docs/archive/server_control_A_validation.md) 和 [B 验收](../docs/archive/server_control_B_validation.md)。实际 stdio MCP、保护拒绝、组件／容器守卫、丢物与独立重生分别有游戏证据，不能与离线计数相加。
 
-ClientBody 游戏结果与保留余项见 [V1 验证记录](../docs/client_v1_validation.md)。内容 Mod D、单机暂停、异机与多版本仍独立验收；本运行端的能力清单不表示这些后续阶段已经完成。
+ClientBody 游戏结果与保留余项见 [V1 验证记录](../docs/archive/client_v1_validation.md)。内容 Mod D、单机暂停、异机与多版本仍独立验收；本运行端的能力清单不表示这些后续阶段已经完成。

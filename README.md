@@ -1,56 +1,46 @@
 # muxue-mcbot-platform
 
-MCBOT的独立整理版：让不同Agent通过统一工具与任务接口，在Minecraft服务器中控制一个游戏伙伴。
+让不同的 Agent（Claude Code、Codex、DeepSeek Harness、原生 API）用同一套工具，在 Minecraft 服务器里控制一个游戏伙伴。
 
-当前主线是 **本机Agent → MCP与任务层 → 服务端ServerBody**。玩家只运行自己的MC客户端；Bot不需要第二套整合包客户端。服务端需安装控制组件。
+结构是 **本机 Agent → MCP 与任务层 → 服务端 ServerBody**。玩家只开自己的 MC 客户端，Bot 不需要第二个客户端；服务器要装控制模组。
 
-本仓库用于继续开发和架构评审，采用独立Git历史。未包含个人记忆、人设原文、本机登录／连接配置、存档、运行日志、第三方皮肤或整合包素材。
+仓库里没有个人记忆、人设原文、本机登录和连接配置、存档、运行日志、第三方皮肤或整合包素材。
 
 ## 从这里开始
 
-- **首次受限基础搭档试玩：[2026-10-05验收与边界](docs/server_alpha_release_validation.md)**
-- [沿现有启动器开始试玩](docs/survival_trial.md)
-- **网页端评审：[架构评审入口](docs/review_guide.md)**
-- [交付计划](docs/delivery_plan.md)
-- [基础生存Alpha计划与剩余项](docs/survival_alpha_plan.md)
-- [第一批背包／工具／进食验收](docs/server_survival_alpha_validation.md)
-- [第二批导航／防卫验收](docs/server_navigation_defense_validation.md)
-- [基础生存试玩步骤](docs/survival_trial.md)
+- [交付计划](docs/delivery_plan.md)：目标、现在有什么、还没解决的、下一步
+- [试玩步骤](docs/survival_trial.md)
 - [开发与构建](docs/dev.md)
+- [ServerBody 协议](docs/server_body_protocol.md)
+- [Agent 接入计划](docs/agent_integration_plan.md)
 - [部署与架构取舍](docs/architecture_reassessment.md)
-- [ServerBody协议](docs/server_body_protocol.md)
-- [整理版复验](docs/export_validation.md)
-- [网页评审后的边界修复与待办](docs/boundary_review_fixes.md)
-- [最新混合故障回归与真实 Claude 结果](docs/server_mixed_validation.md)
+- [归档](docs/archive/)：已完成的批次验收、旧计划、架构评审材料
 
-## 当前范围
+## 现在能做什么
 
-| 能力 | 状态 |
-| --- | --- |
-| 服务端角色、独占控制、独立叫停、原生重生 | 受限独立服务器上已验证 |
-| 单格挖放、标准容器、走近取物并交还 | 已验证，有距离／地形／源栈限制 |
-| Claude／Codex陪玩 | 历史聊天与任务回归通过；本轮Codex新增生存10阶段及自然短跟随通过，未使用Claude，Claude新增矿石尚未实测 |
-| 持续跟随／等待／暂停／指定物品拾取 | 已验证，程序执行重复动作，聊天并行 |
-| 有限采集、Agent自主选择数量、实际堆叠上限 | 石料／原木及煤、铁、铜和深层共6种矿石普通产物已实服验证；候选与区域冻结，实际拾取计数 |
-| 整栈容器取物、总期限、操作额度 | R8实服24项通过；整栈两次点击、90秒总期限与停止所有权；额度耗尽后的观察／停止仍仅有离线覆盖 |
-| 内容Mod | 仅Iron Furnaces普通未运转铁炉的有限样本 |
-| 背包到热栏、全背包工具评估、自动进食与AI策略 | 第一批已实测，速度为基础估计，特殊Mod食品／工具未普遍支持 |
-| 有限高差寻路、自动自卫及威胁决策 | 本轮实服导航／防卫55项及Codex有限自卫通过；普通世界短跟随核对生命20，有明确地形／武器范围；此前Claude-b和30分钟受控记录另存 |
-| 自动陪挖、建筑、运行机器、单机／异机、更多Agent/API、多版本 | 尚未交付 |
+范围：MC 1.21.1 / NeoForge 21.1.217、独立服务器、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收（[验收记录](docs/archive/server_alpha_release_validation.md)）。
 
-当前可试玩范围是MC1.21.1／NeoForge21.1.217、独立服务器、单Bot、本机loopback控制，需预备普通食物与工具。沿`start-server-play.ps1`启动，不需要第二个Bot客户端。39个MCP工具不代表所有Mod／服务器均已支持。最新证据见[首版验收](docs/server_alpha_release_validation.md)：矿石14场景53项、Codex受控10阶段及自然3阶段分别通过；自然段仅选定路线短跟随，本轮没有新增30分钟运行，不等于从零自主或长期野外生存。隔离服已保存关闭、配置按实际字节恢复。本机Node24.15原生退出仍待定位，本批使用Node24.19验证，启动可显式指定`-NodePath`。
+- 跟随、等待、跟随时捡指定物品，可以边做边聊天，随时叫停
+- 单格挖放、标准容器、走近取物再交还
+- 有限采集：石料、原木，煤、铁、铜等 6 种矿石
+- 背包整理、工具选择、自动进食、有限高差寻路、近距自卫
+- 内容 Mod 只验过 Iron Furnaces 的普通铁炉
+
+还没有：持续陪挖（已提交，有一个问题待查）、建筑、单人模式、DeepSeek Harness 和原生 API、Mod 适配接口、多版本。详见[交付计划](docs/delivery_plan.md)。
+
+用 `start-server-play.ps1` 启动。39 个 MCP 工具不代表所有 Mod 或服务器都能用。
 
 ## 目录
 
-- `client-runtime/`：当前Body／MCP／任务运行端，名称保留以便核对既有代码。
-- `mods/mcbot-server-control/`：服务端原生角色、控制租约、交互与有限Mod适配。
-- `scripts/companion.mjs`、`scripts/agents/`：Agent会话与事件驱动。
-- `mcp-server/`、`bot-scripts/`：旧Mineflayer实现与回归，供迁移对照及协议测试玩家使用。
-- `mods/mcbot-control/`、`mods/mcbot-server-spike/`：保留实验，非默认玩法路线。
-- `docs/`：计划、协议、验收与评审材料。
+- `client-runtime/`：Body、MCP 工具、任务和陪伴状态
+- `mods/mcbot-server-control/`：服务端身体：假玩家、控制租约、原生交互、Mod 适配
+- `scripts/companion.mjs`、`scripts/agents/`：Agent 会话和事件驱动
+- `mcp-server/`、`bot-scripts/`：旧 Mineflayer 实现，用来对照迁移，协议测试玩家也用它
+- `mods/mcbot-control/`、`mods/mcbot-server-spike/`：保留的实验（ClientBody、早期服务端原型），不是默认路线
+- `docs/`：计划和协议；`docs/archive/`：验收记录和历史材料
 
-构建依赖、启动步骤与真实测试条件见[开发文档](docs/dev.md)。使用自行配置的Agent账号和服务器；仓库不提供登录凭据或可直接运行的测试存档。
+构建依赖、启动步骤和真实测试的条件见[开发文档](docs/dev.md)。Agent 账号和服务器要自己配置，仓库不提供登录凭据和测试存档。
 
 ## 来源
 
-`mcp-server/`基于yuniko-software/minecraft-mcp-server扩展，原Apache-2.0许可证和NOTICE保留。其他模块与Gradle wrapper的既有许可证声明保留；本次整理没有重新指定整仓统一许可证。
+`mcp-server/` 基于 yuniko-software/minecraft-mcp-server 扩展，保留原 Apache-2.0 许可证和 NOTICE。其他模块和 Gradle wrapper 保留各自已有的许可证声明；整仓的统一许可证还没定。

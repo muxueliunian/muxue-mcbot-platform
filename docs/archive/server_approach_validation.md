@@ -1,7 +1,7 @@
 # ServerBody 走近与目标实例核验（2026-10-03）
 
 > 这是原开发环境的历史验证记录。原始日志、账号环境与测试存档未随整理版上传；整理版自己的复验见 [export_validation.md](export_validation.md)。
-本轮在已有授权的 `runtime/serverbody-validation/` 隔离服执行。脚本 [server-body-approach-smoke.mjs](../scripts/server-body-approach-smoke.mjs) 通过实际 stdio MCP 控制 ServerBody，`TestPlayer` 使用真实 Minecraft 协议客户端接收物品；RCON 仅用于专用夹具准备及独立权威读取。本页不把工具脚本当作实际模型聊天证据。
+本轮在已有授权的 `runtime/serverbody-validation/` 隔离服执行。脚本 [server-body-approach-smoke.mjs](../../scripts/server-body-approach-smoke.mjs) 通过实际 stdio MCP 控制 ServerBody，`TestPlayer` 使用真实 Minecraft 协议客户端接收物品；RCON 仅用于专用夹具准备及独立权威读取。本页不把工具脚本当作实际模型聊天证据。
 
 ## 备份与边界
 

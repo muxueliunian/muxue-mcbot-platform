@@ -86,4 +86,4 @@
 
 最终收尾：`save-all flush`后正常关服，Java exit0，25568／25578／8766无监听；最终宿主、协议玩家、MCP、观察器与Java监督进程均已退出。server.properties只存在注释差异，恢复后与备份逐字节相同；ops.json、whitelist.json同样逐字节相同。保留新JAR和测试平台／背包等存档变化。证据`output/navigation-defense-final-cleanup.json`；没有提交或推送，旧未提交修改保留。
 
-可分享的非敏感摘要见[分层检查记录](review_evidence/navigation_defense_checks.json)。试玩入口见[五分钟体验](survival_trial.md)，当前进度以[交付清单](delivery_plan.md)为准。
+可分享的非敏感摘要见[分层检查记录](review_evidence/navigation_defense_checks.json)。试玩入口见[五分钟体验](../survival_trial.md)，当前进度以[交付清单](../delivery_plan.md)为准。

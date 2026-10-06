@@ -21,7 +21,7 @@ move: prepared, clear, level test area only. Explicit plan:
 interact: prepared single-block/container fixtures only. Explicit ordered steps:
   {"steps":[{"action":"dig-block","args":{"x":1,"y":64,"z":0,"expectedBlock":"minecraft:dirt"}}]}
   Supported: dig-block, place-block, open-container, click-slot, close-container.
-  Args follow docs/client_body_protocol.md. Existing menus require explicit containerId.
+  Args follow docs/archive/client_body_protocol.md. Existing menus require explicit containerId.
   New menus opened in this run can omit containerId in later steps; it is read from observation.
   click-slot requires all expected item/count and carried item/count fields.
   Every unknown result ends the scenario without another mutation; rerun only after review.

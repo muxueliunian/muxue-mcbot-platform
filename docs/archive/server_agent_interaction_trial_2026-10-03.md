@@ -3,7 +3,7 @@
 > 这是原开发环境的历史验证记录。原始日志、账号环境与测试存档未随整理版上传；整理版自己的复验见 [export_validation.md](export_validation.md)。
 10:11–10:13 JST，本机现有 `<selected-claude-config>` 登录，明确指定 `claude-sonnet-5-5`／low；实际 Claude 会话记录的模型字段也为此值。使用产品 `scripts/companion.mjs` 和 minecraft MCP，协议测试玩家 TestPlayer 发真实聊天；没有第二套 Bot MC 客户端。独立脚本只准备夹具、发玩家聊天和核对结果，不替模型调用游戏动作。
 
-证据：报告（本地证据未随仓库分发：`../output/serverbody-agent-approach-latest.json`），完整驱动／玩家日志位于 `output/server-agent-approach-2026-10-03T01-11-52.806Z/`。可重复脚本为 [`server-body-agent-trial.mjs`](../scripts/server-body-agent-trial.mjs)，必须显式 `--allow-real-agent`，先备份隔离服。
+证据：报告（本地证据未随仓库分发：`../output/serverbody-agent-approach-latest.json`），完整驱动／玩家日志位于 `output/server-agent-approach-2026-10-03T01-11-52.806Z/`。可重复脚本为 [`server-body-agent-trial.mjs`](../../scripts/server-body-agent-trial.mjs)，必须显式 `--allow-real-agent`，先备份隔离服。
 
 | 请求 | 首次游戏回应 | 玩家背包实收 | 实际模型工具 |
 | --- | --- | --- | --- |

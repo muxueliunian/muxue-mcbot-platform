@@ -4,6 +4,8 @@ param(
     [ValidateSet('claude', 'codex', 'dsh')][string]$Agent = 'claude',
     [string]$Nickname = '',
     [string]$ConfigDir = '',
+    # 人设和玩家档案所在的记忆目录（<目录>/xiaoke/persona.md、<目录>/shared/players/*.md），留空就不带人设
+    [string]$MemoryDir = '',
     [string]$Model = '',
     [string]$NodePath = '',
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort = 'low',
@@ -56,6 +58,7 @@ if ($PrepareOnly) { exit 0 }
 $driverArgs = @('scripts/companion.mjs', '--agent', $Agent, '--body', 'server', '--name', $Name,
     '--nickname', $Nickname, '--mcp-config', $configFile, '--effort', $Effort)
 if ($ConfigDir) { $driverArgs += @('--config-dir', $ConfigDir) }
+if ($MemoryDir) { $driverArgs += @('--memory-dir', $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($MemoryDir)) }
 if ($Model) { $driverArgs += @('--model', $Model) }
 if ($Headless) { $driverArgs += '--headless' }
 & $NodePath @driverArgs

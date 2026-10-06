@@ -363,6 +363,7 @@ export function readSessionState(file) {
     lastRequestAt: Number(s?.lastRequestAt) || 0,
     contextTokens: Number(s?.contextTokens) || 0,
     ...(Number(s?.lastStopAt) > 0 ? { lastStopAt: Number(s.lastStopAt) } : {}),
+    ...(typeof s?.model === 'string' && s.model ? { model: s.model } : {}),
     ...(s?.bodyScope && typeof s.bodyScope === 'object' ? { bodyScope: s.bodyScope } : {}),
   };
 }
@@ -386,11 +387,13 @@ export function isColdSession(lastRequestAt, now, resumeWindowMs) {
   return resumeWindowMs > 0 && lastRequestAt > 0 && now - lastRequestAt > resumeWindowMs;
 }
 
-// 驱动器启动时接不接着上次的会话：同一个平台、同一个账号、缓存还没过期才接着
-export function resumableConversation(state, now, { resumeWindowMs, configDir, provider, bodyScope = null }) {
+// 驱动器启动时接不接着上次的会话：同一个平台、同一个账号、同一个模型、缓存还没过期才接着
+// （换了模型还接着旧会话，Claude Code 会卡在启动阶段不出第一轮）
+export function resumableConversation(state, now, { resumeWindowMs, configDir, provider, model = '', bodyScope = null }) {
   if (!state.conversationId) return '';
   if (state.provider !== provider) return '';
   if ((state.configDir || '') !== (configDir || '')) return '';
+  if ((state.model || '') !== (model || '')) return '';
   if (!!state.bodyScope !== !!bodyScope) return '';
   if (bodyScope && ['body', 'worldId', 'connectionFile', 'username', 'agentPolicy'].some((key) => state.bodyScope[key] !== bodyScope[key])) return '';
   if (!state.lastRequestAt || isColdSession(state.lastRequestAt, now, resumeWindowMs)) return '';
@@ -636,11 +639,18 @@ export function startupPrompt(args, memoryOn) {
 
 // Fixed, host-selected sources only. Do not follow instructions or file links
 // inside the persona, and do not give the game Agent filesystem tools to load it.
+// Player profiles (<memory-dir>/shared/players/<游戏名>.md) give names and pronouns, so the
+// Agent calls the player what they asked to be called instead of their game name.
 export function serverClaudeInstructions(root, agentMemoryDir) {
   const sections = [];
+  const playersDir = path.join(agentMemoryDir, '..', 'shared', 'players');
+  let players = [];
+  try { players = fs.readdirSync(playersDir).filter((name) => /^[A-Za-z0-9_]{1,16}\.md$/.test(name)).sort(); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   for (const [label, file] of [
     ['本地角色说明', path.join(root, 'CLAUDE.md')],
     ['本人基础人设', path.join(agentMemoryDir, 'persona.md')],
+    ...players.map((name) => [`玩家档案：${name.slice(0, -3)}`, path.join(playersDir, name)]),
   ]) {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); }
@@ -969,6 +979,7 @@ function main() {
   function saveSession() {
     try {
       writeSessionState(F.session, { conversationId, provider: PROVIDER, configDir: CONFIG_DIR, lastRequestAt, contextTokens,
+        ...(args.model ? { model: args.model } : {}),
         ...(BODY_SCOPE ? { bodyScope: BODY_SCOPE } : {}),
         ...(lastStopAt ? { lastStopAt } : {}) });
     } catch (e) {
@@ -1580,7 +1591,7 @@ function main() {
   // 上次的会话缓存还没过期（同一个账号）就接着，不然开新会话并跑启动轮
   const saved = readSessionState(F.session);
   lastStopAt = agentProtocol.identity === 'independent' || args.body === 'server' ? saved.lastStopAt || 0 : 0;
-  conversationId = resumableConversation(saved, Date.now(), { resumeWindowMs, configDir: CONFIG_DIR, provider: PROVIDER, bodyScope: BODY_SCOPE });
+  conversationId = resumableConversation(saved, Date.now(), { resumeWindowMs, configDir: CONFIG_DIR, provider: PROVIDER, model: args.model || '', bodyScope: BODY_SCOPE });
   if (conversationId) {
     lastRequestAt = saved.lastRequestAt;
     contextTokens = saved.contextTokens;

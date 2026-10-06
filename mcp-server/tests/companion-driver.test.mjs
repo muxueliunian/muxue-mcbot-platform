@@ -489,6 +489,8 @@ test('会话：同一平台、同一账号、缓存窗口内才接着；上下�
   assert.equal(resumableConversation(state, now, opts), 'abc');
   assert.equal(resumableConversation(state, now, { ...opts, configDir: 'c:/b' }), '', '换了账号');
   assert.equal(resumableConversation(state, now, { ...opts, provider: 'agy' }), '', '换了平台');
+  assert.equal(resumableConversation(state, now, { ...opts, model: 'claude-sonnet-5-5' }), '', '换了模型');
+  assert.equal(resumableConversation({ ...state, model: 'claude-sonnet-5-5' }, now, { ...opts, model: 'claude-sonnet-5-5' }), 'abc', '同一个模型');
   assert.equal(resumableConversation({ ...state, provider: '' }, now, opts), '', '旧格式没记平台');
   assert.equal(resumableConversation({ ...state, lastRequestAt: now - 51 * 60000 }, now, opts), '', '缓存过期');
   assert.equal(resumableConversation({ ...state, lastRequestAt: 0 }, now, opts), '', '没有成功请求过');

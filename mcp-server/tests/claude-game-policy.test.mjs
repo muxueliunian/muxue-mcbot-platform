@@ -41,10 +41,15 @@ test('ServerBody host reads only explicit persona files, without resolving their
     fs.writeFileSync(path.join(root, 'secrets.txt'), 'DO_NOT_LOAD_LINKED_FILES');
     fs.writeFileSync(path.join(memory, 'persona.md'), '说话简短。');
     fs.writeFileSync(path.join(memory, 'bonds.md'), 'DO_NOT_LOAD_MEMORY');
+    const players = path.join(root, 'memory', 'shared', 'players');
+    fs.mkdirSync(players, { recursive: true });
+    fs.writeFileSync(path.join(players, 'tester.md'), '称呼：小测，代词用她。');
+    fs.writeFileSync(path.join(players, 'notes.txt'), 'DO_NOT_LOAD_OTHER_FILES');
     const before = fs.readFileSync(path.join(memory, 'persona.md'));
     const text = host.serverClaudeInstructions(root, memory);
     assert.match(text, /我是测试角色/);
     assert.match(text, /说话简短/);
+    assert.match(text, /玩家档案：tester[\s\S]*称呼：小测/);
     assert.doesNotMatch(text, /DO_NOT_LOAD/);
     assert.deepEqual(fs.readFileSync(path.join(memory, 'persona.md')), before);
     assert.equal(host.serverClaudeInstructions(path.join(root, 'absent'), path.join(root, 'absent-memory')), '');

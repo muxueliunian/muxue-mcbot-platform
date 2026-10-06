@@ -155,6 +155,7 @@ final class FollowCompanion {
         if(!Objects.equals(state,next)) operation.summary=next.equals("waiting")?"Waiting near companion":"Following companion";
         state=next;operation.result=result(null);
     }
+    boolean waiting(){return "waiting".equals(state);}
     void stop() {stopped=true;route=null;view.cancelNavigation();view.stop();}
 
     static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server) {

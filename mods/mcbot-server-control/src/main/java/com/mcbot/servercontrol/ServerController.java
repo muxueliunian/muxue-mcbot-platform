@@ -58,6 +58,9 @@ final class ServerController implements ControlSession.Game {
     private final Consumer<net.neoforged.neoforge.event.entity.player.AttackEntityEvent> attackGuard=SurvivalActions::guardNativeAttack;
     private final Consumer<net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent> incomingDamageGuard=SurvivalActions::guardNativeIncomingDamage;
     private final Consumer<net.neoforged.neoforge.event.entity.player.SweepAttackEvent> sweepGuard=SurvivalActions::guardNativeSweep;
+    private final IdleGaze gaze=new IdleGaze();
+    private ServerPlayer speaker;
+    private long spokeAt,gazeHold;
     private final ArrayDeque<JsonObject> chat=new ArrayDeque<>();
     private long chatSequence;
     private ServerChatEvent outgoingChatEvent;
@@ -263,6 +266,7 @@ final class ServerController implements ControlSession.Game {
     private void recordChat(String username,String message) {
         chat.addLast(obj("seq",++chatSequence,"time",System.currentTimeMillis(),"username",username,"message",message));
         while(chat.size()>100) chat.removeFirst();
+        if(!username.equals(config.username())){speaker=server.getPlayerList().getPlayerByName(username);spokeAt=now();}
     }
     private void receiveDamage(net.neoforged.neoforge.event.entity.living.LivingDamageEvent.Post event){
         if(survival!=null)survival.receiveDamage(event);
@@ -270,6 +274,7 @@ final class ServerController implements ControlSession.Game {
     @Override public void begin(ControlSession.Operation operation) {
         if(!atomicAction(operation.name)) throw error("UNSUPPORTED","Action is not available");
         if(!session.mayDrive(operation)) throw error("LEASE_LOST","Body lease expired before action");
+        gazeHold=now()+IdleGaze.HOLD_AFTER_ACTION_MS;
         JsonObject args=operation.args;
         if(survival.handles(operation.name)) { survival.begin(operation);return; }
         if(operation.name.equals("send-chat")) {
@@ -314,10 +319,12 @@ final class ServerController implements ControlSession.Game {
         }
         lastDriveTick=server.getTickCount();
         if(survival!=null) survival.tick();
-        if(active==null) { body.stopInput(); return; }
+        if(active==null) { body.stopInput(); idleGaze(body); return; }
         if(!session.mayDrive(active)) { stop(); return; }
         if(companion!=null) {
-            companion.tick();if(active!=null&&!active.status.equals("running")) stop();return;
+            companion.tick();if(active!=null&&!active.status.equals("running")) stop();
+            else if(companion!=null&&companion.waiting())idleGaze(body);
+            return;
         }
         if(pickup!=null){pickup.tick();if(active!=null&&!active.status.equals("running"))stop();return;}
         try {
@@ -335,6 +342,11 @@ final class ServerController implements ControlSession.Game {
             if(arrived&&active.name.equals("move-to-position"))finish("succeeded","Reached server-observed target");
         } catch(Protocol.Error e) { finish("failed",e.code+": "+e.getMessage(),obj("code",e.code,"position",position(player.position()))); }
         catch(RuntimeException e) { finish("failed","Movement failed: "+e.getClass().getSimpleName()); }
+    }
+    /** Head movement only while nothing aims the body: no action, or a follow standing and waiting. */
+    private void idleGaze(BodyPlayer body){
+        if(now()<gazeHold||survival!=null&&survival.busy()||nativeWriteInProgress())return;
+        gaze.tick(body,speaker,spokeAt,now());
     }
     private void beginApproach(ControlSession.Operation operation) {
         requireWalkable();

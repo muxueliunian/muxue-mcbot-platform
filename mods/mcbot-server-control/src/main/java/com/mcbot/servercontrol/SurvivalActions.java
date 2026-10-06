@@ -57,6 +57,8 @@ final class SurvivalActions {
     private NativeDefenseUse defense;
     private int lastDefenseTick=Integer.MIN_VALUE;
     SurvivalActions(ServerPlayer player,ControlSession session,TargetTokens targets,ResourceTargets resources) { this.player=player;this.session=session;this.targets=targets;this.resources=resources; }
+    /** Digging, eating or defending holds the view; idle head movement must not turn it. */
+    boolean busy(){return digging!=null||eating!=null||defense!=null;}
     boolean handles(String name) { return CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name); }
     private ServerPlayerGameModeAccessor mining() { return (ServerPlayerGameModeAccessor)player.gameMode; }
     private static long now() { return System.nanoTime()/1_000_000; }

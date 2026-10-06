@@ -33,7 +33,7 @@ const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: 
 const secrets = [connection.token, props['rcon.password']].filter(Boolean);
 const redact = text => { let value = String(text); for (const secret of secrets) value = value.replaceAll(secret, '[redacted]'); return value; };
 const report = { started: new Date().toISOString(), serverDir, legs: [], checks: [], calls: [],
-  limitations: ['没有使用真实模型；测试玩家用 RCON 换位置（spreadplayers 落到地表），不是走过去的。'] };
+  limitations: ['没有使用真实模型；测试玩家用 RCON tp 到固定的地表落点，不是走过去的。'] };
 const save = () => fs.writeFile(path.join(dir, 'report.json'), redact(JSON.stringify(report, null, 2)) + '\n');
 function check(name, passed, detail) { report.checks.push({ name, passed: !!passed, ...(detail === undefined ? {} : { detail }) }); assert(passed, name + (detail ? ' ' + redact(JSON.stringify(detail)).slice(0, 2000) : '')); console.log('PASS ' + name); }
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
@@ -53,7 +53,8 @@ async function tool(name, args = {}) {
 }
 
 // 雪原坡地：出生点附近往北下坡到 z≈-30（高差约 4 格，一格一格的雪台阶），再往东、往回爬坡。
-const legs = [[4.5, -6.5], [4.5, -12.5], [4.5, -18.5], [5.5, -24.5], [5.5, -30.5], [10.5, -30.5], [10.5, -22.5], [7.5, -14.5], [4.5, -6.5], [0.5, -2.5]];
+// 落点固定（取自 10-06 通过的一轮）：spreadplayers 会在 1 格内随机落点，偶尔掉进 7 格深的坑，结果不可重复。
+const legs = [[4.5, 96, -6.5], [4.5, 98, -12.5], [3.5, 96, -18.5], [5.5, 95, -23.5], [5.5, 97, -30.5], [9.5, 94, -30.5], [10.5, 86, -22.5], [8.5, 97, -14.5], [5.5, 96, -6.5], [-0.5, 97, -2.5]];
 const peer = mineflayer.createBot({ host: '127.0.0.1', port: 25568, username: 'NavPeer', auth: 'offline', version: '1.21.1', hideErrors: true });
 peer.on('kicked', reason => { report.peerKicked = String(reason); });
 try {
@@ -64,13 +65,13 @@ try {
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
       '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
-  await command(`spreadplayers ${legs[0][0]} ${legs[0][1]} 0 1 false NavPeer`); await wait(1500);
-  await command(`spreadplayers ${legs[0][0] + 2} ${legs[0][1]} 0 1 false ServerBot`); await wait(2500);
+  await command(`tp NavPeer ${legs[0].join(' ')}`); await wait(1500);
+  await command(`spreadplayers ${legs[0][0] + 2} ${legs[0][2]} 0 1 false ServerBot`); await wait(2500);
   const follow = await tool('companion-mode', { action: 'follow', player: 'NavPeer' });
   check('开始跟随测试玩家', !follow.error, follow.value);
   let unreachable = 0;
-  for (const [x, z] of legs.slice(1)) {
-    await command(`spreadplayers ${x} ${z} 0 1 false NavPeer`);
+  for (const [x, y, z] of legs.slice(1)) {
+    await command(`tp NavPeer ${x} ${y} ${z}`); await wait(300);
     const target = await posOf('NavPeer');
     const started = Date.now(); let bot = await posOf('ServerBot'), state;
     while (Date.now() - started < 20000) {

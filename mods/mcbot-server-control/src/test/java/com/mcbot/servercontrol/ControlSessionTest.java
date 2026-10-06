@@ -206,7 +206,7 @@ public final class ControlSessionTest {
         NativeActionBoundaryTest.run();
         ToolAssessmentTest.run();
         SurvivalAlphaTest.run();
-        NavigationTest.run();
+        NavigationTest.run();IdleGazeTest.run();
         DefenseAlphaTest.run();
         ItemInteractionsTest.run();HostingRulesTest.run();ModAdaptersTest.run();
     }

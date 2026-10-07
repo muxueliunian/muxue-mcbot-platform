@@ -149,6 +149,48 @@ test('a drop stuck on leaves: a leaf that decays or changes while being broken d
     else { assert.equal(leafDigs.length, 2); assert.equal(leafDigs[1].args.expectedProperties.distance, '7', 'retried with the new leaf state'); }
   }
 });
+test('with two trees in reach, the one started is cut completely before the other', async () => {
+  const f = fixture({ blocks: 5, blockId: 'minecraft:spruce_log', dropItem: 'minecraft:spruce_log' });
+  // Tree B (west) is nearest, but its lowest log is farther than both of tree A's.
+  const positions = [{ x: -2, y: 65, z: 0 }, { x: -2, y: 66, z: 0 }, { x: -3, y: 64, z: 0 }, { x: 1, y: 65, z: 1 }, { x: 1, y: 66, z: 1 }];
+  positions.forEach((position, i) => { f.candidates[i].position = position; });
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:spruce_log', count: 5 }));
+  assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.trees, 2);
+  const order = f.calls.filter(call => call.name === 'dig-block').map(call => f.candidates.findIndex(candidate => candidate.targetToken === call.args.targetToken));
+  assert.deepEqual(order.slice(0, 3).sort(), [0, 1, 2], 'tree B first, all of it'); assert.deepEqual(order.slice(3).sort(), [3, 4]);
+});
+test('a drop hidden behind leaves: the leaves in the line of sight are broken, then it is picked up', async () => {
+  const f = fixture({ blocks: 1, blockId: 'minecraft:spruce_log', dropItem: 'minecraft:spruce_log' });
+  const leaf = { x: 2, y: 64, z: 1 };
+  let cell = { id: 'minecraft:spruce_leaves', properties: { distance: '2', persistent: 'false', waterlogged: 'false' } };
+  const observe = f.body.observe;
+  f.body.observe = async position => {
+    const state = await observe();
+    if (position) state.block = { state: 'loaded', position, ...(position.x === leaf.x && position.y === leaf.y && position.z === leaf.z && cell ? cell : { id: 'minecraft:air', properties: {} }) };
+    return state;
+  };
+  const act = f.body.act;
+  f.body.act = async (name, args, token) => {
+    if (name === 'dig-block' && !args.targetToken) {
+      f.calls.push({ name: 'dig-leaf', args: clone(args) });
+      if (args.x === leaf.x && args.y === leaf.y && args.z === leaf.z) { cell = undefined; for (const item of f.state.groundItems) item.visibility = 'visible'; }
+      return { operationId: randomUUID(), sessionId: 'session', controlGeneration: f.state.controlGeneration, name, status: 'succeeded', summary: name, result: {} };
+    }
+    const op = await act(name, args, token);
+    // The log falls into the low branches: on the ground two blocks east, behind a leaf.
+    if (name === 'dig-block' && args.targetToken) Object.assign(f.state.groundItems.at(-1), { position: { x: 3.5, y: 64, z: 1.5 }, visibility: 'occluded' });
+    return op;
+  };
+  const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:spruce_log', count: 1 }));
+  assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.leavesShaken, 1);
+  assert.deepEqual(f.calls.filter(call => call.name === 'dig-leaf').map(call => [call.args.x, call.args.y, call.args.z]), [[2, 64, 1]]);
+});
+test('collect-items never breaks leaves for a hidden drop and reports it as caught', async () => {
+  const f = fixture({ drops: [{ ...stack(), id: 'minecraft:spruce_log' }] });
+  f.state.groundItems[0].visibility = 'occluded';
+  const result = await f.done(await f.tasks.start('collect-items', { item: 'minecraft:spruce_log', count: 1, radius: 4 }));
+  assert.equal(result.status, 'failed'); assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
+});
 test('a reachable-looking block refused for line of sight is left for an approach, not retried in place', async () => {
   const f = fixture({ blocks: 2 });
   let refused = false;

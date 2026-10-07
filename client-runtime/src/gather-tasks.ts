@@ -16,8 +16,8 @@ type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
-type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number };
-type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number };
+type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number; stuckInLeaves?: number; trees?: number };
+type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number; trees?: Map<string, number>; focusTree?: number; pillarDebt?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
 type Candidate = NearbyResources['candidates'][number];
@@ -41,6 +41,20 @@ const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:voi
 const isLeaves = (id: string | undefined) => !!id && /^[a-z0-9_.-]+:[a-z0-9_/]*leaves$/.test(id);
 const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
 const nearest = (list: Candidate[], feet: Position) => [...list].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
+/** Log candidates touching one another (also diagonally: branches, 2x2 trunks) are one tree. */
+function treesOf(candidates: Candidate[]): Map<string, number> {
+  const logs = candidates.filter(candidate => candidate.kind === 'log' && candidate.targetToken), tree = new Map<string, number>();
+  let next = 0;
+  for (const seed of logs) {
+    if (tree.has(seed.targetToken!)) continue;
+    const id = next++, queue = [seed]; tree.set(seed.targetToken!, id);
+    while (queue.length) {
+      const at = queue.pop()!.position;
+      for (const other of logs) if (!tree.has(other.targetToken!) && Math.abs(other.position.x - at.x) <= 1 && Math.abs(other.position.y - at.y) <= 1 && Math.abs(other.position.z - at.z) <= 1) { tree.set(other.targetToken!, id); queue.push(other); }
+    }
+  }
+  return tree;
+}
 /** Stops that mean nobody may act for the task any more: the pillar stays where it is. */
 const haltCodes = new Set(['CANCELLED', 'LEASE_LOST', 'WORLD_CHANGED', 'STALE_CONTROL', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'CLOSED']);
 /** Finite goals on a frozen candidate set; native pickup receipts, never mined blocks or net inventory, determine quantity. */
@@ -277,7 +291,7 @@ export class GatherTasks {
     return op;
   }
   private async pickups(task: Active): Promise<void> {
-    const shaken = new Set<string>();
+    const shaken = new Map<string, number>();
     let merged = 0;
     pickupLoop: for (;;) {
       const state = await this.observe(task); if (this.done(task)) return;
@@ -302,6 +316,8 @@ export class GatherTasks {
         const next = settled.groundItems?.find(next => next.entityId === item!.entityId);
         if (!next) {
           if (task.collectedEntities.has(item.entityId)) continue pickupLoop;
+          // Drops landing together merge natively into one entity: look again (nothing was claimed for this one).
+          if (++merged <= 3) continue pickupLoop;
           throw new BodyError('STALE_TARGET', '目标掉落实体消失，没有充分原生收据证明已拾取');
         }
         item = next;
@@ -322,7 +338,7 @@ export class GatherTasks {
       // happens before any pickup, so look again rather than fail the whole goal.
       try {
       await this.step(task, 'pickup-item', { entityId: item.entityId, expectedItem: item.stack.id, expectedCount: item.stack.count, expectedComponents: item.stack.components!, expectedMaxStackSize: item.stack.maxStackSize, ...(task.borrowed ? { companionGuard: task.borrowed.companionGuard } : {}), ...(miningOwner(task.borrowed) ? { resourceTargetToken: task.borrowed.candidate.targetToken } : {}), timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
-      } catch (error) { if (error instanceof BodyError && error.code === 'STALE_ITEM' && task.progress.pickedUpCount === before && ++merged <= 3) continue; throw error; }
+      } catch (error) { if (error instanceof BodyError && ['STALE_ITEM', 'PICKUP_MERGED'].includes(error.code) && task.progress.pickedUpCount === before && ++merged <= 3) continue; throw error; }
       if (task.progress.pickedUpCount === before) throw new BodyError('PICKUP_UNKNOWN', '动作没有对应新增原生拾取收据，未依据实体消失或背包净变化猜测成功');
       if (!this.done(task) && (await this.observe(task)).groundItems?.some(next => next.entityId === item.entityId)) throw new BodyError('INVENTORY_FULL', '目标实体仍有余量；未自动重复拾取，请检查背包空间');
     }
@@ -333,15 +349,23 @@ export class GatherTasks {
    * when it sits on the edge) when they are in reach, so it falls to where it can be picked up. Leaves are
    * never gathered; each drop is tried once. Returns whether a leaf was broken.
    */
-  private async shake(task: Active, state: Observation, items: NonNullable<Observation['groundItems']>, shaken: Set<string>): Promise<boolean> {
-    if (task.name !== 'gather-resources' || miningOwner(task.borrowed)) return false;
+  private async shake(task: Active, state: Observation, items: NonNullable<Observation['groundItems']>, shaken: Map<string, number>): Promise<boolean> {
+    if (task.borrowed) return false;
     for (const item of items) {
-      if (item.stack.id !== task.request.item || task.oldGround?.has(item.entityId) || shaken.has(item.entityId) || item.position.y <= state.position.y + 2 || !this.inside(task, item.position)) continue;
-      shaken.add(item.entityId);
+      if (!this.caught(task, state, item) || (shaken.get(item.entityId) ?? 0) >= 2) continue;
+      shaken.set(item.entityId, (shaken.get(item.entityId) ?? 0) + 1);
       const p = item.position, span = (v: number) => [...new Set([Math.floor(v - 0.13), Math.floor(v + 0.13)])];
+      const cells: Position[] = [];
+      for (const y of [...new Set([Math.floor(p.y - 0.05), Math.floor(p.y)])]) for (const x of span(p.x)) for (const z of span(p.z)) cells.push({ x, y, z });
+      // Leaves between the eyes and the drop hide it (a log fallen into the low branches of a spruce).
+      const eye = { x: state.position.x, y: state.position.y + EYE, z: state.position.z }, length = Math.hypot(p.x - eye.x, p.y + 0.125 - eye.y, p.z - eye.z);
+      for (let d = 0.5; d < length; d += 0.25) {
+        const t = d / length, at = { x: Math.floor(eye.x + (p.x - eye.x) * t), y: Math.floor(eye.y + (p.y + 0.125 - eye.y) * t), z: Math.floor(eye.z + (p.z - eye.z) * t) };
+        if (!cells.some(cell => cell.x === at.x && cell.y === at.y && cell.z === at.z)) cells.push(at);
+      }
       let broke = false;
-      for (const y of [...new Set([Math.floor(p.y - 0.05), Math.floor(p.y)])]) for (const x of span(p.x)) for (const z of span(p.z)) {
-        const at = { x, y, z };
+      // collect-items never digs: it only walks closer. gather-resources may break leaves (never gathered).
+      for (const at of task.name === 'gather-resources' ? cells.slice(0, 12) : []) {
         if (!inReach(state.position, at)) continue;
         const cell = await this.cell(task, at);
         if (!isLeaves(cell?.id)) continue;
@@ -350,11 +374,22 @@ export class GatherTasks {
         catch (error) { if (error instanceof BodyError && reachRefusals.has(error.code)) continue; throw error; }
         task.progress.leavesShaken = (task.progress.leavesShaken ?? 0) + 1; broke = true;
       }
-      if (!broke) continue;
-      await new Promise(resolve => setTimeout(resolve, 300));
-      return true;
+      if (broke) { await new Promise(resolve => setTimeout(resolve, 300)); return true; }
+      // Nothing in reach: walk once toward the drop (to its column at the current level) and try again from there.
+      if (shaken.get(item.entityId) === 1 && this.body.hello.capabilities.includes('move-to-position') && Math.hypot(p.x - state.position.x, p.z - state.position.z) > 2) {
+        task.progress.stage = 'walking-to-caught-drop';
+        try { await this.step(task, 'move-to-position', { x: p.x, y: state.position.y, z: p.z, tolerance: 2, timeoutMs: Math.min(10000, Math.max(500, task.deadline - this.now())) }); }
+        catch (error) { if (error instanceof BodyError && (haltCodes.has(error.code) || unknownCodes.has(error.code))) throw error; continue; }
+        return true;
+      }
     }
     return false;
+  }
+  /** A drop of this task that cannot simply be walked to: high on leaves, or hidden behind them. */
+  private caught(task: Active, state: Observation, item: GroundItem): boolean {
+    if (item.stack.id !== task.request.item || task.oldGround?.has(item.entityId) || !this.inside(task, item.position)) return false;
+    if (task.name === 'collect-items' && !task.allowed.has(item.entityId)) return false;
+    return item.position.y > state.position.y + 2 || item.visibility === 'occluded';
   }
   /** Eat between blocks if needed, then assess, prepare and select the tool for one candidate; returns the fresh state. */
   private async prepareFor(task: Active, candidate: Candidate, state: Observation): Promise<Observation> {
@@ -404,24 +439,40 @@ export class GatherTasks {
     await this.step(task, 'select-slot', { slot, expectedItem: tool.id, expectedCount: tool.count, expectedComponents: tool.components, ...(tool.maxStackSize !== undefined ? { expectedMaxStackSize: tool.maxStackSize } : {}) });
     return state;
   }
+  /**
+   * One tree at a time: while logs of the tree being cut remain, only those are dug (standing on a pillar, the
+   * top of a neighbouring tree is often in reach too, and cutting it would leave both trees half done).
+   */
+  private inFocus(task: Active, remaining: Candidate[], candidate: Candidate, strict = false): boolean {
+    const tree = task.trees?.get(candidate.targetToken ?? '');
+    if (tree === undefined || task.focusTree === undefined || tree === task.focusTree) return true;
+    // On a pillar only the tree being climbed counts, even once it is done: the next tree starts from the ground.
+    return !strict && !remaining.some(other => task.trees!.get(other.targetToken ?? '') === task.focusTree);
+  }
+  private focus(task: Active, candidate: Candidate): void {
+    const tree = task.trees?.get(candidate.targetToken ?? '');
+    if (tree !== undefined) task.focusTree = tree;
+  }
   /** Blocks dug since the last pickup already cover the rest of the goal at the item's least native yield per block. */
   private covered(task: Active, pending: number): boolean {
     const target = task.progress.targetCount;
-    return target === undefined ? pending >= 1 : pending * (task.least ?? 1) >= target - (task.progress.pickedUpCount ?? 0);
+    // Gathered items standing in the pillar come back when it is dug out: they are not missing.
+    return target === undefined ? pending >= 1 : pending * (task.least ?? 1) >= target - (task.progress.pickedUpCount ?? 0) - (task.pillarDebt ?? 0);
   }
   /**
    * Dig every frozen candidate reachable from where the body stands, nearest first, until the dug blocks
    * cover the goal. A block the native reach or line-of-sight check refuses is skipped from this spot.
    */
-  private async digReachable(task: Active, remaining: Candidate[], skipped: Set<string>, already: number): Promise<number> {
+  private async digReachable(task: Active, remaining: Candidate[], skipped: Set<string>, already: number, strict = false): Promise<number> {
     let dug = 0;
     for (;;) {
       if (this.done(task) || already + dug > 0 && this.covered(task, already + dug)) return dug;
       let state = await this.observe(task);
       const feet = state.position;
-      const candidate = remaining.filter(next => !skipped.has(next.targetToken) && inReach(feet, next.position))
+      const candidate = remaining.filter(next => !skipped.has(next.targetToken) && inReach(feet, next.position) && this.inFocus(task, remaining, next, strict))
         .sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
       if (!candidate) return dug;
+      this.focus(task, candidate);
       state = await this.prepareFor(task, candidate, state);
       task.progress.stage = 'digging';
       try {
@@ -523,10 +574,10 @@ export class GatherTasks {
     let dug = 0, failure: unknown;
     try {
       for (;;) {
-        dug += await this.digReachable(task, remaining, new Set(), dug);
+        dug += await this.digReachable(task, remaining, new Set(), dug, true);
         if (this.done(task) || dug > 0 && this.covered(task, dug) || placed.length >= MAX_PILLAR) break;
         const state = await this.observe(task), level = feetLevel(state.position);
-        const above = remaining.filter(next => next.position.y > level && Math.hypot(next.position.x - spot.x, next.position.z - spot.z) <= CLIMB_SPREAD);
+        const above = remaining.filter(next => next.position.y > level && Math.hypot(next.position.x - spot.x, next.position.z - spot.z) <= CLIMB_SPREAD && this.inFocus(task, remaining, next, true));
         if (above.length === 0) break;
         if (pillarBlockCount(state, purpose) === 0) { task.progress.limitation = '背包里没有能垫脚的方块，够不着的部分没有砍／挖'; break; }
         if (!(await this.headroom(task, state.position))) break;
@@ -534,12 +585,12 @@ export class GatherTasks {
         const block = await pillarUp(host, purpose);
         placed.push(block); task.progress.pillarPlaced = (task.progress.pillarPlaced ?? 0) + 1;
         // Standing on a gathered log spends it; digging the pillar back out picks it up again.
-        if (block.item === task.request.item) task.progress.pickedUpCount = (task.progress.pickedUpCount ?? 0) - 1;
+        if (block.item === task.request.item) { task.progress.pickedUpCount = (task.progress.pickedUpCount ?? 0) - 1; task.pillarDebt = (task.pillarDebt ?? 0) + 1; }
       }
     } catch (error) { failure = error; }
     if (!(failure instanceof BodyError && haltCodes.has(failure.code))) {
       task.progress.stage = 'pillaring-down';
-      for (const block of [...placed].reverse()) { await pillarDown(host, block); task.progress.pillarRecovered = (task.progress.pillarRecovered ?? 0) + 1; }
+      for (const block of [...placed].reverse()) { await pillarDown(host, block); task.progress.pillarRecovered = (task.progress.pillarRecovered ?? 0) + 1; if (block.item === task.request.item) task.pillarDebt = Math.max(0, (task.pillarDebt ?? 0) - 1); }
     }
     if (failure) throw failure;
     if (dug === 0 && remaining.includes(target)) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; }
@@ -555,6 +606,8 @@ export class GatherTasks {
       if (!miningOwner(task.borrowed)) await this.pickups(task);
       const remaining = [...candidates], skipped = new Set<string>();
       if (candidates.length) task.top = Math.max(...candidates.map(candidate => candidate.position.y));
+      task.trees = treesOf(candidates);
+      if (task.trees.size) task.progress.trees = new Set(task.trees.values()).size;
       let pending = 0;
       while (remaining.length > 0 && !this.done(task)) {
         let state = await this.observe(task);
@@ -569,7 +622,8 @@ export class GatherTasks {
         if (remaining.length === 0 || this.done(task)) break;
         if (pending > 0) { await this.pickups(task); pending = 0; continue; }
         state = await this.observe(task);
-        const candidate = nearest(remaining, state.position);
+        const candidate = nearest(remaining.filter(next => this.inFocus(task, remaining, next)), state.position);
+        this.focus(task, candidate);
         const high = !miningOwner(task.borrowed) && this.climbable() && candidate.position.y - feetLevel(state.position) >= CLIMB_ABOVE;
         // A tree is climbed straight away; anything else high may sit on a slope, so walk up first and climb when no spot reaches it.
         if (high && candidate.kind === 'log') { pending += await this.climb(task, remaining, candidate); continue; }
@@ -579,6 +633,8 @@ export class GatherTasks {
           await this.step(task, 'approach-resource', { targetToken: candidate.targetToken, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
         } catch (error) {
           if (high && error instanceof BodyError && !haltCodes.has(error.code) && !unknownCodes.has(error.code)) { pending += await this.climb(task, remaining, candidate); continue; }
+          // No walkable way to this one block (leaves, a cliff): leave it and go on with the others.
+          if (error instanceof BodyError && error.code === 'NO_PATH') { remaining.splice(remaining.indexOf(candidate), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; continue; }
           throw error;
         }
         skipped.clear();
@@ -594,9 +650,12 @@ export class GatherTasks {
       }
       if (!this.done(task)) {
         const final = await this.observe(task);
-        const stuck = (final.groundItems ?? []).filter(item => item.stack.id === task.request.item && !task.oldGround?.has(item.entityId) && item.position.y > final.position.y + 2 && this.inside(task, item.position))
-          .reduce((sum, item) => sum + item.stack.count, 0);
-        if (stuck > 0) { task.progress.stuckHigh = stuck; throw new BodyError('INSUFFICIENT_RESOURCES', `候选都挖完了，但有 ${stuck} 个掉落卡在高处（多半在树叶上）够不着，没捡到；天然树叶过一会儿会腐烂，掉下来后可以再捡`); }
+        const caught = (final.groundItems ?? []).filter(item => this.caught(task, final, item));
+        const stuck = caught.filter(item => item.position.y > final.position.y + 2).reduce((sum, item) => sum + item.stack.count, 0);
+        const hidden = caught.reduce((sum, item) => sum + item.stack.count, 0) - stuck;
+        if (stuck > 0) task.progress.stuckHigh = stuck;
+        if (hidden > 0) task.progress.stuckInLeaves = hidden;
+        if (stuck + hidden > 0) throw new BodyError('INSUFFICIENT_RESOURCES', `候选都挖完了，但有 ${stuck + hidden} 个掉落卡在高处的树叶上或被树叶挡住，敲过附近的树叶、也走近试过，还是没捡到；天然树叶过一会儿会腐烂，掉下来后可以再捡`);
         throw new BodyError('INSUFFICIENT_RESOURCES', '冻结候选已用完，实际拾取数量不足；未重新向外搜索');
       }
       this.finish(task, 'succeeded', task.progress.overage ? '目标已达到；原生一次拾取产生额外数量，已如实记录' : '实际原生拾取数量已达到明确目标');

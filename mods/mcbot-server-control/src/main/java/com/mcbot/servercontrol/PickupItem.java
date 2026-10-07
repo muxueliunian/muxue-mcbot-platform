@@ -23,6 +23,8 @@ final class PickupItem {
         default JsonObject navigationDetails(){return null;}
         default void validateCompanion() {}
         default boolean routeAllowed(Vec3 feet) {return true;}
+        /** The bound drop was discarded by vanilla merging into a nearby drop of the same item (not picked up by anyone). */
+        default boolean mergedAway() {return false;}
     }
     private final ControlSession.Operation operation;
     private final View view;
@@ -76,6 +78,7 @@ final class PickupItem {
             if(stolen)throw error("PICKUP_TAKEN","Another player picked up the bound drop");
             if(picked>0){operation.finish("succeeded","Native pickup attributed to this body",result(null));stop();return;}
             view.refresh();
+            if(identity!=null&&!view.available()&&view.mergedAway()) throw error("PICKUP_MERGED","Bound drop merged into another drop of the same item nearby; nothing was picked up");
             if(identity==null||!view.available()||view.identity()!=identity) throw error("PICKUP_UNKNOWN","Bound dropped entity disappeared or changed; no native pickup evidence");
             JsonObject actual=view.stack();
             if(!sameVariant(expected,actual)||!Objects.equals(expected.get("count"),actual.get("count")))throw error("STALE_ITEM","Bound dropped stack changed before pickup");
@@ -144,6 +147,12 @@ final class PickupItem {
             public Vec3 feet(){return body.position();}public float health(){return body.getHealth();}
             public Object identity(){return item==null?null:body.serverLevel().getEntity(uuid);}
             public boolean available(){return item!=null&&item.isAlive()&&!item.isRemoved()&&item.level()==body.serverLevel();}
+            public boolean mergedAway(){
+                if(item==null||item.getRemovalReason()!=net.minecraft.world.entity.Entity.RemovalReason.DISCARDED)return false;
+                // The merged-away stack is already empty: compare the survivors with the requested item instead.
+                JsonObject wanted=obj("id",string(operation.args,"expectedItem"),"components",object(operation.args,"expectedComponents"));
+                return !body.serverLevel().getEntitiesOfClass(ItemEntity.class,item.getBoundingBox().inflate(1.5),other->other!=item&&other.isAlive()&&!other.getItem().isEmpty()&&sameVariant(wanted,survival.stackValue(other.getItem()))).isEmpty();
+            }
             public boolean eligible(){return item.getTarget()==null||item.getTarget().equals(body.getUUID());}
             public JsonObject stack(){return survival.stackValue(item.getItem());}
             public Vec3 target(){return item==null?body.position():item.position();}

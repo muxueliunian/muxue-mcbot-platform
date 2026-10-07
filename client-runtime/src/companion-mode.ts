@@ -348,7 +348,7 @@ export class CompanionMode {
       const latest = await this.observe(epoch, this.intent!.context); this.ingestPickup(latest);
       if (child.status !== 'succeeded') {
         const code = (child.result as { code?: string } | undefined)?.code ?? (child.status === 'unknown' ? 'UNKNOWN' : 'STEP_FAILED');
-        if (!['COMPANION_OUT_OF_RANGE', 'TARGET_CONSUMED'].includes(code) || child.status === 'unknown') throw new BodyError(code, child.summary);
+        if (!['COMPANION_OUT_OF_RANGE', 'TARGET_CONSUMED', 'PICKUP_MERGED'].includes(code) || child.status === 'unknown') throw new BodyError(code, child.summary);
         this.identity(latest, this.intent!.player!, this.intent!.expectedEntityId);
         this.pickup!.state.lastCode = code;
       }

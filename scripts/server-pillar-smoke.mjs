@@ -3,7 +3,8 @@
 //   1. 一棵 9 节原木的树（顶上 4 层有树叶）：gather-resources 要 9 个原木，看它找到整棵树、站在原木上垫高砍完、再挖掉柱子下来，原木全拿到、树叶不动；
 //   2. 头顶 7 格悬空的一块石头：pillar-up 垫高、dig-block 挖掉、pillar-down 下来，泥土收回、圆石捡到；
 //   3. pillar-up 3 格再 pillar-down，回到原来的高度、方块一个不少；
-//   4. 仿 10-07 试玩那棵云杉：6 节树干被密树叶包住、只有下面两节看得见，扫描带里被挡住的原木也算同一棵树，整棵砍完。
+//   4. 仿 10-07 试玩那棵云杉：6 节树干被密树叶包住、只有下面两节看得见，扫描带里被挡住的原木也算同一棵树，整棵砍完；
+//   5. 两棵挨着的云杉（10-07 第四轮试玩）：要一棵树的量，只砍完一棵，另一棵不动。
 // 不启停服务器、不调用模型、不计算哈希。需要：隔离服开着、平坦世界、没装要求客户端的 Mod。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -115,8 +116,11 @@ try {
   check('站在柱子上用石镐挖掉了头顶的石头', !dug.error && dug.value.status === 'succeeded' && await isBlock([3404, Y + 8, 3404], 'minecraft:air'), dug.value);
   const back = await tool('pillar-down');
   await wait(1500);
+  // 圆石从 7 格高处落下带随机水平速度，可能落在柱子旁边一两格：没顺带碰到就用 collect-items 捡（pillar-down 只收柱子）。
+  if (await countItem('minecraft:cobblestone') === 0) report.runs.highDig.collected = (await settle(await tool('collect-items', { item: 'minecraft:cobblestone', count: 1, radius: 4 }))).value;
+  await wait(500);
   check('pillar-down 回到地面，泥土 16 个一个不少，圆石也捡到了', !back.error && back.value.recovered === 3 && Math.abs((await pos('ServerBot'))[1] - (Y + 1)) < 0.01 && await countItem('minecraft:dirt') === 16 && await countItem('minecraft:cobblestone') === 1,
-    { back: back.value, dirt: await countItem('minecraft:dirt'), cobblestone: await countItem('minecraft:cobblestone') });
+    { back: back.value, dirt: await countItem('minecraft:dirt'), cobblestone: await countItem('minecraft:cobblestone'), bot: await pos('ServerBot'), drops: await command('execute as @e[type=item,x=3404,y=204,z=3404,distance=..12] run data get entity @s Pos'), items: await command('execute as @e[type=item,x=3404,y=204,z=3404,distance=..12] run data get entity @s Item.id') });
 
   // 3. 手动垫高 3 格再下来
   await ground();
@@ -150,6 +154,24 @@ try {
   check('云杉整棵砍完：6 节都挖了，拿到的加上如实报告卡在树叶上的正好 6 个', spruceLeft.length === 0 && op.value.result?.minedBlocks === 6 && !op.value.result?.unreachable && spruceLogs + stuck === 6 && (op.value.status === 'succeeded' ? spruceLogs >= 6 : stuck > 0 && /卡在高处/.test(op.value.summary)), { spruceLeft, spruceLogs, stuck, status: op.value.status, summary: op.value.summary, result: op.value.result, logs: await countItem('minecraft:spruce_log'), drops: await command('execute as @e[type=item,x=3404,y=205,z=3404,distance=..12] run data get entity @s Pos'), bot: await pos('ServerBot') });
   let spruceColumn = 0; for (let y = Y + 1; y <= Y + 6; y++) if (!(await isBlock([3404, y, 3404], 'minecraft:air'))) spruceColumn++;
   check('云杉那一列没有留下垫脚方块，柱子都收回了', spruceColumn === 0 && (op.value.result?.pillarRecovered ?? 0) === (op.value.result?.pillarPlaced ?? 0), { spruceColumn, result: op.value.result });
+  // 5. 两棵挨着的云杉（树干相距 3 格，树叶连在一起）：要 7 个原木，只砍完西边那一棵，东边那棵一节不动
+  await ground();
+  const west = Array.from({ length: 7 }, (_, i) => [3403, Y + 1 + i, 3404]), east = Array.from({ length: 7 }, (_, i) => [3406, Y + 1 + i, 3404]);
+  await fixture(`fill 3401 ${Y + 4} 3402 3408 ${Y + 7} 3406 spruce_leaves[persistent=true]`);
+  await fixture(`fill 3402 ${Y + 8} 3403 3407 ${Y + 8} 3405 spruce_leaves[persistent=true]`);
+  for (const p of [...west, ...east]) await fixture(`setblock ${p.join(' ')} spruce_log`);
+  await command('clear ServerBot');
+  await command(`tp ServerBot 3400.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
+  const pair = await tool('discover-resources', { blockIds: ['#minecraft:logs'], radius: 8, maxResults: 32 });
+  check('两棵树的 14 节原木都找到了', !pair.error && pair.value.candidates?.length === 14, pair.value.candidates?.map(c => [c.position.x, c.position.y]));
+  op = await settle(await tool('gather-resources', { resourceRef: pair.value.resourceRef, item: 'minecraft:spruce_log', count: 7, timeoutMs: 120000 }));
+  report.runs.twoTrees = op.value;
+  const westLeft = [], eastLeft = [];
+  for (const p of west) if (await isBlock(p, 'minecraft:spruce_log')) westLeft.push(p[1]);
+  for (const p of east) if (await isBlock(p, 'minecraft:spruce_log')) eastLeft.push(p[1]);
+  check('先开砍的那棵整棵砍完，另一棵一节都没动', (westLeft.length === 0 && eastLeft.length === 7) || (eastLeft.length === 0 && westLeft.length === 7), { westLeft, eastLeft, status: op.value.status, summary: op.value.summary, result: op.value.result });
+  const pairLogs = await countItem('minecraft:spruce_log'), pairStuck = (op.value.result?.stuckHigh ?? 0) + (op.value.result?.stuckInLeaves ?? 0);
+  check('7 个原木：拿到的加上如实报告卡住的正好 7 个，柱子收回', pairLogs + pairStuck === 7 && (op.value.result?.pillarRecovered ?? 0) === (op.value.result?.pillarPlaced ?? 0), { pairLogs, pairStuck, result: op.value.result });
   report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.error = redact(error.stack || error.message); process.exitCode = 1; console.error(report.error);

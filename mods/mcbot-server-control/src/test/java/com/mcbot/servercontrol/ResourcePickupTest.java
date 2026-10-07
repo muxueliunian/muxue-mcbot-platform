@@ -16,7 +16,7 @@ final class ResourcePickupTest {
     private static final class View implements PickupItem.View {
         final AtomicLong time=new AtomicLong();Object entity=new Object();
         JsonObject stack=ResourcePickupTest.stack(4,64);Vec3 feet=new Vec3(0.5,1,0.5),target=new Vec3(4.5,1,0.5),input;
-        boolean live=true,safe=true,lease=true,eligible=true,planExpires;float health=20;int moves,plans;
+        boolean live=true,safe=true,lease=true,eligible=true,planExpires,merged;float health=20;int moves,plans;
         Predicate<Vec3> reachOverride;List<Vec3> routeOverride;
         public boolean mayDrive(){return lease;}public void refresh(){}
         public Vec3 feet(){return feet;}public float health(){return health;}
@@ -25,6 +25,7 @@ final class ResourcePickupTest {
         public boolean safe(Vec3 from,Vec3 to){return safe;}public boolean inReach(Vec3 feet){return reachOverride!=null?reachOverride.test(feet):feet.distanceTo(target)<1.2;}
         public List<Vec3> plan(){plans++;if(planExpires)lease=false;return routeOverride!=null?routeOverride:List.of(new Vec3(1.5,1,0.5),new Vec3(2.5,1,0.5),new Vec3(3.5,1,0.5));}
         public void move(Vec3 delta){input=delta;moves++;}public void stop(){input=null;}
+        public boolean mergedAway(){return merged;}
     }
     private record Fixture(View view,ControlSession.Operation operation,PickupItem pickup) {
         Fixture(){this(new View());}
@@ -83,6 +84,8 @@ final class ResourcePickupTest {
         check(normal.operation.status.equals("succeeded")&&normal.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==4&&normal.view.input==null,"matching native Post confirms pickup even after entity discard");
         Fixture absent=new Fixture();absent.view.live=false;absent.failure("PICKUP_UNKNOWN");
         check(absent.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==0&&absent.operation.result.getAsJsonObject().get("pickup").getAsString().equals("unconfirmed"),"unknown disappearance never counts as received");
+        Fixture merged=new Fixture();merged.view.live=false;merged.view.merged=true;merged.failure("PICKUP_MERGED");
+        check(merged.operation.result.getAsJsonObject().get("pickedUpCount").getAsInt()==0,"a drop merged into a neighbour is a plain failure with nothing picked, not an unknown outcome");
         Fixture other=new Fixture();other.pickup.picked(other.view.entity,false,stack(4,64),4,null);other.failure("PICKUP_TAKEN");
         Fixture replacement=new Fixture();replacement.view.entity=new Object();replacement.failure("PICKUP_UNKNOWN");
         Fixture changed=new Fixture();changed.view.stack=stack(3,64);changed.failure("STALE_ITEM");

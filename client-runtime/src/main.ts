@@ -15,6 +15,7 @@ import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop } from './action-stop.js';
 import { BodyError, type Body } from './body.js';
+import { PlaceBook } from './places.js';
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: {
@@ -92,6 +93,8 @@ async function main(): Promise<void> {
       : await ClientBody.connect({ ...shared, connection: await readConnection(values['connection-file']) });
     if (closing) { await body.close(); return; }
     events = new EventJournal(values.hosted ? runtimeDir : undefined, values.username, values['bot-players']!.split(',').filter(Boolean), lease?.chatCursor);
+    const places = new PlaceBook(runtimeDir, values['world-id']);
+    events.useHome(() => places.home());
     events.ingest(await body.observe());
     const gather = new GatherTasks(body, events);
     if (body.hello.capabilities.includes('follow-companion')) companion = new CompanionMode(body, events, gather);
@@ -104,7 +107,7 @@ async function main(): Promise<void> {
       return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
     } }) : undefined;
     if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
-    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent });
+    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent, places });
     monitor = new RuntimeMonitor(body, events, {
       ...(values.hosted ? { heartbeatFile } : {}),
       companion,

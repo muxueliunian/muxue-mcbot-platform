@@ -52,6 +52,9 @@ export function summarizeOperation(operation: Operation) {
     // Interaction receipts: the adapter's own facts (e.g. a pot's status) and what was gained are what the model acts on next.
     if (result.summary && typeof result.summary === 'object' && !Array.isArray(result.summary) && JSON.stringify(result.summary).length <= 2000) compact.summary = result.summary;
     if (Array.isArray(result.gained)) compact.gained = result.gained.slice(0, 16);
+    // Workstation and travel receipts: what is missing, what changed, where the table/furnace is, where the body got to.
+    for (const key of ['missing', 'inventoryChange', 'table', 'placedTable', 'furnace', 'skipped', 'position'])
+      if (result[key] && typeof result[key] === 'object' && JSON.stringify(result[key]).length <= 2000) compact[key] = result[key];
     if (result.container) compact.container = summarizeContainer(result.container as Container);
     if (Array.isArray(result.inventory)) compact.inventoryChanged = true;
     if (Array.isArray(result.items)) compact.items = result.items.slice(0, 64).map(value => {

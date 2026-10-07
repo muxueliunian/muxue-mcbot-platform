@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Observation, Operation } from './body.js';
 import { summarizeOperation } from './model-view.js';
+import type { Place } from './places.js';
 
 export interface GameEvent { session: string; seq: number; timestamp: number; type: string; text: string; operationId?: string }
 /** Companion-compatible journal; each runtime process has its own cursor generation. */
@@ -23,6 +24,8 @@ export class EventJournal {
   private tracedOperations = new Set<string>();
   private sleepers?: Set<string>;
   private asleep?: boolean;
+  private home?: () => Place | undefined;
+  private bedtimeSent = false;
   constructor(runtimeDir?: string, private readonly username?: string, private readonly botPlayers: string[] = [], private readonly attachmentChatCursor?: number) {
     if (!runtimeDir || !username) return;
     fs.mkdirSync(runtimeDir, { recursive: true });
@@ -109,6 +112,20 @@ export class EventJournal {
     }
     this.chatCursor = Math.max(this.chatCursor ?? 0, observation.chatCursor);
     this.ingestSleep(observation);
+    this.ingestBedtime(observation);
+  }
+  /** Where home is (a remembered place named home or 家), for the bedtime nudge. */
+  useHome(home: () => Place | undefined): void { this.home = home; }
+  /** Once per night, when beds work and the body is awake near home: wake the model so it can go to bed. */
+  private ingestBedtime(observation: Observation): void {
+    if (!observation.time?.canSleep) { this.bedtimeSent = false; return; }
+    if (this.bedtimeSent || observation.sleeping) return;
+    const home = this.home?.();
+    if (!home || home.dimension !== observation.dimension) return;
+    const distance = Math.hypot(home.position.x - observation.position.x, home.position.z - observation.position.z);
+    if (distance > 32 || Math.abs(home.position.y - observation.position.y) > 12) return;
+    this.bedtimeSent = true;
+    this.add('bedtime', `天黑了，你在家附近（离「${home.name}」约 ${Math.round(distance)} 格）。可以用 sleep-in-bed 去床上睡；正陪着玩家时先说一声，或等玩家上床再一起睡。`);
   }
   /** A nearby player getting into bed, and the body getting up (morning, damage, wake-up), wake the model. */
   private ingestSleep(observation: Observation): void {

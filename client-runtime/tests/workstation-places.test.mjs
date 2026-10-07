@@ -1,0 +1,84 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { ServerBody } from '../dist/server-body.js';
+import { createMcpServer } from '../dist/mcp.js';
+import { EventJournal } from '../dist/events.js';
+import { PlaceBook } from '../dist/places.js';
+import { mockServerControl, serverCapabilities } from './mock-server-control.mjs';
+import { observation } from './mock-control.mjs';
+
+const extra = ['craft-item', 'smelt-item', 'travel-to'];
+async function setup(t, capabilities = extra) {
+  const mock = await mockServerControl(); t.after(() => mock.close());
+  const hello = mock.handlers.hello;
+  mock.handlers.hello = () => ({ ...hello(), capabilities: [...serverCapabilities, ...capabilities] });
+  const body = await ServerBody.connect({ connection: mock.connection, username: 'ServerBot', worldId: 'test-world', heartbeatIntervalMs: 60000 });
+  t.after(() => body.close());
+  return { body, mock, acts: () => mock.calls.filter(call => call.method === 'act').map(call => call.params) };
+}
+async function client(t, body, options = {}) {
+  const server = createMcpServer(body, new EventJournal(), options);
+  const [left, right] = InMemoryTransport.createLinkedPair(), c = new Client({ name: 'workstation-test', version: '1' });
+  await server.connect(left); await c.connect(right); t.after(async () => { await c.close(); await server.close(); });
+  return c;
+}
+const call = async (c, name, args = {}) => JSON.parse((await c.callTool({ name, arguments: args })).content[0].text);
+
+test('craft, smelt and place tools are published only with their capabilities', async t => {
+  const { body } = await setup(t);
+  const names = (await (await client(t, body)).listTools()).tools.map(tool => tool.name);
+  for (const name of ['craft-item', 'smelt-item', 'travel-to', 'remember-place', 'list-places', 'forget-place', 'go-to-place']) assert.ok(names.includes(name), name);
+  const { body: old } = await setup(t, []);
+  const oldNames = (await (await client(t, old)).listTools()).tools.map(tool => tool.name);
+  for (const name of ['craft-item', 'smelt-item', 'travel-to', 'go-to-place']) assert.ok(!oldNames.includes(name), name);
+});
+
+test('craft-item and smelt-item forward only their own arguments; malformed ones never reach the server', async t => {
+  const { body, acts } = await setup(t);
+  const c = await client(t, body);
+  await call(c, 'craft-item', { item: 'minecraft:stick', count: 4 });
+  await call(c, 'smelt-item', { input: 'minecraft:raw_iron', count: 3, fuel: 'minecraft:coal' });
+  assert.deepEqual(acts().map(act => [act.name, act.args]), [['craft-item', { item: 'minecraft:stick', count: 4 }], ['smelt-item', { input: 'minecraft:raw_iron', count: 3, fuel: 'minecraft:coal' }]]);
+  await assert.rejects(body.act('craft-item', { item: 'minecraft:stick', count: 0 }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('smelt-item', { input: 'minecraft:raw_iron', count: 65 }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('travel-to', { x: 1, z: 2, extra: true }), { code: 'INVALID_ARGUMENT' });
+  assert.equal(acts().length, 2);
+});
+
+test('places are remembered per world in the runtime directory and go-to-place walks there with travel-to', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'places-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { body, acts } = await setup(t);
+  const places = new PlaceBook(dir, 'test-world');
+  const c = await client(t, body, { places });
+  const saved = await call(c, 'remember-place', { name: 'Home', x: 10, y: 64, z: -5 });
+  assert.equal(saved.saved.name, 'Home');
+  assert.equal(new PlaceBook(dir, 'test-world').get('home').position.x, 10, 'written to disk and found case-insensitively');
+  assert.equal(new PlaceBook(dir, 'other-world').get('home'), undefined, 'another world has its own list');
+  assert.equal((await call(c, 'list-places')).length, 1);
+  await call(c, 'go-to-place', { name: 'home' });
+  assert.deepEqual(acts().map(act => [act.name, act.args]), [['travel-to', { x: 10, y: 64, z: -5, tolerance: 1.5 }]]);
+  assert.equal((await call(c, 'go-to-place', { name: 'mine' })).code, 'NOT_FOUND');
+  assert.deepEqual(await call(c, 'forget-place', { name: 'HOME' }), { removed: true });
+});
+
+test('bedtime wakes the model once a night when the body is near home', () => {
+  const events = new EventJournal(undefined, 'ServerBot');
+  let home = { name: '家', dimension: 'minecraft:overworld', position: { x: 0, y: 64, z: 0 }, savedAt: 0 };
+  events.useHome(() => home);
+  const seen = overrides => events.ingest(observation({ username: 'ServerBot', dimension: 'minecraft:overworld', ...overrides }));
+  seen({ time: { dayTime: 6000, canSleep: false }, position: { x: 3, y: 64, z: 0 } });
+  seen({ time: { dayTime: 13000, canSleep: true }, position: { x: 3, y: 64, z: 0 } });
+  seen({ time: { dayTime: 13100, canSleep: true }, position: { x: 3, y: 64, z: 0 } });
+  assert.equal(events.since(0).filter(e => e.type === 'bedtime').length, 1, 'once per night');
+  seen({ time: { dayTime: 1000, canSleep: false }, position: { x: 3, y: 64, z: 0 } });
+  seen({ time: { dayTime: 13000, canSleep: true }, position: { x: 100, y: 64, z: 0 } });
+  assert.equal(events.since(0).filter(e => e.type === 'bedtime').length, 1, 'not when far from home');
+  seen({ time: { dayTime: 13050, canSleep: true }, position: { x: 2, y: 64, z: 2 } });
+  assert.equal(events.since(0).filter(e => e.type === 'bedtime').length, 2, 'the next night near home again');
+  home = undefined;
+});

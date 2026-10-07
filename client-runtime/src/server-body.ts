@@ -81,7 +81,7 @@ interface ServerOptions {
   onLease?: (lease: ServerLease) => void | Promise<void>;
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
-const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up', 'sleep-in-bed', 'wake-up'];
+const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up', 'sleep-in-bed', 'wake-up', 'craft-item', 'smelt-item', 'travel-to'];
 const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION', 'COMPANION_PROTECTED', 'COMPANION_MINING_CONFLICT', 'GAME_PAUSED']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
@@ -374,6 +374,9 @@ export class ServerBody implements Body {
       'pillar-up': z.object({ ...guardedStack, expectedCount: z.number().int().positive() }).strict(),
       'sleep-in-bed': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }).strict(),
       'wake-up': z.object({}).strict(),
+      'craft-item': z.object({ item: identifier, count: z.number().int().min(1).max(256).optional(), timeoutMs: z.number().int().min(1000).max(120000).optional() }).strict(),
+      'smelt-item': z.object({ input: identifier.optional(), count: z.number().int().min(1).max(64).optional(), fuel: identifier.optional(), wait: z.boolean().optional(), furnace: z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int() }).strict().optional(), timeoutMs: z.number().int().min(1000).max(900000).optional() }).strict(),
+      'travel-to': z.object({ x: z.number().finite(), y: z.number().finite().optional(), z: z.number().finite(), tolerance: z.number().min(1).max(8).optional(), timeoutMs: z.number().int().min(5000).max(900000).optional() }).strict(),
       'drop-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, count: z.number().int().min(1).max(64), recipient: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), expectedEntityId: z.string().uuid().optional() }).refine(args => (args.recipient === undefined) === (args.expectedEntityId === undefined)),
     };
     const face = z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(), interaction = z.string().refine(id => this.hello.interactions?.includes(id) ?? false);

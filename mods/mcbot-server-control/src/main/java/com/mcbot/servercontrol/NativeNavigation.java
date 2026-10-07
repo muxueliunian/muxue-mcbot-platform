@@ -74,7 +74,7 @@ final class NativeNavigation {
         Vec3 feet=body.position();long now=clock();
         if(!allowed.test(feet))throw error("OUT_OF_REACH","Navigation left its authorized region");
         if(body.onGround()&&goal.test(feet)){
-            body.stopInput();route=null;replans=0;progress=replanAnchor=feet;lastProgress=now;arrivedThisTick=true;return true;
+            body.stopInput();route=null;replans=0;progress=replanAnchor=feet;lastProgress=now;arrivedThisTick=true;doors.arrived();return true;
         }
         if(feet.distanceToSqr(progress)>0.09){progress=feet;lastProgress=now;}
         // Real progress since the last replan earns the finite replan budget back.
@@ -102,6 +102,7 @@ final class NativeNavigation {
         }
         Vec3 next=route.get(index);
         if(!allowed.test(next))throw error("OUT_OF_REACH","Next navigation node left its authorized region");
+        if(doors.tick(feet,route,index))return false;
         if(index>0&&leap(route.get(index-1),next))leap(feet,route.get(index-1),next);
         else{backing=false;steer(feet,next);}
         return false;
@@ -156,12 +157,12 @@ final class NativeNavigation {
     private void ensureModel(){
         if(model==null||model.level()!=body.level()){
             model=new Zombie(EntityType.ZOMBIE,body.level());
-            // The body never swims, wades through powder snow or opens doors on its own.
+            // The body never swims or wades through powder snow. Wooden doors are opened by hand on the way (doors()).
             model.setPathfindingMalus(PathType.WATER,-1);model.setPathfindingMalus(PathType.WATER_BORDER,8);
             model.setPathfindingMalus(PathType.DANGER_FIRE,-1);model.setPathfindingMalus(PathType.DAMAGE_FIRE,-1);
             model.setPathfindingMalus(PathType.DANGER_POWDER_SNOW,-1);model.setPathfindingMalus(PathType.POWDER_SNOW,-1);
             model.setPathfindingMalus(PathType.DANGER_OTHER,-1);model.setPathfindingMalus(PathType.DAMAGE_OTHER,-1);
-            evaluator=new RouteEvaluator();evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(false);evaluator.setCanFloat(false);
+            evaluator=new RouteEvaluator();evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(true);evaluator.setCanFloat(false);
         }
     }
     /**
@@ -236,9 +237,13 @@ final class NativeNavigation {
         route=null;lastPlan=now;
     }
     void stop(){stopped=true;route=null;body.stopInput();}
+    private final NavigationDoors doors=new NavigationDoors(this::bodyRef);
+    private BodyPlayer bodyRef(){return body;}
+    /** The caller decided the walk is over: shut the doors opened on the way that the body is out of. */
+    void closeDoorsBehind(){doors.arrived();}
     private static JsonObject point(Vec3 p){return p==null?null:obj("x",p.x,"y",p.y,"z",p.z);}
     JsonObject diagnostics(){return obj("planner","vanilla-walk","plans",plans,"obstacleReplans",totalReplans,"routePoints",routePoints,"visitedLimit",visitedLimit,
-        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,"leaps",leaps,
+        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,"leaps",leaps,"doorsOpened",doors.opened,"doorsClosed",doors.closed,
         "next",route!=null&&index<route.size()?point(route.get(index)):null,"feet",point(body.position()),"motion",point(body.getDeltaMovement()),
         "onGround",body.onGround(),"stage",route==null?"planning":body.onGround()?"walk":"air");}
 

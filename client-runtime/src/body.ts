@@ -105,6 +105,9 @@ export interface ActionArguments {
   'pillar-up': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components };
   'sleep-in-bed': { player?: string; timeoutMs?: number };
   'wake-up': Record<string, never>;
+  'craft-item': { item: string; count?: number; timeoutMs?: number };
+  'smelt-item': { input?: string; count?: number; fuel?: string; wait?: boolean; furnace?: Position; timeoutMs?: number };
+  'travel-to': { x: number; y?: number; z: number; tolerance?: number; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';

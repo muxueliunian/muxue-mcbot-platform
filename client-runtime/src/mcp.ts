@@ -11,6 +11,7 @@ import { createActionStop } from './action-stop.js';
 import { PillarTasks } from './pillar.js';
 import { interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
+import { PlaceBook } from './places.js';
 
 const coordinate = z.coerce.number().finite();
 const xyz = { x: coordinate, y: coordinate, z: coordinate };
@@ -19,7 +20,7 @@ const registryId = z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('Na
 const resourceSelector = z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('A block ID (minecraft:oak_log, biomesoplenty:fir_log) or a block tag (#minecraft:logs, #c:ores, #c:ores/iron, #c:stones)');
 const timeoutMs = z.number().int().min(500).max(120000).optional();
 /** chatFloor: ServerBody claim chatCursor; chat at or before it predates this control and is withheld from the model. */
-export function createMcpServer(body: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: () => Promise<{ stopped: true }> } = {}): McpServer {
+export function createMcpServer(body: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: () => Promise<{ stopped: true }>; places?: PlaceBook } = {}): McpServer {
   const server = new McpServer({ name: 'mcbot-client-runtime', version: '0.1.0' });
   const serverObserved = body.hello.backend === 'server';
   const tasks = options.tasks ?? new ContainerTasks(body, Date.now, operation => events.deliverOperation(operation));
@@ -170,6 +171,62 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
       return operationResult(await body.act('sleep-in-bed', args));
     });
     register('wake-up', 'Get out of bed now. Succeeds when already awake.', {}, async () => operationResult(await body.act('wake-up', {})));
+  }
+  const idleBody = () => { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); };
+  /** Wait a little for an action that usually ends quickly; a longer one stays running and its result arrives as a task event. */
+  const settle = async (operation: import('./body.js').Operation, ms: number) => {
+    const end = Date.now() + ms;
+    while (operation.status === 'running' && Date.now() < end) { await new Promise(resolve => setTimeout(resolve, 250)); operation = await body.operation(operation.operationId); }
+    return operation;
+  };
+  if (serverObserved && body.hello.capabilities.includes('craft-item')) {
+    register('craft-item', 'Craft an item from the inventory with any ordinary shaped or shapeless recipe, like a player: uses the own 2x2 grid when the recipe fits, otherwise walks to a crafting table within 16 blocks (or puts one down from the inventory). Ingredients come only from plain stacks (no names, enchantments or damage). count is the number of items wanted (rounded up to whole crafts). When materials are short it crafts what it can and lists missing: each ingredient\'s options, need and have; tell the player what is missing instead of guessing. Result shows inventoryChange (gained/used).', {
+      item: registryId, count: z.number().int().min(1).max(256).default(1), say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(1000).max(120000).optional(),
+    }, async ({ say, ...args }) => {
+      idleBody(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await settle(await body.act('craft-item', args), 40000));
+    });
+  }
+  if (serverObserved && body.hello.capabilities.includes('smelt-item')) {
+    register('smelt-item', 'Use a furnace, smoker or blast furnace within 16 blocks that can cook the input: walk there, take out any finished output, put in count input items and enough fuel (fuel: one item ID, or automatically coal/charcoal, then planks, logs, sticks; never the input), then close. Each item takes 10 s in a furnace, 5 s in a smoker or blast furnace. wait:true stands by the furnace until done and collects the output (running; the result arrives as a task event; stop-action ends it early). Without input it only collects finished output (come back later). furnace picks a specific one. NO_FUEL and MISSING_MATERIALS say what is missing.', {
+      input: registryId.optional(), count: z.number().int().min(1).max(64).optional(), fuel: registryId.optional(), wait: z.boolean().optional(),
+      furnace: z.object(blockXyz).optional(), say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(1000).max(900000).optional(),
+    }, async ({ say, ...args }) => {
+      idleBody(); if (say) await body.act('send-chat', { message: say });
+      const operation = await body.act('smelt-item', args);
+      return operationResult(args.wait ? operation : await settle(operation, 40000));
+    });
+  }
+  if (serverObserved && body.hello.capabilities.includes('travel-to')) {
+    const places = options.places ?? new PlaceBook();
+    const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {
+      idleBody();
+      if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' });
+      if (extra.say) await body.act('send-chat', { message: extra.say });
+      return operationResult(await body.act('travel-to', { ...target, ...(extra.tolerance !== undefined ? { tolerance: extra.tolerance } : {}), ...(extra.timeoutMs !== undefined ? { timeoutMs: extra.timeoutMs } : {}) }));
+    };
+    const walk = { tolerance: z.number().min(1).max(8).optional(), timeoutMs: z.number().int().min(5000).max(900000).optional(), say: z.string().min(1).max(256).optional() };
+    register('travel-to', 'Walk a long way (up to 2000 blocks) to a point, leg by leg over the surface; chunks load as the body goes. Opens and closes wooden doors on the way, never digs or swims. Pauses companion mode first (resume it after). running: the result (arrived, or how far it got) arrives as a task event; stop-action ends it.', { x: coordinate, y: coordinate.optional(), z: coordinate, ...walk }, async ({ x, y, z: zz, ...extra }) => travel({ x, z: zz, ...(y !== undefined ? { y } : {}) }, extra));
+    register('remember-place', 'Remember a named spot in this world for later (home/家, mine entrance, farm). Defaults to where you stand; player uses where that player stands; or give x/y/z. The same name overwrites. A place named home or 家 also makes you get a bedtime event at night when you are near it.', {
+      name: z.string().min(1).max(32), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), x: coordinate.optional(), y: coordinate.optional(), z: coordinate.optional(), note: z.string().max(120).optional(),
+    }, async ({ name, player, x, y, z: zz, note }) => {
+      const state = await body.observe();
+      let position = state.position;
+      if (x !== undefined && y !== undefined && zz !== undefined) position = { x, y, z: zz };
+      else if (player) { const found = state.entities.find(entity => entity.type === 'minecraft:player' && entity.name === player); if (!found) throw new BodyError('PLAYER_NOT_VISIBLE', `附近看不到 ${player}`); position = found.position; }
+      return { saved: places.set({ name, dimension: state.dimension, position, ...(note ? { note } : {}) }) };
+    });
+    register('list-places', 'List remembered places with their distance from you.', {}, async () => {
+      const state = await body.observe();
+      return places.list().map(place => ({ ...place, ...(place.dimension === state.dimension ? { distance: Math.round(Math.hypot(place.position.x - state.position.x, place.position.z - state.position.z)) } : { otherDimension: true }) }));
+    });
+    register('forget-place', 'Forget a remembered place.', { name: z.string().min(1).max(32) }, async ({ name }) => ({ removed: places.remove(name) }));
+    register('go-to-place', 'Walk to a remembered place (travel-to its position). Same dimension only.', { name: z.string().min(1).max(32), ...walk }, async ({ name, ...extra }) => {
+      const place = places.get(name);
+      if (!place) throw new BodyError('NOT_FOUND', `没有记过「${name}」，先 remember-place`);
+      if (place.dimension !== (await body.observe()).dimension) throw new BodyError('OTHER_DIMENSION', `「${place.name}」在 ${place.dimension}`);
+      return travel(place.position, { tolerance: 1.5, ...extra });
+    });
   }
   if (serverObserved && body.hello.capabilities.includes('nearby-blocks')) {
     if (body.hello.capabilities.includes('approach-container')) register('approach-container', 'Walk to a discovered container using its short-lived local reference and bounded safe routes on loaded level ground. Replacement or expiration fails. running requires polling get-operation.', { containerRef: z.string().uuid(), timeoutMs }, async ({ containerRef, timeoutMs }) => operationResult(await tasks.approachContainer(containerRef, timeoutMs)));

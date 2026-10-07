@@ -296,7 +296,7 @@ export class ServerBody implements Body {
     this.assertActive();
     if (!this.hello.capabilities.includes('nearby-resources')) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
     if (options.companionMiningGuard && !this.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '游戏端未声明持续陪挖的玩家保护能力');
-    const parsed = z.object({ blockIds: z.array(z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).min(1).max(8), radius: z.number().int().min(1).max(16), maxResults: z.number().int().min(1).max(64), center: position.optional(),
+    const parsed = z.object({ blockIds: z.array(z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).min(1).max(8), radius: z.number().int().min(1).max(16), maxResults: z.number().int().min(1).max(64), center: position.optional(), wholeTree: z.boolean().optional(),
       companionMiningGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().int().min(3).max(4) }).strict().optional(),
     }).strict().refine(value => !value.companionMiningGuard || value.center === undefined && value.radius <= value.companionMiningGuard.maxDistance).safeParse(options);
     if (!parsed.success) throw new BodyError('INVALID_ARGUMENT', '资源扫描范围或陪挖玩家守卫无效；陪挖中心必须由服务端确定');
@@ -304,7 +304,7 @@ export class ServerBody implements Body {
     const revision = this.revision;
     try {
       const value = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation, center: position,
-        candidates: z.array(z.object({ position, id: identifier, kind: z.enum(['log', 'ore', 'stone']), drops: z.array(z.object({ item: identifier, preference: z.enum(['any', 'silk_touch', 'no_silk_touch']), least: z.number().int().min(0) })).max(16), properties: components, targetToken: z.string().uuid(), distance: z.number().nonnegative(), visible: z.boolean(), requiresCorrectTool: z.boolean(), suitableToolSlots: z.array(z.number().int().min(0).max(8)), recommendedToolSlot: z.number().int().min(0).max(8).optional(), recommendedInventorySlot: z.number().int().min(0).max(35).optional() })).max(64), truncated: z.boolean().optional(), budget: z.unknown().optional(),
+        candidates: z.array(z.object({ position, id: identifier, kind: z.enum(['log', 'ore', 'stone']), drops: z.array(z.object({ item: identifier, preference: z.enum(['any', 'silk_touch', 'no_silk_touch']), least: z.number().int().min(0) })).max(16), properties: components, targetToken: z.string().uuid(), distance: z.number().nonnegative(), visible: z.boolean(), requiresCorrectTool: z.boolean(), suitableToolSlots: z.array(z.number().int().min(0).max(8)), recommendedToolSlot: z.number().int().min(0).max(8).optional(), recommendedInventorySlot: z.number().int().min(0).max(35).optional(), tree: z.number().int().min(0).optional() })).max(256), truncated: z.boolean().optional(), budget: z.unknown().optional(), wholeTree: z.boolean().optional(),
       }).parse(await this.rpc('nearby-resources', { ...this.identity(), ...args }));
       this.assertActive(); if (revision === this.revision) this.checkGeneration(value.controlGeneration);
       if (value.instanceId !== this.lease!.instanceId || value.sessionId !== this.lease!.sessionId || value.worldId !== this.options.worldId) throw new BodyError('WORLD_CHANGED', '资源观察不属于当前身体会话');

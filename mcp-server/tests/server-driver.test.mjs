@@ -56,7 +56,7 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
     const args=parseArgs(['--agent',agent,'--body','server','--server-check-seconds','1']);assert.equal(args.serverCheckSeconds,0);
     assert.match(startupPrompt(args,true),/ServerBody/);assert.doesNotMatch(startupPrompt(args,true),/调用 memory-context 读记忆|会自动进服|会被自动下线/);
     assert.match(startupPrompt(args,true),/components/);assert.match(startupPrompt(args,true),/revision/);assert.match(startupPrompt(args,true),/不自动复活/);
-    assert.match(startupPrompt(args,true),/discover-containers → fetch-and-give/);assert.match(startupPrompt(args,true),/details:true/);
+    assert.match(startupPrompt(args,true),/discover-containers → fetch-and-give/);assert.match(startupPrompt(args,true),/wholeTree:true/);assert.match(startupPrompt(args,true),/details:true/);
     assert.doesNotMatch(startupPrompt(args,true),/每轮先查询当前状态|完整复制状态与 components/);
     assert.equal(bodySessionScope(args,['--world-id','a','--connection-file','x']).body,'server');
   }

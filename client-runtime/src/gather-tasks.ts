@@ -7,7 +7,7 @@ import { pillarBlockCount, pillarDown, pillarUp, type PillarBlock, type PillarHo
 import type { SurvivalPolicy } from './survival-reflexes.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
-type Request = { resourceRef?: string; item: string; count?: number; stacks?: number; radius?: number; say?: string; maxSteps?: number; timeoutMs?: number };
+type Request = { resourceRef?: string; item: string; count?: number; stacks?: number; wholeTree?: boolean; radius?: number; say?: string; maxSteps?: number; timeoutMs?: number };
 type Name = 'gather-resources' | 'collect-items';
 export interface BorrowedOwner { taskToken: string; context: Context; center: Position; companionGuard: CompanionGuard; check: () => void }
 export interface BorrowedPickup extends BorrowedOwner { entityId: string; source: GroundItem; priorPicked: (state: Observation) => number }
@@ -15,8 +15,8 @@ export interface BorrowedMining extends BorrowedOwner { kind: 'mining'; candidat
 type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 const MINING_DROP_MARGIN = 1.5;
-type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
-type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number; stuckInLeaves?: number; trees?: number; leavesCleared?: number; climb?: 'step' | 'corner' | 'spiral'; spiralSteps?: number; spiralStop?: string };
+type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number; wholeTree: boolean };
+type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number; stuckInLeaves?: number; trees?: number; wholeTree?: boolean; leavesCleared?: number; climb?: 'step' | 'corner' | 'spiral'; spiralSteps?: number; spiralStop?: string };
 type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number; trees?: Map<string, number>; focusTree?: number; pillarDebt?: number; footing?: Set<string>; pickedMark?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
@@ -40,13 +40,15 @@ const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:voi
 // Modded leaves are named the same way (biomesoplenty:fir_leaves).
 const isLeaves = (id: string | undefined) => !!id && /^[a-z0-9_.-]+:[a-z0-9_/]*leaves$/.test(id);
 const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
-/** Each block takes several native steps (tool, dig, leaves, stepping, pillar up and back down, pickup): about eight per item asked for, 64 to 256. */
-const stepBudget = (request: { count?: number; stacks?: number }) => request.stacks !== undefined ? 256 : Math.min(256, Math.max(64, (request.count ?? 0) * 8));
+/** Each block takes several native steps (tool, dig, leaves, stepping, pillar up and back down, pickup): about eight per item asked for, 64 to 256 (a whole tree up to 1024). */
+const stepBudget = (request: { count?: number; stacks?: number; wholeTree?: boolean }) => request.stacks !== undefined ? 256 : Math.min(request.wholeTree ? 1024 : 256, Math.max(64, (request.count ?? 0) * 8));
 const samePosition = (a: Position, b: Position) => a.x === b.x && a.y === b.y && a.z === b.z;
 const nearest = (list: Candidate[], feet: Position) => [...list].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
 /** Log candidates touching one another (also diagonally: branches, 2x2 trunks) are one tree. */
 function treesOf(candidates: Candidate[]): Map<string, number> {
   const logs = candidates.filter(candidate => candidate.kind === 'log' && candidate.targetToken), tree = new Map<string, number>();
+  // The server groups slanted trunks and branches past a gap in the leaves with their trunk (TreeScan): use that when given.
+  if (logs.length && logs.every(log => log.tree !== undefined)) { for (const log of logs) tree.set(log.targetToken, log.tree!); return tree; }
   let next = 0;
   for (const seed of logs) {
     if (tree.has(seed.targetToken!)) continue;
@@ -79,14 +81,20 @@ export class GatherTasks {
     this.finish(this.active, 'cancelled', '用户已叫停，旧采集不恢复', 'CANCELLED');
     if (!this.active.borrowed) this.body.releaseTask?.(this.active.taskToken); this.active = undefined;
   }
-  async discover(options: { blockIds: string[]; radius: number; maxResults: number }): Promise<unknown> {
+  async discover(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position; wholeTree?: boolean }): Promise<unknown> {
     if (!this.body.nearbyResources) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
     const epoch = this.epoch;
     const scan = await this.body.nearbyResources(options);
     if (epoch !== this.epoch) throw new BodyError('CANCELLED', '叫停前资源观察已丢弃');
     const resourceRef = randomUUID();
-    this.references.set(resourceRef, { context: contextOf(scan), expires: this.now() + 30000, scan, radius: options.radius });
+    this.references.set(resourceRef, { context: contextOf(scan), expires: this.now() + 30000, scan, radius: options.radius, wholeTree: !!options.wholeTree && scan.wholeTree === true });
     if (this.references.size > 32) this.references.delete(this.references.keys().next().value!);
+    if (options.wholeTree) {
+      // A whole tree has up to 256 logs: a count per tree, not every candidate, keeps the reply short.
+      const logs = scan.candidates;
+      return { resourceRef, center: scan.center, wholeTree: true, logs: logs.length, drops: logs[0]?.drops, lowest: logs[0]?.position, highest: logs.reduce<Position | undefined>((top, log) => !top || log.position.y > top.y ? log.position : top, undefined), truncated: scan.truncated,
+        limitation: logs.length ? '这是离 center 最近的那一整棵树（斜着长的、隔着树叶的树枝也算进来，旁边另一棵扎根的树不算）。gather-resources 传 wholeTree:true、不填数量，就砍完这一棵、捡完掉落。' : '附近没找到这种原木，换个 center 或范围再找，或者问玩家是哪棵。' };
+    }
     return { resourceRef, center: scan.center, candidates: scan.candidates.map(({ targetToken: _private, properties: _properties, ...item }) => item), truncated: scan.truncated,
       limitation: '只限本次已加载、可见的原木、矿石、石料候选（按方块标签认，模组的也算：#minecraft:logs、#c:ores、#c:stones）和固定区域；drops 是按服务器掉落表算出的可能产物，矿石只取普通产物（不支持精准采集矿石块），实际数量以原生拾取回执为准。不能识别人工建筑。引用30秒内提交；不补扫扩展候选，不挖路或搭桥。' };
   }
@@ -185,18 +193,28 @@ export class GatherTasks {
     while (this.operations.get(accepted.operationId)?.status === 'running') { owner.check(); await new Promise(resolve => setTimeout(resolve, 50)); }
     owner.check(); return this.operation(accepted.operationId)!;
   }
-  async start(name: Name, request: Request): Promise<Operation> { return this.startOwned(name, request); }
+  async start(name: Name, request: Request): Promise<Operation> {
+    if (!request.wholeTree) return this.startOwned(name, request);
+    // The whole tree: every log of the frozen tree, its drops all picked up; the goal is that count, not a guess.
+    const ref = this.references.get(request.resourceRef ?? '');
+    if (name !== 'gather-resources' || request.count !== undefined || request.stacks !== undefined) throw new BodyError('INVALID_ARGUMENT', 'wholeTree 只用于 gather-resources，不再填 count／stacks');
+    if (!ref || ref.expires <= this.now()) throw new BodyError('STALE_REFERENCE', '资源引用过期，请重新观察授权区域');
+    if (!ref.wholeTree) throw new BodyError('INVALID_ARGUMENT', 'wholeTree 要用 discover-resources wholeTree:true 找到的那棵树');
+    const logs = ref.scan.candidates.filter(candidate => dropOf(candidate, request.item));
+    if (!logs.length) throw new BodyError('UNSUPPORTED', `这棵树的原木掉不出 ${request.item}`);
+    return this.startOwned(name, { ...request, count: logs.length * Math.max(1, Math.min(...logs.map(log => dropOf(log, request.item)!.least))) });
+  }
   private async startOwned(name: Name, request: Request, borrowed?: Borrowed): Promise<Operation> {
     this.validate(request, !!borrowed); this.assertIdle();
     if (!this.body.acquireTask || !this.body.releaseTask) throw new BodyError('UNSUPPORTED', '有限任务需要共享身体写锁');
     borrowed?.check();
     const id = randomUUID(), epoch = this.epoch;
     if (!borrowed) this.body.acquireTask(id);
-    const progress: Progress = { stage: 'starting', item: request.item, requestedCount: request.count, requestedStacks: request.stacks, targetCount: request.count, pickedUpCount: 0, overage: 0, minedBlocks: 0, steps: 0, maxSteps: request.maxSteps ?? stepBudget(request), pickup: 'native-confirmed', quantity: 'newly-picked', totalNativePickedUpCount: 0, unexpectedPickedUpCount: 0, items: [] };
+    const progress: Progress = { ...(request.wholeTree ? { wholeTree: true } : {}), stage: 'starting', item: request.item, requestedCount: request.count, requestedStacks: request.stacks, targetCount: request.count, pickedUpCount: 0, overage: 0, minedBlocks: 0, steps: 0, maxSteps: request.maxSteps ?? stepBudget(request), pickup: 'native-confirmed', quantity: 'newly-picked', totalNativePickedUpCount: 0, unexpectedPickedUpCount: 0, items: [] };
     let task: Active | undefined;
     try {
       // Reserve synchronously even while the initial read or chat acknowledgement is in flight.
-      task = { id, taskToken: borrowed?.taskToken ?? id, borrowed, name, epoch, context: {}, center: { x: 0, y: 0, z: 0 }, radius: request.radius ?? 4, deadline: this.now() + (request.timeoutMs ?? 60000), cursor: 0, allowed: new Set(), collectedEntities: new Map(), request, progress } as Active;
+      task = { id, taskToken: borrowed?.taskToken ?? id, borrowed, name, epoch, context: {}, center: { x: 0, y: 0, z: 0 }, radius: request.radius ?? 4, deadline: this.now() + (request.timeoutMs ?? (request.wholeTree ? 300000 : 60000)), cursor: 0, allowed: new Set(), collectedEntities: new Map(), request, progress } as Active;
       if (miningOwner(borrowed)) { task.deadline = Math.min(task.deadline, borrowed.deadline); delete progress.requestedCount; delete progress.targetCount; progress.limitation = '单块原生破坏与本子任务新拾取分开确认；物品掉落归属未确认，不预测产量。'; }
       this.active = task;
       const state = await this.body.observe(); this.check(task);
@@ -219,6 +237,8 @@ export class GatherTasks {
           if (!ref || ref.expires <= this.now()) throw new BodyError('STALE_REFERENCE', '资源引用过期，请重新观察授权区域');
           if (!isDeepStrictEqual(ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
           task.center = ref.scan.center; task.radius = ref.radius; candidates = structuredClone(ref.scan.candidates);
+          // A whole tree reaches past the scan radius (a slanted trunk, long branches): its drops are inside the goal too.
+          if (ref.wholeTree) task.radius = Math.max(task.radius, ...candidates.map(candidate => Math.ceil(Math.hypot(candidate.position.x + 0.5 - task!.center.x, candidate.position.z + 0.5 - task!.center.z)) + 1));
         }
         const compatible = candidates.filter(candidate => dropPreference(candidate, request.item) !== undefined);
         if (candidates.length > 0 && compatible.length === 0) throw new BodyError('UNSUPPORTED', `冻结资源候选都掉不出 ${request.item}（可能的掉落：${[...new Set(candidates.flatMap(candidate => candidate.drops.map(drop => drop.item)))].join('、') || '无'}；矿石块要精准采集，暂不支持），未开挖`);

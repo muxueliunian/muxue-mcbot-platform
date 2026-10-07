@@ -7,7 +7,7 @@ export interface ItemValue { id: string; count: number; components?: Components;
 export interface ItemStack extends ItemValue { slot: number; source?: 'container' | 'player' | 'unknown'; playerSlot?: number; active?: boolean; mayPickup?: boolean }
 export interface GroundItem { entityId: string; position: Position; stack: ItemValue; onGround?: boolean; visible?: boolean | null; visibility: 'visible' | 'occluded' | 'unknown' }
 export interface CompanionGuard { player: string; expectedEntityId: string; maxDistance: number }
-export interface ResourceScanOptions { blockIds: string[]; radius: number; maxResults: number; center?: Position; companionMiningGuard?: CompanionGuard }
+export interface ResourceScanOptions { blockIds: string[]; radius: number; maxResults: number; center?: Position; wholeTree?: boolean; companionMiningGuard?: CompanionGuard }
 export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string; /** A carried mod storage (e.g. a backpack) took the items instead of the inventory. */ storedIn?: string }
 /** What a resource block is, by block tags (modded ones too). */
 export type ResourceKind = 'log' | 'ore' | 'stone';
@@ -15,8 +15,8 @@ export type ResourceKind = 'log' | 'ore' | 'stone';
 export interface ResourceDrop { item: string; preference: 'any' | 'silk_touch' | 'no_silk_touch'; least: number }
 export interface NearbyResources {
   instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number; center: Position;
-  candidates: Array<{ position: Position; id: string; kind: ResourceKind; drops: ResourceDrop[]; properties: Components; targetToken: string; distance: number; visible: boolean; requiresCorrectTool: boolean; suitableToolSlots: number[]; recommendedToolSlot?: number; recommendedInventorySlot?: number }>;
-  truncated?: boolean; budget?: unknown;
+  candidates: Array<{ position: Position; id: string; kind: ResourceKind; drops: ResourceDrop[]; properties: Components; targetToken: string; distance: number; visible: boolean; requiresCorrectTool: boolean; suitableToolSlots: number[]; recommendedToolSlot?: number; recommendedInventorySlot?: number; tree?: number }>;
+  truncated?: boolean; budget?: unknown; wholeTree?: boolean;
 }
 export interface NearbyBlocks {
   instanceId: string; sessionId: string; worldId: string; dimension: string; controlGeneration: number;

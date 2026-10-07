@@ -65,7 +65,11 @@ final class NearbyResources {
             if(found.size()>options.maxResults())break;
             // Logs high in a tree are usually hidden behind the trunk or leaves from the ground: dig time checks the real line of sight.
             try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry);
-                if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){if(mining==null&&ResourceCatalog.kind(match.state())==ResourceCatalog.Kind.LOG)hidden.add(match);else rejected++;continue;}}
+                if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){
+                    // A log seen only through leaves (a spruce wrapped in its crown) is a target too: gathering breaks the leaves first.
+                    boolean log=mining==null&&ResourceCatalog.kind(match.state())==ResourceCatalog.Kind.LOG;
+                    if(log&&geometry.blockVisibleThroughLeaves(match.position()))tree.add(match.position());
+                    else {if(log)hidden.add(match);else rejected++;continue;}}}
             catch(Protocol.Error unsafe){if(unsafe.code.equals("PATH_BUDGET")){exhausted=true;break;}rejected++;continue;}
             found.add(match);
         }

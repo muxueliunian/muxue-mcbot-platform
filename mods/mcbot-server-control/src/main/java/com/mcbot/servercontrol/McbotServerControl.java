@@ -43,6 +43,11 @@ public final class McbotServerControl {
             controller=new ServerController(event.getServer(),config);
             bridge=new LocalHttpBridge(directory,config,event.getServer()::execute,controller::call);
             fixture=CommandFileFixture.start(server);
+        } catch(java.net.BindException e) {
+            // Another world (a singleplayer client with this mod, a second server) already holds the port:
+            // the game keeps running without local control rather than refusing to start.
+            if(controller!=null) controller.close(); controller=null;
+            LOGGER.error("MCBOT local server control is off: port in use, set another port in config/mcbot-server-control/server.json ({})",e.getMessage());
         } catch(IOException|RuntimeException e) {
             controller=null;
             throw new IllegalStateException("MCBOT local server control could not start (check server.json or port)",e);

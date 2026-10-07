@@ -399,7 +399,10 @@ final class ServerController implements ControlSession.Game {
             ResourceTargets.Target resource=active.name.equals("approach-resource")?resources.require(player,string(active.args,"targetToken")):null;
             BlockPos pos=resource!=null?resource.position():targets.require(player,string(active.args,"targetToken")).position();
             miningGuard=resource==null?null:resource.miningGuard();
-            destination=Vec3.atCenterOf(pos);goal=feet->geometry.containerReach(feet,pos);
+            destination=Vec3.atCenterOf(pos);
+            // A log may be reached through leaves (the gathering task breaks them before digging); ores and containers need a clear line.
+            boolean log=resource!=null&&resource.miningGuard()==null&&ResourceCatalog.kind(resource.state())==ResourceCatalog.Kind.LOG;
+            goal=log?feet->geometry.reachThroughLeaves(feet,pos):feet->geometry.containerReach(feet,pos);
         } else {
             ServerPlayer actual=findPlayer(string(active.args,"player"));
             if(actual!=approachPlayer)throw error("STALE_TARGET","Recipient entity changed or left local range/dimension");

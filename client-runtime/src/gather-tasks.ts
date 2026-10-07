@@ -16,8 +16,8 @@ type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
-type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number; stuckInLeaves?: number; trees?: number };
-type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number; trees?: Map<string, number>; focusTree?: number; pillarDebt?: number };
+type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number; stuckInLeaves?: number; trees?: number; leavesCleared?: number; climb?: 'step' | 'corner' | 'spiral'; spiralSteps?: number; spiralStop?: string };
+type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number; trees?: Map<string, number>; focusTree?: number; pillarDebt?: number; footing?: Set<string>; pickedMark?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
 type Candidate = NearbyResources['candidates'][number];
@@ -40,6 +40,7 @@ const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:voi
 // Modded leaves are named the same way (biomesoplenty:fir_leaves).
 const isLeaves = (id: string | undefined) => !!id && /^[a-z0-9_.-]+:[a-z0-9_/]*leaves$/.test(id);
 const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
+const samePosition = (a: Position, b: Position) => a.x === b.x && a.y === b.y && a.z === b.z;
 const nearest = (list: Candidate[], feet: Position) => [...list].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
 /** Log candidates touching one another (also diagonally: branches, 2x2 trunks) are one tree. */
 function treesOf(candidates: Candidate[]): Map<string, number> {
@@ -65,7 +66,7 @@ export class GatherTasks {
   private epoch = 0;
   private survival?: SurvivalTasks;
   private survivalPolicy?: () => SurvivalPolicy & { armed: boolean; revision: number };
-  constructor(private readonly body: Body, private readonly events: EventJournal, private readonly now = Date.now) {}
+  constructor(private readonly body: Body, private readonly events: EventJournal, private readonly now = Date.now, private readonly random = Math.random) {}
   useSurvival(tasks: SurvivalTasks, policy: () => SurvivalPolicy & { armed: boolean; revision: number }): void { this.survival = tasks; this.survivalPolicy = policy; }
   operation(id: string): Operation | undefined { const op = this.operations.get(id); return op && structuredClone(op); }
   assertIdle(): void { if (this.active) throw new BodyError('BUSY', '有限采集任务正在运行，请先完成或叫停'); }
@@ -117,7 +118,9 @@ export class GatherTasks {
     // The catalog scans block cells from 2 below to 4 above the centre; drops may spawn inside their outer half-cell.
     // A whole tree reaches above that band: up to its highest frozen log (plus the drop's spawn cell).
     const dy = position.y - Math.floor(task.center.y), top = Math.max(5, (task.top ?? -Infinity) - Math.floor(task.center.y) + 2);
-    return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + 0.75 && dy >= -3 && dy <= top;
+    // Logs cut high up throw their drops a block or two further out than the trunk stands.
+    const margin = task.top !== undefined && task.top > Math.floor(task.center.y) + 4 ? 2 : 0.75;
+    return Math.hypot(position.x - (Math.floor(task.center.x) + 0.5), position.z - (Math.floor(task.center.z) + 0.5)) <= task.radius + margin && dy >= -3 && dy <= top;
   }
   private done(task: Active): boolean { return !miningOwner(task.borrowed) && task.progress.targetCount !== undefined && (task.progress.pickedUpCount ?? 0) >= task.progress.targetCount; }
   private capacity(task: Active, state: Observation): void {
@@ -453,36 +456,72 @@ export class GatherTasks {
     const tree = task.trees?.get(candidate.targetToken ?? '');
     if (tree !== undefined) task.focusTree = tree;
   }
-  /** Blocks dug since the last pickup already cover the rest of the goal at the item's least native yield per block. */
+  /**
+   * Blocks dug since the last pickup pass already cover the rest of the goal at the item's least native yield per
+   * block. Measured from the count at that pass: drops of these blocks picked up on the way (falling onto the body
+   * up a trunk) or standing in the pillar (they come back when it is dug out) are part of the same blocks.
+   */
   private covered(task: Active, pending: number): boolean {
     const target = task.progress.targetCount;
-    // Gathered items standing in the pillar come back when it is dug out: they are not missing.
-    return target === undefined ? pending >= 1 : pending * (task.least ?? 1) >= target - (task.progress.pickedUpCount ?? 0) - (task.pillarDebt ?? 0);
+    return target === undefined ? pending >= 1 : pending * (task.least ?? 1) >= target - (task.pickedMark ?? task.progress.pickedUpCount ?? 0);
   }
+  private mark(task: Active): void { task.pickedMark = task.progress.pickedUpCount ?? 0; }
   /**
    * Dig every frozen candidate reachable from where the body stands, nearest first, until the dug blocks
    * cover the goal. A block the native reach or line-of-sight check refuses is skipped from this spot.
    */
-  private async digReachable(task: Active, remaining: Candidate[], skipped: Set<string>, already: number, strict = false): Promise<number> {
+  private async digReachable(task: Active, remaining: Candidate[], skipped: Set<string>, already: number, strict = false, ground = false): Promise<number> {
     let dug = 0;
     for (;;) {
       if (this.done(task) || already + dug > 0 && this.covered(task, already + dug)) return dug;
-      let state = await this.observe(task);
-      const feet = state.position;
-      const candidate = remaining.filter(next => !skipped.has(next.targetToken) && inReach(feet, next.position) && this.inFocus(task, remaining, next, strict))
+      const feet = (await this.observe(task)).position;
+      // From the ground a tall tree is left whole: it is climbed from its own stump (climbTree), not cut from the bottom up.
+      const candidate = remaining.filter(next => !skipped.has(next.targetToken) && !task.footing?.has(next.targetToken) && next.position.y >= feetLevel(feet) && inReach(feet, next.position) && this.inFocus(task, remaining, next, strict) && !(ground && this.tall(task, remaining, next)))
         .sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
       if (!candidate) return dug;
       this.focus(task, candidate);
-      state = await this.prepareFor(task, candidate, state);
+      if (!(await this.digLog(task, remaining, candidate))) { skipped.add(candidate.targetToken); continue; }
+      dug++;
+    }
+  }
+  /**
+   * Prepare the tool and dig one candidate. Leaves between the eyes and a log are broken first when the native
+   * line-of-sight check refuses it (a trunk inside a spruce crown). False: still refused from here, nothing dug.
+   */
+  private async digLog(task: Active, remaining: Candidate[], candidate: Candidate): Promise<boolean> {
+    for (let attempt = 0; ; attempt++) {
+      await this.prepareFor(task, candidate, await this.observe(task));
       task.progress.stage = 'digging';
       try {
         await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+        remaining.splice(remaining.indexOf(candidate), 1); return true;
       } catch (error) {
-        if (error instanceof BodyError && reachRefusals.has(error.code)) { skipped.add(candidate.targetToken); continue; }
-        throw error;
+        if (!(error instanceof BodyError && reachRefusals.has(error.code))) throw error;
+        if (error.code !== 'NO_LINE_OF_SIGHT' || candidate.kind !== 'log' || attempt >= 3 || await this.clearSight(task, candidate.position) === 0) return false;
       }
-      remaining.splice(remaining.indexOf(candidate), 1); dug++;
     }
+  }
+  /** Break the leaves in reach on the line from the eyes to a block, nearest first. Returns how many were broken. */
+  private async clearSight(task: Active, target: Position): Promise<number> {
+    const state = await this.observe(task), feet = state.position;
+    const eye = { x: feet.x, y: feet.y + EYE, z: feet.z }, to = { x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 };
+    const length = Math.hypot(to.x - eye.x, to.y - eye.y, to.z - eye.z), cells: Position[] = [];
+    for (let d = 0.2; d < length; d += 0.2) {
+      const t = d / length, at = { x: Math.floor(eye.x + (to.x - eye.x) * t), y: Math.floor(eye.y + (to.y - eye.y) * t), z: Math.floor(eye.z + (to.z - eye.z) * t) };
+      if (!samePosition(at, target) && !cells.some(cell => samePosition(cell, at))) cells.push(at);
+    }
+    let broke = 0;
+    for (const at of cells) {
+      if (!inReach(feet, at)) continue;
+      const cell = await this.cell(task, at);
+      if (!isLeaves(cell?.id)) continue;
+      task.progress.stage = 'clearing-leaves';
+      try { await this.digLeaf(task, at, cell!); }
+      catch (error) { if (error instanceof BodyError && reachRefusals.has(error.code)) continue; throw error; }
+      broke++;
+    }
+    if (broke) task.progress.leavesCleared = (task.progress.leavesCleared ?? 0) + broke;
+    return broke;
   }
   private climbable(): boolean { return ['pillar-up', 'move-to-position', 'swap-inventory'].every(cap => this.body.hello.capabilities.includes(cap)); }
   private async cell(task: Active, position: Position): Promise<{ id?: string; properties?: Record<string, unknown> } | undefined> {
@@ -512,15 +551,22 @@ export class GatherTasks {
     }
     return undefined;
   }
-  /** Room to rise one block: the cell above the head is open, or leaves in the way are broken (and not gathered). */
+  /**
+   * Room to rise one block: every cell above the head that the body's box overlaps (standing off-centre it
+   * overlaps a neighbouring column, and a jump into leaves there lands again before the block is placed) is
+   * open, or the leaves in the way are broken (and not gathered).
+   */
   private async headroom(task: Active, feet: Position): Promise<boolean> {
-    const above = { x: Math.floor(feet.x), y: feetLevel(feet) + 2, z: Math.floor(feet.z) };
-    const cell = await this.cell(task, above);
-    if (!cell) return false;
-    if (openCells.has(cell.id ?? '')) return true;
-    if (!isLeaves(cell.id)) return false;
-    task.progress.stage = 'clearing-leaves';
-    await this.digLeaf(task, above, cell);
+    const span = (v: number) => [...new Set([Math.floor(v - 0.3), Math.floor(v + 0.3)])];
+    for (const x of span(feet.x)) for (const z of span(feet.z)) {
+      const above = { x, y: feetLevel(feet) + 2, z };
+      const cell = await this.cell(task, above);
+      if (!cell) return false;
+      if (openCells.has(cell.id ?? '')) continue;
+      if (!isLeaves(cell.id)) return false;
+      task.progress.stage = 'clearing-leaves';
+      await this.digLeaf(task, above, cell);
+    }
     return true;
   }
   /**
@@ -563,26 +609,40 @@ export class GatherTasks {
    * column) is above. Coming down digs the pillar back out top first, also after an early stop, unless
    * the task was halted. Returns the candidates dug, whose drops still need collecting.
    */
-  private async climb(task: Active, remaining: Candidate[], target: Candidate): Promise<number> {
-    task.progress.stage = 'finding-pillar-spot';
-    const spot = await this.pillarSpot(task, target);
-    if (!spot) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; return 0; }
-    task.progress.stage = 'walking-to-pillar-spot';
-    await this.step(task, 'move-to-position', { x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5, tolerance: 0.3, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
+  private async climb(task: Active, remaining: Candidate[], target: Candidate, standing?: Position, already = 0): Promise<number> {
+    let spot = standing;
+    if (!spot) {
+      task.progress.stage = 'finding-pillar-spot';
+      spot = await this.pillarSpot(task, target);
+      if (!spot) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; return 0; }
+      task.progress.stage = 'walking-to-pillar-spot';
+      await this.step(task, 'move-to-position', { x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5, tolerance: 0.3, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
+    }
+    const column = spot;
     const purpose: PillarPurpose = target.kind === 'log' ? 'log' : 'other';
     const host = this.pillarHost(task), placed: PillarBlock[] = [];
     let dug = 0, failure: unknown;
     try {
       for (;;) {
-        dug += await this.digReachable(task, remaining, new Set(), dug, true);
-        if (this.done(task) || dug > 0 && this.covered(task, dug) || placed.length >= MAX_PILLAR) break;
+        dug += await this.digReachable(task, remaining, new Set(), already + dug, true);
+        if (this.done(task) || already + dug > 0 && this.covered(task, already + dug) || placed.length >= MAX_PILLAR) break;
         const state = await this.observe(task), level = feetLevel(state.position);
-        const above = remaining.filter(next => next.position.y > level && Math.hypot(next.position.x - spot.x, next.position.z - spot.z) <= CLIMB_SPREAD && this.inFocus(task, remaining, next, true));
+        const above = remaining.filter(next => next.position.y > level && Math.hypot(next.position.x - column.x, next.position.z - column.z) <= CLIMB_SPREAD && this.inFocus(task, remaining, next, true));
         if (above.length === 0) break;
         if (pillarBlockCount(state, purpose) === 0) { task.progress.limitation = '背包里没有能垫脚的方块，够不着的部分没有砍／挖'; break; }
-        if (!(await this.headroom(task, state.position))) break;
+        if (!(await this.headroom(task, state.position))) { task.progress.limitation = '头顶被树叶以外的方块挡住，没法再垫高'; break; }
         task.progress.stage = 'pillaring-up';
-        const block = await pillarUp(host, purpose);
+        let block: PillarBlock;
+        try { block = await pillarUp(host, purpose); }
+        catch (error) {
+          // The jump bumped into something and landed again (nothing was placed): clear above once more and retry once,
+          // otherwise come down with what was cut rather than fail the whole goal.
+          if (!(error instanceof BodyError && ['FORBIDDEN', 'BLOCKED'].includes(error.code))) throw error;
+          const again = await this.observe(task);
+          if (!(await this.headroom(task, again.position))) { task.progress.limitation = '垫高时被卡住，换不出头顶空间；已砍的部分照常收'; break; }
+          try { block = await pillarUp(host, purpose); }
+          catch (retry) { if (retry instanceof BodyError && ['FORBIDDEN', 'BLOCKED'].includes(retry.code)) { task.progress.limitation = `垫高时被卡住（${retry.message}）；已砍的部分照常收`; break; } throw retry; }
+        }
         placed.push(block); task.progress.pillarPlaced = (task.progress.pillarPlaced ?? 0) + 1;
         // Standing on a gathered log spends it; digging the pillar back out picks it up again.
         if (block.item === task.request.item) { task.progress.pickedUpCount = (task.progress.pickedUpCount ?? 0) - 1; task.pillarDebt = (task.pillarDebt ?? 0) + 1; }
@@ -593,7 +653,187 @@ export class GatherTasks {
       for (const block of [...placed].reverse()) { await pillarDown(host, block); task.progress.pillarRecovered = (task.progress.pillarRecovered ?? 0) + 1; if (block.item === task.request.item) task.pillarDebt = Math.max(0, (task.pillarDebt ?? 0) - 1); }
     }
     if (failure) throw failure;
+    if (already + dug === 0 && remaining.includes(target)) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; }
+    return dug;
+  }
+  /** A tree whose remaining logs rise CLIMB_ABOVE or more above its lowest one: climbed from its stump rather than cut from the ground. */
+  private tall(task: Active, remaining: Candidate[], candidate: Candidate): boolean {
+    if (candidate.kind !== 'log' || miningOwner(task.borrowed) || !this.climbable()) return false;
+    const tree = task.trees?.get(candidate.targetToken ?? '');
+    if (tree === undefined) return false;
+    const ys = remaining.filter(other => task.trees!.get(other.targetToken ?? '') === tree).map(other => other.position.y);
+    return Math.max(...ys) - Math.min(...ys) >= CLIMB_ABOVE;
+  }
+  /**
+   * Cut a tall tree the way a player does: from beside its lowest log, cut the two logs above it and step onto
+   * that stump, then cut upward (rising on a pillar in the trunk's own column when the rest is out of reach);
+   * the stump is cut last on the way down. A 2x2 trunk is either climbed the same way from one corner, or
+   * spiralled up (each step cuts the next column above the last one and stands on it), picked at random.
+   * Falls back to a pillar beside the trunk when the stump is not at the feet level.
+   */
+  private async climbTree(task: Active, remaining: Candidate[], target: Candidate): Promise<number> {
+    const tree = task.trees!.get(target.targetToken!)!;
+    task.focusTree = tree;
+    const logs = remaining.filter(other => task.trees!.get(other.targetToken ?? '') === tree);
+    const bottom = Math.min(...logs.map(log => log.position.y)), base = logs.filter(log => log.position.y === bottom);
+    let state = await this.observe(task);
+    const first = nearest(base, state.position);
+    task.progress.stage = 'approaching-tree';
+    try {
+      // Right beside the stump, so the logs above it are in reach; approach-resource stops as soon as one is.
+      let side = await this.besideSpot(task, first.position, state.position, false);
+      if (!side) {
+        // Wrapped in leaves (a spruce): get within reach first, then break the leaves where the body will stand.
+        await this.step(task, 'approach-resource', { targetToken: first.targetToken, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
+        state = await this.observe(task);
+        side = await this.besideSpot(task, first.position, state.position, true);
+        for (const at of side ? [side, { ...side, y: side.y + 1 }] : []) {
+          const cell = await this.cell(task, at);
+          if (isLeaves(cell?.id) && inReach(state.position, at)) { task.progress.stage = 'clearing-leaves'; await this.digLeaf(task, at, cell!); task.progress.leavesCleared = (task.progress.leavesCleared ?? 0) + 1; }
+        }
+      }
+      if (side) await this.step(task, 'move-to-position', { x: side.x + 0.5, y: side.y, z: side.z + 0.5, tolerance: 0.5, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
+    } catch (error) { if (error instanceof BodyError && !haltCodes.has(error.code) && !unknownCodes.has(error.code)) return this.climb(task, remaining, target); throw error; }
+    state = await this.observe(task);
+    if (feetLevel(state.position) !== bottom) return this.climb(task, remaining, target);
+    const xs = new Set(base.map(log => log.position.x)), zs = new Set(base.map(log => log.position.z));
+    const square = base.length === 4 && xs.size === 2 && zs.size === 2 && Math.max(...xs) - Math.min(...xs) === 1 && Math.max(...zs) - Math.min(...zs) === 1;
+    const spiral = square && this.random() < 0.5;
+    // How the tree was first taken on; the rest of it, if any is left for later, does not change that.
+    task.progress.climb ??= spiral ? 'spiral' : square ? 'corner' : 'step';
+    let dug = 0;
+    try {
+      if (spiral) {
+        // Columns in order around the trunk, starting with the nearest one: each is next to the one before.
+        const cx = Math.min(...xs) + 1, cz = Math.min(...zs) + 1;
+        const ring = [...base].sort((a, b) => Math.atan2(a.position.z + 0.5 - cz, a.position.x + 0.5 - cx) - Math.atan2(b.position.z + 0.5 - cz, b.position.x + 0.5 - cx));
+        const start = ring.indexOf(first);
+        dug = await this.spiral(task, remaining, [...ring.slice(start), ...ring.slice(0, start)].map(log => ({ x: log.position.x, z: log.position.z })), bottom);
+      } else {
+        const column = { x: first.position.x, z: first.position.z };
+        task.footing = new Set([first.targetToken!]);
+        const stepped = await this.stepOnto(task, remaining, column, bottom);
+        if (stepped === undefined) { task.footing = undefined; return this.climb(task, remaining, target); }
+        dug = stepped.dug;
+        if (stepped.standing && !this.done(task) && !this.covered(task, dug)) dug += await this.climb(task, remaining, target, { x: column.x, y: bottom + 1, z: column.z }, dug);
+        task.footing = undefined;
+        // The stump last, standing on it: the body drops back to the ground.
+        if (stepped.standing && remaining.includes(first) && !this.done(task) && await this.digUnder(task, remaining, first)) dug++;
+      }
+    } finally { task.footing = undefined; }
     if (dug === 0 && remaining.includes(target)) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; }
+    return dug;
+  }
+  /**
+   * From feet level `level`, stand on the block of `column` at that level: clear the two cells above it (logs of
+   * the goal are cut and counted, leaves broken) and the cell above the head for the jump; then step onto it. Undefined when something else is in the way (nothing to do from here);
+   * standing false when the goal was covered before stepping.
+   */
+  private async stepOnto(task: Active, remaining: Candidate[], column: { x: number; z: number }, level: number): Promise<{ dug: number; standing: boolean } | undefined> {
+    let dug = 0;
+    const state = await this.observe(task);
+    const cells = [{ x: Math.floor(state.position.x), y: level + 2, z: Math.floor(state.position.z) }, { x: column.x, y: level + 1, z: column.z }, { x: column.x, y: level + 2, z: column.z }];
+    for (const at of cells) {
+      const cleared = await this.clearCell(task, remaining, at);
+      if (cleared === undefined) return dug ? { dug, standing: false } : undefined;
+      dug += cleared;
+    }
+    if (this.done(task) || dug > 0 && this.covered(task, dug)) return { dug, standing: false };
+    await this.landed(task);
+    const footing = await this.cell(task, { x: column.x, y: level, z: column.z });
+    if (!footing?.id || openCells.has(footing.id) || isLeaves(footing.id)) return dug ? { dug, standing: false } : undefined;
+    task.progress.stage = 'stepping-up';
+    try { await this.step(task, 'move-to-position', { x: column.x + 0.5, y: level + 1, z: column.z + 0.5, tolerance: 0.3, timeoutMs: Math.min(10000, Math.max(500, task.deadline - this.now())) }); }
+    catch (error) { if (error instanceof BodyError && (haltCodes.has(error.code) || unknownCodes.has(error.code))) throw error; return dug ? { dug, standing: false } : undefined; }
+    const now = await this.observe(task);
+    return { dug, standing: feetLevel(now.position) === level + 1 && Math.floor(now.position.x) === column.x && Math.floor(now.position.z) === column.z };
+  }
+  /** An open cell next to a block at its level, with a floor and head room (or leaves there, to break), nearest first. */
+  private async besideSpot(task: Active, block: Position, feet: Position, leaves: boolean): Promise<Position | undefined> {
+    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => ({ x: block.x + dx, y: block.y, z: block.z + dz }))
+      .sort((a, b) => Math.hypot(a.x + 0.5 - feet.x, a.z + 0.5 - feet.z) - Math.hypot(b.x + 0.5 - feet.x, b.z + 0.5 - feet.z));
+    for (const side of sides) {
+      const [floor, body, head] = [await this.cell(task, { ...side, y: side.y - 1 }), await this.cell(task, side), await this.cell(task, { ...side, y: side.y + 1 })];
+      if (!floor?.id || openCells.has(floor.id) || isLeaves(floor.id) || /lava|water|magma|cactus|fire|powder_snow/.test(floor.id)) continue;
+      const room = (id?: string) => !!id && (openCells.has(id) || leaves && isLeaves(id));
+      if (!room(body?.id) || !room(head?.id)) continue;
+      return side;
+    }
+    return undefined;
+  }
+  /** Wait (bounded) until the body stands still on a block: navigation only starts from supported ground. */
+  private async landed(task: Active): Promise<Position> {
+    let last: Position | undefined, still = 0;
+    for (let i = 0; i < 60; i++) {
+      const at = (await this.observe(task)).position;
+      still = last && samePosition(at, last) && Math.abs(at.y - Math.round(at.y)) < 0.01 ? still + 1 : 0;
+      if (still >= 3) return at;
+      last = at; await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return last!;
+  }
+  /** Make one cell passable: open already (0), leaves broken (0), a candidate log cut (1); undefined for anything else. */
+  private async clearCell(task: Active, remaining: Candidate[], at: Position): Promise<number | undefined> {
+    const cell = await this.cell(task, at);
+    if (!cell?.id) return undefined;
+    if (openCells.has(cell.id)) return 0;
+    if (isLeaves(cell.id)) { task.progress.stage = 'clearing-leaves'; await this.digLeaf(task, at, cell); task.progress.leavesCleared = (task.progress.leavesCleared ?? 0) + 1; return 0; }
+    const log = remaining.find(candidate => samePosition(candidate.position, at));
+    return log && await this.digLog(task, remaining, log) ? 1 : undefined;
+  }
+  /**
+   * Cut the log the body stands on in the trunk it climbed and wait to land below it. Resource digs never go below
+   * the feet plane (native rule), so it is dug like a pillar block coming down: the same block, checked by its state.
+   */
+  private async digUnder(task: Active, remaining: Candidate[], candidate: Candidate, force = false): Promise<boolean> {
+    const state = await this.observe(task);
+    if (!samePosition(candidate.position, { x: Math.floor(state.position.x), y: feetLevel(state.position) - 1, z: Math.floor(state.position.z) })) return false;
+    await this.pillarTool(task, candidate.position, candidate.id);
+    task.progress.stage = 'digging-down';
+    await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) }, force);
+    remaining.splice(remaining.indexOf(candidate), 1); task.progress.minedBlocks++;
+    this.remember(task, 'running', '原生方块挖除已确认；拾取仍按独立收据核验');
+    for (let i = 0; i < 60; i++) {
+      const state = await this.observe(task);
+      if (state.position.y <= candidate.position.y + 0.01 && feetLevel(state.position) <= candidate.position.y) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return true;
+  }
+  /**
+   * Spiral up a 2x2 trunk: from each column step onto the next one a block higher, cutting the logs in the way,
+   * until there is no log left to step onto (the top) or the goal is covered; then cut what is in reach and come
+   * down the column, cutting the log under the feet and what is in reach at each level.
+   */
+  private async spiral(task: Active, remaining: Candidate[], ring: Array<{ x: number; z: number }>, bottom: number): Promise<number> {
+    let dug = 0, level = bottom;
+    for (let i = 0; i < MAX_PILLAR; i++) {
+      if (this.done(task) || dug > 0 && this.covered(task, dug)) break;
+      const column = ring[i % ring.length];
+      const under = remaining.find(candidate => samePosition(candidate.position, { x: column.x, y: level, z: column.z }));
+      if (!under) break;
+      task.footing = new Set([under.targetToken!]);
+      const stepped = await this.stepOnto(task, remaining, column, level);
+      if (stepped === undefined) { task.progress.spiralStop = `第 ${i + 1} 步前面有挖不动的方块`; break; }
+      dug += stepped.dug;
+      if (!stepped.standing) { task.progress.spiralStop = `第 ${i + 1} 步没站上去`; break; }
+      level++; task.progress.spiralSteps = i + 1;
+    }
+    for (;;) {
+      dug += await this.digReachable(task, remaining, new Set(), dug, true);
+      const state = await this.observe(task);
+      if (feetLevel(state.position) <= bottom + 1) break;
+      // Coming down is not optional once up: the logs under the feet are cut even past the goal (reported as overage).
+      const below = remaining.find(candidate => samePosition(candidate.position, { x: Math.floor(state.position.x), y: feetLevel(state.position) - 1, z: Math.floor(state.position.z) }));
+      if (!below) break;
+      task.footing = undefined;
+      if (!(await this.digUnder(task, remaining, below, true))) break;
+      dug++;
+      const at = await this.landed(task);
+      const next = remaining.find(candidate => samePosition(candidate.position, { x: Math.floor(at.x), y: feetLevel(at) - 1, z: Math.floor(at.z) }));
+      task.footing = next ? new Set([next.targetToken!]) : undefined;
+    }
+    task.footing = undefined;
     return dug;
   }
   /**
@@ -604,6 +844,7 @@ export class GatherTasks {
   private async run(task: Active, candidates: NearbyResources['candidates']): Promise<void> {
     try {
       if (!miningOwner(task.borrowed)) await this.pickups(task);
+      this.mark(task);
       const remaining = [...candidates], skipped = new Set<string>();
       if (candidates.length) task.top = Math.max(...candidates.map(candidate => candidate.position.y));
       task.trees = treesOf(candidates);
@@ -613,20 +854,42 @@ export class GatherTasks {
         let state = await this.observe(task);
         if (this.done(task)) break;
         this.capacity(task, state);
-        if (pending > 0 && this.covered(task, pending)) { await this.pickups(task); pending = 0; continue; }
+        if (pending > 0 && this.covered(task, pending)) { await this.pickups(task); pending = 0; this.mark(task); continue; }
         // Companion mining approaches its single block first: the approach also enforces the live companion radius.
         if (!miningOwner(task.borrowed)) {
-          const dug = await this.digReachable(task, remaining, skipped, pending);
+          const dug = await this.digReachable(task, remaining, skipped, pending, false, true);
           pending += dug; if (dug > 0) continue;
         }
         if (remaining.length === 0 || this.done(task)) break;
-        if (pending > 0) { await this.pickups(task); pending = 0; continue; }
+        if (pending > 0) { await this.pickups(task); pending = 0; this.mark(task); continue; }
         state = await this.observe(task);
         const candidate = nearest(remaining.filter(next => this.inFocus(task, remaining, next)), state.position);
+        // Starting another tree to replace drops caught in the leaves of this one would cut more than was asked:
+        // stop and report them instead (natural leaves decay and drop them later).
+        if (task.focusTree !== undefined && task.trees?.get(candidate.targetToken ?? '') !== task.focusTree && task.progress.targetCount !== undefined) {
+          const caught = (state.groundItems ?? []).filter(item => this.caught(task, state, item)).reduce((sum, item) => sum + item.stack.count, 0);
+          if (caught > 0 && caught >= task.progress.targetCount - (task.progress.pickedUpCount ?? 0) - (task.pillarDebt ?? 0)) break;
+        }
         this.focus(task, candidate);
+        // Left standing on a log of the goal (a stump): it is dug from where the body stands.
+        if (candidate.kind === 'log' && !miningOwner(task.borrowed) && samePosition(candidate.position, { x: Math.floor(state.position.x), y: feetLevel(state.position) - 1, z: Math.floor(state.position.z) })) {
+          if (await this.digUnder(task, remaining, candidate)) { pending++; continue; }
+        }
+        if (this.tall(task, remaining, candidate)) { pending += await this.climbTree(task, remaining, candidate); continue; }
         const high = !miningOwner(task.borrowed) && this.climbable() && candidate.position.y - feetLevel(state.position) >= CLIMB_ABOVE;
         // A tree is climbed straight away; anything else high may sit on a slope, so walk up first and climb when no spot reaches it.
         if (high && candidate.kind === 'log') { pending += await this.climb(task, remaining, candidate); continue; }
+        // Left up on a stump (picking up drops can walk onto one): approach-resource walks only the level the body is on,
+        // so step down beside a lower candidate first.
+        if (!miningOwner(task.borrowed) && candidate.position.y < feetLevel(state.position) && this.body.hello.capabilities.includes('move-to-position')) {
+          const side = await this.besideSpot(task, candidate.position, state.position, false);
+          if (side) {
+            task.progress.stage = 'stepping-down';
+            try { await this.step(task, 'move-to-position', { x: side.x + 0.5, y: side.y, z: side.z + 0.5, tolerance: 0.5, timeoutMs: Math.min(10000, Math.max(500, task.deadline - this.now())) }); }
+            catch (error) { if (error instanceof BodyError && (haltCodes.has(error.code) || unknownCodes.has(error.code))) throw error; }
+            state = await this.observe(task);
+          }
+        }
         state = await this.prepareFor(task, candidate, state);
         task.progress.stage = 'approaching-resource';
         try {
@@ -638,9 +901,13 @@ export class GatherTasks {
           throw error;
         }
         skipped.clear();
-        task.progress.stage = 'digging';
-        await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
-        remaining.splice(remaining.indexOf(candidate), 1); pending++;
+        // Reached through leaves (a log inside a crown): digLog breaks them first; still refused, it is left.
+        if (miningOwner(task.borrowed)) {
+          task.progress.stage = 'digging';
+          await this.step(task, 'dig-block', { ...candidate.position, expectedBlock: candidate.id, expectedProperties: candidate.properties, targetToken: candidate.targetToken, timeoutMs: Math.min(30000, Math.max(500, task.deadline - this.now())) });
+          remaining.splice(remaining.indexOf(candidate), 1); pending++;
+        } else if (await this.digLog(task, remaining, candidate)) pending++;
+        else { remaining.splice(remaining.indexOf(candidate), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; }
       }
       if (pending > 0) await this.pickups(task);
       await this.observe(task);

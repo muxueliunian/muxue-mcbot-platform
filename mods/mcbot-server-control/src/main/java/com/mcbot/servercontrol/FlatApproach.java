@@ -19,7 +19,7 @@ final class FlatApproach implements BlockGetter {
     private final ServerPlayer player;
     private final double y;
     private int reads;
-    private boolean missing;
+    private boolean missing,throughLeaves;
     private final Map<BlockPos,BlockState> states=new HashMap<>();
     private final Map<BlockPos,VoxelShape> collisions=new HashMap<>();
     FlatApproach(ServerPlayer player) {this.player=player;this.y=player.getY();}
@@ -104,6 +104,9 @@ final class FlatApproach implements BlockGetter {
         BlockHitResult hit=clip(new ClipContext(player.getEyePosition(),Vec3.atCenterOf(pos),ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,player));
         return !missing&&hit.getType()==HitResult.Type.BLOCK&&hit.getBlockPos().equals(pos);
     }
+    /** Line of sight where only leaves are in the way: a log inside a tree crown, cleared leaf by leaf before digging. */
+    boolean blockVisibleThroughLeaves(BlockPos pos) {throughLeaves=true;try{return blockVisible(pos);}finally{throughLeaves=false;}}
+    boolean reachThroughLeaves(Vec3 feet,BlockPos pos) {throughLeaves=true;try{return containerReach(feet,pos);}finally{throughLeaves=false;}}
     String itemVisibility(Vec3 destination) {
         missing=false;
         BlockHitResult hit=clip(new ClipContext(player.getEyePosition(),destination,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,player));
@@ -122,7 +125,7 @@ final class FlatApproach implements BlockGetter {
     static boolean hazard(BlockState state) {
         return !state.getFluidState().isEmpty()||state.is(Blocks.MAGMA_BLOCK)||state.is(Blocks.CACTUS)||state.is(Blocks.FIRE)||state.is(Blocks.SOUL_FIRE)||state.is(Blocks.SWEET_BERRY_BUSH)||state.is(Blocks.POWDER_SNOW)||state.is(Blocks.WITHER_ROSE)||state.is(Blocks.CAMPFIRE)||state.is(Blocks.SOUL_CAMPFIRE);
     }
-    @Override public BlockState getBlockState(BlockPos pos) {return loaded(pos);}
+    @Override public BlockState getBlockState(BlockPos pos) {BlockState state=loaded(pos);return throughLeaves&&state.is(net.minecraft.tags.BlockTags.LEAVES)?Blocks.AIR.defaultBlockState():state;}
     @Override public FluidState getFluidState(BlockPos pos) {return loaded(pos).getFluidState();}
     @Override public BlockEntity getBlockEntity(BlockPos pos) {missing=true;return null;}
     @Override public int getHeight() {return player.serverLevel().getHeight();}

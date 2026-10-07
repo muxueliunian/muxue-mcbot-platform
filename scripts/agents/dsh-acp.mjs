@@ -92,8 +92,11 @@ function flatOptions(option) {
 export function pickModel(configOptions, model) {
   const option = configOptions?.find(item => item.id === 'model');
   const choices = flatOptions(option);
-  const hit = choices.find(item => item.value === model || item.name === model || item.value?.endsWith(`"${model}"]`));
-  if (!hit) throw new Error(`dsh 没有这个模型：${model}（可选：${choices.map(item => item.name).join('、') || '无'}）`);
+  // Exact first; then ignoring case (dsh names DeepSeek-V41-Flash, people type deepseek-v41-flash).
+  const lower = String(model).toLowerCase();
+  const hit = choices.find(item => item.value === model || item.name === model || item.value?.endsWith(`"${model}"]`))
+    ?? choices.find(item => item.value?.toLowerCase() === lower || item.name?.toLowerCase() === lower || item.value?.toLowerCase().endsWith(`"${lower}"]`));
+  if (!hit) throw new Error(`dsh 没有这个模型：${model}（可选：${[...new Set(choices.map(item => item.name))].join('、') || '无'}）`);
   return hit.value;
 }
 

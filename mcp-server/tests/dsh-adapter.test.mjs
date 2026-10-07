@@ -38,6 +38,7 @@ test('dsh 的思考档位、模型和 MCP 声明按 ACP 的格式转换', () => 
   assert.deepEqual(['', 'low', 'medium', 'high', 'xhigh', 'off', 'max'].map(dshEffort), ['low', 'low', 'high', 'high', 'max', 'off', 'max']);
   assert.equal(pickModel([MODEL], 'DeepSeek-V4-Pro'), '["deepseek-official","deepseek-v4-pro"]');
   assert.equal(pickModel([MODEL], 'deepseek-v4-pro'), '["deepseek-official","deepseek-v4-pro"]', '可以只写模型名');
+  assert.equal(pickModel([MODEL], 'DEEPSEEK-V4-FLASH'), pickModel([MODEL], 'deepseek-v4-flash'), '大小写不同也认');
   assert.throws(() => pickModel([MODEL], 'gpt-x'), /没有这个模型：gpt-x（可选：deepseek-v4-flash、DeepSeek-V4-Pro）/);
   assert.deepEqual(acpMcpServer({ command: 'node', args: ['a.js', 3], env: { K: 'v' } }, 'C:/node.exe'),
     { name: 'minecraft', command: 'C:/node.exe', args: ['a.js', '3'], env: [{ name: 'K', value: 'v' }] });

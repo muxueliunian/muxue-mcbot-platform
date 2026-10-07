@@ -12,7 +12,7 @@ record ServerConfig(String worldId,String username,UUID uuid,int port,Double spa
     static ServerConfig load(Path directory,boolean dedicated) throws IOException {
         Files.createDirectories(directory);
         Path path=directory.resolve("server.json");
-        if(!Files.exists(path)) Files.writeString(path,JSON.toJson(obj("worldId",dedicated?"serverbody-validation":HostingRules.AUTO_WORLD,"username","ServerBot","uuid","9c6882e0-e80c-4c3e-8f20-8e3f42c738a1","port",8766,"spawn",null)),StandardCharsets.UTF_8);
+        if(!Files.exists(path)) Files.writeString(path,JSON.toJson(obj("worldId",dedicated?"serverbody-validation":HostingRules.AUTO_WORLD,"username","Claude","uuid","9c6882e0-e80c-4c3e-8f20-8e3f42c738a1","port",8766,"spawn",null)),StandardCharsets.UTF_8);
         JsonObject json=com.google.gson.JsonParser.parseString(Files.readString(path,StandardCharsets.UTF_8)).getAsJsonObject();
         String world=string(json,"worldId"), name=string(json,"username");
         if(!name.matches("[A-Za-z0-9_]{1,16}")) throw error("INVALID_ARGUMENT","Invalid configured username");

@@ -26,7 +26,7 @@ const { rcon, readServerProps } = await import('./rcon.mjs');
 const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.username, 'Claude');
 const { Client } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
 const { StdioClientTransport } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
 
@@ -42,7 +42,7 @@ function check(name, passed, detail) { report.checks.push({ name, passed: !!pass
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function fixture(text) {
   const list = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(n => n.trim()).filter(Boolean) ?? [];
-  assert(list.every(name => name === 'ServerBot'), '有其他玩家在线，拒绝修改夹具');
+  assert(list.every(name => name === 'Claude'), '有其他玩家在线，拒绝修改夹具');
   const reply = await command(text); report.calls.push({ fixture: text, reply: redact(reply) });
   assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|No entity was found|Unknown block|Unknown item|Expected|Invalid/i.test(reply), '夹具命令被拒绝：' + redact(reply)); return reply;
 }
@@ -81,8 +81,8 @@ async function click(slot) {
 }
 async function close() { const c = await container(); if (c && c.id) return settle(await tool('close-container', { containerId: c.id, expectedRevision: c.revision })); }
 async function reset(items) {
-  await fixture('clear ServerBot'); await fixture('tp ServerBot 6400.5 201 6400.5 -90 0');
-  for (const [slot, item] of items) await fixture(`item replace entity ServerBot hotbar.${slot} with ${item}`);
+  await fixture('clear Claude'); await fixture('tp Claude 6400.5 201 6400.5 -90 0');
+  for (const [slot, item] of items) await fixture(`item replace entity Claude hotbar.${slot} with ${item}`);
   await command('kill @e[type=minecraft:item,x=6390,y=190,z=6390,dx=25,dy=20,dz=25]'); // 没有掉落物时会回 No entity was found
   await wait(500); // SB 在下一 tick 才给新背包写组件，等它稳定再观察
 }
@@ -91,7 +91,7 @@ try {
   const h = await hello();
   check('hello：背包容器适配、打开背包交互都已登记，且打开背包归在对空使用里', h.adapters?.includes(BACKPACK) && h.interactions?.includes(OPEN) && h.itemInteractions?.includes(OPEN) && h.capabilities.includes('use-item'), { adapters: h.adapters, interactions: h.interactions, itemInteractions: h.itemInteractions });
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'backpack-fixture', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools;
   check('MCP 里有 use-item 工具，说明里列出打开背包', tools.some(t => t.name === 'use-item' && t.description.includes(OPEN)) && !tools.find(t => t.name === 'interact-block')?.description.includes(OPEN));
@@ -101,8 +101,8 @@ try {
   await fixture('forceload add 6392 6392 6415 6415'); forced.push('6392 6392 6415 6415');
   await fixture('fill 6396 200 6396 6412 200 6406 minecraft:stone');
   await fixture('fill 6396 201 6396 6412 204 6406 minecraft:air');
-  await fixture('gamemode survival ServerBot');
-  await fixture('tp ServerBot 6400.5 201 6400.5 -90 0'); await wait(300);
+  await fixture('gamemode survival Claude');
+  await fixture('tp Claude 6400.5 201 6400.5 -90 0'); await wait(300);
 
   // 1. 手持新背包：第一次打开会分配存储 ID，这是手上物品唯一允许的变化
   await reset([[0, 'minecraft:dirt 5'], [2, BACKPACK]]);
@@ -187,7 +187,7 @@ try {
   try { await close(); } catch {}
   try { await command('setblock 6402 201 6400 minecraft:air'); report.cleanup.push({ cleared: '6402 201 6400' }); } catch {}
   try { await command('kill @e[type=minecraft:item,x=6390,y=190,z=6390,dx=25,dy=20,dz=25]'); report.cleanup.push({ killed: 'fixture drops' }); } catch {}
-  try { await command('clear ServerBot'); report.cleanup.push({ cleared: 'ServerBot inventory' }); } catch {}
+  try { await command('clear Claude'); report.cleanup.push({ cleared: 'Claude inventory' }); } catch {}
   for (const range of forced) { try { await command(`forceload remove ${range}`); report.cleanup.push({ forceloadRemoved: range }); } catch (error) { report.cleanup.push({ forceloadRemoveFailed: range, error: redact(error.message) }); } }
   try { await client?.close(); } catch {}
   report.finished = new Date().toISOString(); await save();

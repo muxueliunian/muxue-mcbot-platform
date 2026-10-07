@@ -11,7 +11,7 @@ Java 21 编译：`$env:JAVA_HOME='D:/Java/jdk-21'; ./gradlew.bat build`。产物
 ```json
 {
   "worldId": "serverbody-validation",
-  "username": "ServerBot",
+  "username": "Claude",
   "uuid": "9c6882e0-e80c-4c3e-8f20-8e3f42c738a1",
   "port": 8766,
   "spawn": { "x": 512.5, "y": 201, "z": 512.5 }
@@ -65,7 +65,7 @@ claim 载入死亡角色返回 DEAD_BODY 并保留死亡状态，不能靠重新
 在仓库根目录显式运行：
 
 ```pwsh
-node client-runtime/dist/main.js --body server --respawn-only --connection-file <服务端connection.json> --username ServerBot --world-id <worldId>
+node client-runtime/dist/main.js --body server --respawn-only --connection-file <服务端connection.json> --username Claude --world-id <worldId>
 ```
 
 该命令只 hello→respawn，不启动 MCP、不写控制文件、不接受 --hosted；首次尚未载入的死亡存档可使用 null session。之后须显式启动新的 MCP 接管，旧 MCP 保持终止。最近退休租约的宿主 watch 可只读聊天，直到新 claim 或身体会话变化；旧宿主 revoke 永远不能影响新租约。

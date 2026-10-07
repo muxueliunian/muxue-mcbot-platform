@@ -47,7 +47,7 @@ const wrap = deg => ((deg % 360) + 540) % 360 - 180;
 // 和服务端 IdleGaze.yawTo 同一个公式：从 Bot 眼睛看向对方眼睛的水平角
 const yawTo = (from, to) => Math.atan2(-(to[0] - from[0]), to[2] - from[2]) * 180 / Math.PI;
 async function facingError(target) {
-  const [bot, peer, rotation] = [await vec('ServerBot', 'Pos'), await vec(target, 'Pos'), await vec('ServerBot', 'Rotation')];
+  const [bot, peer, rotation] = [await vec('Claude', 'Pos'), await vec(target, 'Pos'), await vec('Claude', 'Rotation')];
   const error = Math.abs(wrap(rotation[0] - yawTo(bot, peer)));
   const sample = { target, bot, peer, yaw: rotation[0], pitch: rotation[1], error: Math.round(error) };
   report.samples.push(sample); return sample;
@@ -71,12 +71,12 @@ try {
   client = new Client({ name: 'server-idle-gaze-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   await tool('get-companion-mode');
 
   // 1. 没有动作：测试玩家站在旁边，Bot 转头看她
-  await command('tp ServerBot 3.5 96 -6.5'); await wait(1500);
-  await command('execute as ServerBot at @s run tp @s ~ ~ ~ 0 0');
+  await command('tp Claude 3.5 96 -6.5'); await wait(1500);
+  await command('execute as Claude at @s run tp @s ~ ~ ~ 0 0');
   await place(6.5, 95, -6.5); await wait(2500);
   let s = await facingError('GazePeer');
   check('没有动作时转头看旁边的玩家（东边 3 格）', s.error <= 20, s);
@@ -85,9 +85,9 @@ try {
   check('玩家换到另一边，Bot 跟着转过去（北边 4 格，下坡）', s.error <= 20, s);
 
   // 2. 玩家走远到 8 格外：不再盯着，过一会儿自己左右看看
-  await command(`execute at ServerBot run tp GazePeer ~40 ~10 ~`); await wait(500);
+  await command(`execute at Claude run tp GazePeer ~40 ~10 ~`); await wait(500);
   const yaws = [];
-  for (let i = 0; i < 12; i++) { yaws.push((await vec('ServerBot', 'Rotation'))[0]); await wait(1000); }
+  for (let i = 0; i < 12; i++) { yaws.push((await vec('Claude', 'Rotation'))[0]); await wait(1000); }
   const spread = Math.max(...yaws.map(a => Math.abs(wrap(a - yaws[0]))));
   report.glance = yaws;
   check('身边没人时 12 秒内会自己转头看看', spread >= 5, yaws);
@@ -101,11 +101,11 @@ try {
 
   // 4. 明确的 look-at 之后几秒内不被待机转头覆盖
   await place(7.5, 95, -6.5); await wait(2500);
-  const bot = await vec('ServerBot', 'Pos');
+  const bot = await vec('Claude', 'Pos');
   const look = await tool('look-at', { x: bot[0], y: bot[1] + 1.6, z: bot[2] - 10 });
   check('look-at 成功', !look.error, look.value);
   await wait(1500);
-  const held = (await vec('ServerBot', 'Rotation'))[0];
+  const held = (await vec('Claude', 'Rotation'))[0];
   check('look-at 后 1.5 秒仍看着指定方向（北边，yaw≈180）', Math.abs(wrap(held - 180)) <= 10, { held });
   await wait(3500);
   s = await facingError('GazePeer');

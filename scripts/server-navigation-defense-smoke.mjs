@@ -31,7 +31,7 @@ assert(!serverDir.toLowerCase().startsWith('g:\\mc\\mcbot\\'), '拒绝修改旧�
 assert((await fs.stat(backup.backup)).isDirectory());
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-navigation-defense-${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'peer-events.jsonl'); await fs.writeFile(input, ''); await fs.writeFile(peerFile, '');
@@ -67,14 +67,14 @@ async function lines(file) {
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), '其他玩家在线，拒绝夹具修改'); return names;
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), '其他玩家在线，拒绝夹具修改'); return names;
 }
 async function fixture(text) {
   await alone(); const reply = await command(text);
   report.calls.push({ ...stamp(), fixture: text, reply });
   assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|Invalid component/i.test(reply), '夹具命令失败：' + reply); return reply;
 }
-const replace = (slot, item, count = 1) => fixture(`item replace entity ServerBot ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with ${item} ${count}`);
+const replace = (slot, item, count = 1) => fixture(`item replace entity Claude ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with ${item} ${count}`);
 async function until(read, accept, name, timeout = 15000, interval = 75) {
   const deadline = Date.now() + timeout; let value;
   while (Date.now() < deadline) { value = await read(); if (accept(value)) return value; await wait(interval); }
@@ -148,7 +148,7 @@ async function clearFixtureEntities() {
 async function settled(expected) {
   let stable=0,previous;
   return until(async()=>{
-    const actual=await position(),[ground,motion]=await rcon(['data get entity ServerBot OnGround','data get entity ServerBot Motion'],{serverDir});
+    const actual=await position(),[ground,motion]=await rcon(['data get entity Claude OnGround','data get entity Claude Motion'],{serverDir});
     const values=[...motion.matchAll(/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?=d)/g)].map(match=>Number(match[0]));
     const ready=/1b\s*$/.test(ground)&&values.length===3&&Math.hypot(values[0],values[2])<0.02&&Math.abs(values[1])<=0.081&&
       (!expected||near(actual,expected,0.35))&&previous&&near(actual,previous,0.02);
@@ -166,10 +166,10 @@ async function arena() {
   await fixture('fill 2600 201 2600 2628 211 2628 air');
   await fixture('fill 2600 200 2600 2628 200 2628 stone');
   await fixture('tp C2Tester 2625.5 201 2625.5');
-  await fixture('effect give ServerBot minecraft:instant_health 1 5 true');
-  await fixture('effect give ServerBot minecraft:saturation 1 5 true');
-  await fixture('clear ServerBot');
-  await fixture('tp ServerBot 2604.5 201 2614.5');
+  await fixture('effect give Claude minecraft:instant_health 1 5 true');
+  await fixture('effect give Claude minecraft:saturation 1 5 true');
+  await fixture('clear Claude');
+  await fixture('tp Claude 2604.5 201 2614.5');
   await settled({x:2604.5,y:201,z:2614.5});
 }
 async function navigation(args, expected = true) {
@@ -198,8 +198,8 @@ try {
   const names = await alone(); assert(!names.includes('C2Tester'), '已有C2Tester，拒绝占用他人测试玩家');
   await relay();
   const connectionFile=path.join(runtime,'connection.json'); await fs.writeFile(connectionFile,JSON.stringify({...connection,endpoint:`http://127.0.0.1:${proxy.address().port}/v2`}));
-  const host=path.join(runtime,'companion-ServerBot.json'); writeHeartbeat(host,'navigation-defense-smoke'); heartbeat=setInterval(()=>writeHeartbeat(host,'navigation-defense-smoke'),3000);
-  transport=new ObservedTransport({command:process.execPath,args:[path.join(root,'client-runtime/dist/main.js'),'--body','server','--connection-file',connectionFile,'--username','ServerBot','--world-id',connection.worldId,'--runtime-dir',runtime,'--controller-id',randomUUID(),'--hosted'],cwd:root,stderr:'pipe'});
+  const host=path.join(runtime,'companion-Claude.json'); writeHeartbeat(host,'navigation-defense-smoke'); heartbeat=setInterval(()=>writeHeartbeat(host,'navigation-defense-smoke'),3000);
+  transport=new ObservedTransport({command:process.execPath,args:[path.join(root,'client-runtime/dist/main.js'),'--body','server','--connection-file',connectionFile,'--username','Claude','--world-id',connection.worldId,'--runtime-dir',runtime,'--controller-id',randomUUID(),'--hosted'],cwd:root,stderr:'pipe'});
   client=new Client({name:'navigation-defense-real-smoke',version:'1'});await client.connect(transport);
   const tools=(await client.listTools()).tools.map(t=>t.name);report.tools=tools;
   check('真实MCP暴露生存与防卫语义工具',tools.includes('defend-self')&&tools.includes('set-reflexes'),{toolCount:tools.length});
@@ -234,7 +234,7 @@ try {
       check('半砖楼梯沿直向通过',value.trace.every(p=>Math.abs(p.z-2614.5)<1.2),value.trace);
     });
     await step('two-block-safe-drop',async()=>{
-      await arena();await fixture('fill 2601 201 2611 2606 202 2617 stone');await fixture('tp ServerBot 2604.5 203 2614.5');
+      await arena();await fixture('fill 2601 201 2611 2606 202 2617 stone');await fixture('tp Claude 2604.5 203 2614.5');
       await settled({x:2604.5,y:203,z:2614.5});
       await navigation({x:2611.5,y:201,z:2614.5});
     });
@@ -263,7 +263,7 @@ try {
       const discovery=await tool('discover-containers',{radius:8});const chest=discovery.candidates.find(c=>c.position.x===2611&&c.position.z===2614);
       assert(chest,'未发现高台箱子');const listed=await terminal('container-list',{containerRef:chest.containerRef});
       check('箱子任务复用高差导航及原生菜单',listed.status==='succeeded',listed);
-      await tool('stop-action');await fixture('tp ServerBot 2604.5 201 2614.5');await settled({x:2604.5,y:201,z:2614.5});
+      await tool('stop-action');await fixture('tp Claude 2604.5 201 2614.5');await settled({x:2604.5,y:201,z:2614.5});
       await fixture('summon item 2609.5 202.1 2614.5 {Tags:["mcbot_navdef_fixture"],PickupDelay:0s,Item:{id:"minecraft:snowball",count:1}}');
       await wait(200);const collected=await terminal('collect-items',{item:'minecraft:snowball',count:1,radius:6,timeoutMs:20000});
       check('地面拾取共享高差导航和权威收据',collected.status==='succeeded'&&collected.result?.pickedUpCount===1,collected);
@@ -271,8 +271,8 @@ try {
     await step('airborne-stop-and-first-new-task',async()=>{
       await arena();await fixture('fill 2607 201 2611 2614 201 2617 stone');
       const old=await tool('move-to-position',{x:2612.5,y:202,z:2614.5,tolerance:0.3,timeoutMs:20000});
-      await until(()=>command('data get entity ServerBot OnGround'),v=>/0b\s*$/.test(v),'没有观察到真正起跳，测试不成立',15000,25);
-      await tool('stop-action');await until(()=>command('data get entity ServerBot OnGround'),v=>/1b\s*$/.test(v),'停止后自然落地',4000,50);
+      await until(()=>command('data get entity Claude OnGround'),v=>/0b\s*$/.test(v),'没有观察到真正起跳，测试不成立',15000,25);
+      await tool('stop-action');await until(()=>command('data get entity Claude OnGround'),v=>/1b\s*$/.test(v),'停止后自然落地',4000,50);
       const landed=(await settled()).actual;await wait(900);
       check('空中停止后仅自然落地，不继续旧路线',near(await position(),landed,0.12),{landed,old:await tool('get-operation',{operationId:old.operationId})});
       await navigation({x:2604.5,y:201,z:2614.5});
@@ -336,7 +336,7 @@ try {
       await fixture('data merge entity @e[type=husk,tag=mcbot_navdef_fixture,limit=1] {NoAI:1b}');
       const rest=(await settled()).actual;
       await fixture(`tp @e[type=husk,tag=mcbot_navdef_fixture,limit=1] ${rest.x+2} ${rest.y} ${rest.z}`);
-      await fixture('effect give ServerBot minecraft:instant_health 1 5 true');
+      await fixture('effect give Claude minecraft:instant_health 1 5 true');
       const floor=report.rpc.length;await policy({autoDefend:true,autoEat:false,armed:true,maxAttacks:3});
       await until(()=>report.rpc.slice(floor),rows=>rows.some(r=>r.action==='defend-entity'&&r.ok&&r.status==='running'),'未观察到在途原生防卫',10000,30);
       await tool('stop-action');const atStop=await command('data get entity @e[type=husk,tag=mcbot_navdef_fixture,limit=1] Health');
@@ -345,7 +345,7 @@ try {
       await policy({autoDefend:false,armed:false,maxAttacks:2});
     });
     await step('low-health-safe-retreat',async()=>{
-      await arena();await fixture('damage ServerBot 13 minecraft:generic');const target=await enemy('husk');
+      await arena();await fixture('damage Claude 13 minecraft:generic');const target=await enemy('husk');
       const before=await position(),floor=report.rpc.length;await policy({autoDefend:true,autoEat:false,armed:true});
       await until(()=>report.rpc.slice(floor),rows=>rows.some(r=>r.action==='retreat-from-entity'&&r.ok),'低血未发出有限退让',10000);
       await until(position,p=>Math.hypot(p.x-before.x,p.z-before.z)>1.2,'退让无实际位移',12000);
@@ -375,7 +375,7 @@ finally{
   if(forced){await fixture(`kill ${mob}`).catch(()=>{});await fixture('forceload remove 2600 2600 2628 2628').catch(e=>{report.result='failed';process.exitCode=1;report.cleanup.push({action:'remove-own-forceload',error:redact(e.message)});});}
   if(proxy){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}
   await fs.unlink(path.join(runtime,'connection.json')).catch(()=>{});
-  report.events=await lines(path.join(runtime,'events-ServerBot.jsonl'));report.peerEvents=await lines(peerFile);
+  report.events=await lines(path.join(runtime,'events-Claude.jsonl'));report.peerEvents=await lines(peerFile);
   report.finished=new Date().toISOString();report.durationMs=Math.round(performance.now()-started);
   report.cleanup.push({action:'server-left-running',boundary:'自身MCP/peer退出，撤本批forceload和实体；调用者保存关服。'});
   await checkpoint();await fs.writeFile(path.join(root,'output/server-navigation-defense-latest.json'),JSON.stringify({dir,...safe(report)},null,2)+'\n');console.log('Evidence: '+dir);

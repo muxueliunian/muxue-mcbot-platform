@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Isolated A regression: v2 drives ServerBot; Mineflayer is only a late observer/one-hit peer.
+// Isolated A regression: v2 drives Claude; Mineflayer is only a late observer/one-hit peer.
 // RCON prepares explicit fixtures, initial positions, and independently reads authoritative NBT.
 import { createRequire } from 'node:module';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -15,7 +15,7 @@ Does not launch servers, models, or Minecraft render clients. Mineflayer is only
 Writes a bounded stone/wall/gap fixture near 512.5,201,512.5; fixture tp is not movement evidence.
 Exercises late join, HTTP movement/stop/new action/follow, obstacle/gap stop, natural fall damage,
 one ordinary empty-hand player hit, kick/old-lease rejection/explicit reclaim and role uniqueness.
-Finally releases control and quits the peer; ServerBot stays online. No saves are deleted or moved.
+Finally releases control and quits the peer; Claude stays online. No saves are deleted or moved.
 `;
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
@@ -53,7 +53,7 @@ async function main() {
   if (opt.help) { console.log(usage); return; }
   const started = performance.now(), stamp = () => Math.round(performance.now() - started);
   const evidence = { schema: 1, protocol: 2, started: new Date().toISOString(), serverDir: opt['server-dir'], origin,
-    boundary: 'v2 actions control ServerBot; RCON fixture setup/initial tp and independent reads; Mineflayer late observer and exactly one normal empty-hand attack',
+    boundary: 'v2 actions control Claude; RCON fixture setup/initial tp and independent reads; Mineflayer late observer and exactly one normal empty-hand attack',
     allowFixture: true, allowHuman: !!opt['allow-human'], checks: [], commands: [], operations: [], peer: null, heartbeats: [], cleanup: [] };
   let connection, hello, lease, scope, peer, uuid, generation, heartbeatTimer, heartbeatFlight;
   let heartbeatPaused = false, mutationsAllowed = false;
@@ -115,14 +115,14 @@ async function main() {
   }
   async function authorizeMutation() {
     insist(mutationsAllowed, 'Fixture mutation is not authorized');
-    const names = (await onlineNames()).filter(name => !['ServerBot', peer?.name].includes(name));
+    const names = (await onlineNames()).filter(name => !['Claude', peer?.name].includes(name));
     insist(opt['allow-human'] || names.length === 0, `Human players present: ${names.join(', ')}`);
   }
   async function mutate(text) { await authorizeMutation(); return command(text); }
   const passed = reply => /^Test passed(?:, count: 1)?$/i.test(reply.trim());
   async function data(field) {
-    const reply = await command(`data get entity ServerBot ${field}`), at = reply.indexOf(':');
-    insist(at >= 0 && /following entity data/i.test(reply), `Cannot read ServerBot ${field}`);
+    const reply = await command(`data get entity Claude ${field}`), at = reply.indexOf(':');
+    insist(at >= 0 && /following entity data/i.test(reply), `Cannot read Claude ${field}`);
     return reply.slice(at + 1).trim();
   }
   async function nbtState() {
@@ -137,17 +137,17 @@ async function main() {
   }
   async function bodyUuid() {
     const reply = await data('UUID'), match = reply.match(/^\[I;\s*([-+\d,\s]+)\]$/);
-    insist(match, 'ServerBot UUID is not an integer array');
+    insist(match, 'Claude UUID is not an integer array');
     const fields = match[1].split(',').map(value => Number(value.trim()));
-    insist(fields.length === 4 && fields.every(Number.isInteger), 'Invalid ServerBot UUID fields');
+    insist(fields.length === 4 && fields.every(Number.isInteger), 'Invalid Claude UUID fields');
     const bytes = Buffer.alloc(16); fields.forEach((value, index) => bytes.writeInt32BE(value, index * 4));
     const hex = bytes.toString('hex'); return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
   async function uniqueRole(expectedUuid) {
-    const reply = await command('execute as @a[name=ServerBot] run data get entity @s UUID');
+    const reply = await command('execute as @a[name=Claude] run data get entity @s UUID');
     const arrays = [...reply.matchAll(/\[I;\s*([-+\d,\s]+)\]/g)].map(match => match[1].split(',').map(value => Number(value.trim())));
     const bytes = Buffer.from(expectedUuid.replaceAll('-', ''), 'hex'), expected = Array.from({ length: 4 }, (_, index) => bytes.readInt32BE(index * 4));
-    check('one independently registered ServerBot with expected UUID', arrays.length === 1 && arrays[0].every((value, index) => value === expected[index]), { arrays, expected });
+    check('one independently registered Claude with expected UUID', arrays.length === 1 && arrays[0].every((value, index) => value === expected[index]), { arrays, expected });
   }
   async function fixture() {
     // Bot's normal PLAYER ticket should already load the entire bounded fixture footprint.
@@ -180,8 +180,8 @@ async function main() {
   }
   async function fixtureBodyPosition(target, settle = true) {
     await stop();
-    const reply = await mutate(`tp ServerBot ${target.x.toFixed(4)} ${target.y.toFixed(4)} ${target.z.toFixed(4)}`);
-    insist(reply.trim().startsWith('Teleported ServerBot to '), 'Fixture initial position tp failed');
+    const reply = await mutate(`tp Claude ${target.x.toFixed(4)} ${target.y.toFixed(4)} ${target.z.toFixed(4)}`);
+    insist(reply.trim().startsWith('Teleported Claude to '), 'Fixture initial position tp failed');
     evidence.operations.push({ atMs: stamp(), fixtureOnly: true, name: 'initial-position-tp', target, notMovementEvidence: true });
     if (settle) await until('body fixture position grounded', async () => { const current = await nbtState(); return current.onGround && distance(current.position, target) < 0.15 ? current : false; });
   }
@@ -222,7 +222,7 @@ async function main() {
   async function visibleCheck(label, afterSeq = 0) {
     await until(`${label} body entity visibility`, () => visible().length === 1 && peer.packets.some(packet => packet.packet === 'spawn_entity' && packet.uuid === uuid && packet.seq > afterSeq), 15000);
     const spawn = peer.packets.find(packet => packet.packet === 'spawn_entity' && packet.uuid === uuid && packet.seq > afterSeq);
-    const info = peer.packets.find(packet => packet.packet === 'player_info' && packet.seq < spawn.seq && packet.seq > afterSeq && packet.players.some(player => player.uuid === uuid && player.name === 'ServerBot') && (packet.action?.add_player === true || packet.action === 'add_player' || (typeof packet.action === 'number' && (packet.action & 1) !== 0)));
+    const info = peer.packets.find(packet => packet.packet === 'player_info' && packet.seq < spawn.seq && packet.seq > afterSeq && packet.players.some(player => player.uuid === uuid && player.name === 'Claude') && (packet.action?.add_player === true || packet.action === 'add_player' || (typeof packet.action === 'number' && (packet.action & 1) !== 0)));
     check(`${label}: PlayerInfo before player entity`, !!info, { infoSeq: info?.seq, spawnSeq: spawn.seq, entityId: spawn.entityId, uuid });
     check(`${label}: one real player entity`, visible().length === 1 && visible()[0].type === 'player', visible().map(entity => ({ entityId: entity.id, type: entity.type, username: entity.username })));
     peer.bodyEntityId = visible()[0].id;
@@ -249,18 +249,18 @@ async function main() {
     evidence.serverProperties = { host: props['server-ip'], gamePort: Number(props['server-port']), rconPort: Number(props['rcon.port']), pvp: props.pvp, difficulty: props.difficulty };
     check('strict isolated loopback game/RCON scope', props['server-ip'] === '127.0.0.1' && Number(props['server-port']) === 25568 && Number(props['rcon.port']) === 25578);
     check('server pvp=true before any fixture', props.pvp === 'true');
-    const names = await onlineNames(); check('no human mutations without explicit authorization', opt['allow-human'] || names.every(name => name === 'ServerBot'), { names });
+    const names = await onlineNames(); check('no human mutations without explicit authorization', opt['allow-human'] || names.every(name => name === 'Claude'), { names });
     connection = JSON.parse(await readFile(opt['connection-file'], 'utf8'));
     const endpoint = new URL(connection.endpoint);
-    check('selected server v2 connection', connection.protocol === 2 && connection.backend === 'server' && connection.username === 'ServerBot' && connection.worldId === 'serverbody-validation' && endpoint.protocol === 'http:' && endpoint.hostname === '127.0.0.1' && endpoint.port === '8766' && endpoint.pathname === '/v2' && !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash);
+    check('selected server v2 connection', connection.protocol === 2 && connection.backend === 'server' && connection.username === 'Claude' && connection.worldId === 'serverbody-validation' && endpoint.protocol === 'http:' && endpoint.hostname === '127.0.0.1' && endpoint.port === '8766' && endpoint.pathname === '/v2' && !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash);
     hello = await rpc('hello'); evidence.initialHello = hello;
     check('A declares only four supported actions', JSON.stringify([...hello.capabilities].sort()) === JSON.stringify(['send-chat', 'look-at', 'move-to-position', 'follow-player'].sort()));
     evidence.initialIndependentState = hello.connected ? await nbtState() : { exists: false };
     await claim(); startHeartbeats(); evidence.initialObservation = await observe(); uuid = await bodyUuid();
     const ops = JSON.parse(await readFile(resolve(opt['server-dir'], 'ops.json'), 'utf8'));
-    check('configured ServerBot identity is not OP', !ops.some(player => player.uuid === uuid || player.name === 'ServerBot'));
+    check('configured Claude identity is not OP', !ops.some(player => player.uuid === uuid || player.name === 'Claude'));
     await uniqueRole(uuid); mutationsAllowed = true;
-    if (opt['allow-human']) await command(tellrawCommand('[ServerBody physics test] Isolated fixtures: HTTP movement/stop, natural fall, one peer hit and explicit kick/reclaim. ServerBot stays online at completion.', { color: 'yellow' }));
+    if (opt['allow-human']) await command(tellrawCommand('[ServerBody physics test] Isolated fixtures: HTTP movement/stop, natural fall, one peer hit and explicit kick/reclaim. Claude stays online at completion.', { color: 'yellow' }));
     await until('body own chunk ready before setup/peer', async () => {
       const current = await observe(), block = { x: Math.floor(current.position.x), y: Math.floor(current.position.y) - 1, z: Math.floor(current.position.z) };
       return (await rpc('observe', { ...scope, block })).block?.state === 'loaded';
@@ -339,7 +339,7 @@ async function main() {
 
     await fixtureBodyPosition(origin); const oldScope = { ...scope }, oldGeneration = generation, oldSession = scope.sessionId, oldEntity = peer.bodyEntityId, marker = peer.sequence;
     heartbeatPaused = true; if (heartbeatFlight) await heartbeatFlight;
-    await mutate('kick ServerBot ServerBody A physics lifecycle test');
+    await mutate('kick Claude ServerBody A physics lifecycle test');
     await until('kick invalidates body control', async () => !(await rpc('hello')).connected);
     const deniedHeartbeat = await wire('heartbeat', oldScope); check('kicked old lease cannot heartbeat', !deniedHeartbeat.ok && ['WORLD_CHANGED', 'LEASE_LOST'].includes(deniedHeartbeat.error?.code), { code: deniedHeartbeat.error?.code });
     const deniedAct = await wire('act', { ...oldScope, controlGeneration: oldGeneration, operationId: randomUUID(), name: 'look-at', args: origin });

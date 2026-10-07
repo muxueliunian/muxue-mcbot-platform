@@ -62,9 +62,9 @@ try {
   client = new Client({ name: 'server-stroll-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   await command(`tp StrollPeer ${stand.join(' ')}`); await wait(1500);
-  await command(`spreadplayers ${stand[0] + 2} ${stand[2]} 0 1 false ServerBot`); await wait(2500);
+  await command(`spreadplayers ${stand[0] + 2} ${stand[2]} 0 1 false Claude`); await wait(2500);
   const follow = await tool('companion-mode', { action: 'follow', player: 'StrollPeer' });
   check('开始跟随测试玩家', !follow.error, follow.value);
   const player = await posOf('StrollPeer');
@@ -74,7 +74,7 @@ try {
   const started = Date.now();
   while (Date.now() - started < 50000) {
     await wait(1000);
-    const bot = await posOf('ServerBot'); const mode = (await tool('get-companion-mode')).value; const text = JSON.stringify(mode);
+    const bot = await posOf('Claude'); const mode = (await tool('get-companion-mode')).value; const text = JSON.stringify(mode);
     const sample = { t: Math.round((Date.now() - started) / 1000), bot, toPlayer: Math.round(flat(bot, player) * 10) / 10, state: mode?.state };
     report.samples.push(sample);
     if (text.includes('BLOCKED') || text.includes('failed')) { bad = sample; break; }
@@ -94,15 +94,15 @@ try {
   check('真的换了个地方（离原位置至少 1.5 格）', flat(strollEnd.bot, first) >= 1.5, { first, end: strollEnd.bot });
 
   // 停下后玩家不动：留在原地，不走回去
-  const rest = await posOf('ServerBot'); await wait(6000);
-  const later = await posOf('ServerBot');
+  const rest = await posOf('Claude'); await wait(6000);
+  const later = await posOf('Claude');
   report.rest = { rest, later };
   check('走完后玩家不动就留在那里（6 秒内没走回去）', dist(rest, later) < 0.5, report.rest);
 
   // 玩家走开：接着跟
   await command(`tp StrollPeer ${away.join(' ')}`);
   const target = await posOf('StrollPeer'); let bot;
-  for (let i = 0; i < 15; i++) { await wait(1000); bot = await posOf('ServerBot'); if (dist(bot, target) <= 3.5) break; }
+  for (let i = 0; i < 15; i++) { await wait(1000); bot = await posOf('Claude'); if (dist(bot, target) <= 3.5) break; }
   check('玩家走开后又跟上了', dist(bot, target) <= 3.5, { bot, target });
   await tool('stop-action');
   report.result = 'passed';

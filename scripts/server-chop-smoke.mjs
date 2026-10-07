@@ -55,7 +55,7 @@ const [X0, X1, Z0, Z1, Y, M] = [3294, 3310, 3294, 3310, 200, 3];
 const start = [3300.5, Y + 1, 3300.5];
 const trunk = [1, 2, 3, 4].map(h => [3302, Y + h, 3300]);
 const stump = [1, 2].map(h => [3306, Y + h, 3304]);
-const park = () => command(`tp ServerBot ${X0 + 5.5} -60 ${Z0 + 5.5}`);
+const park = () => command(`tp Claude ${X0 + 5.5} -60 ${Z0 + 5.5}`);
 try {
   await fixture(`forceload add ${X0 - M} ${Z0 - M} ${X1 + M} ${Z1 + M}`);
   await park(); await wait(500);
@@ -66,15 +66,15 @@ try {
   client = new Client({ name: 'server-chop-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
-  await command(`tp ServerBot ${start.join(' ')} -90 0`); await wait(1500);
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+  await command(`tp Claude ${start.join(' ')} -90 0`); await wait(1500);
   const found = await tool('discover-resources', { blockIds: ['minecraft:oak_log'], radius: 8 });
   check('找到树干和树桩一共 6 节原木', !found.error && found.value.candidates?.length === 6, found.value);
   let op = await tool('gather-resources', { resourceRef: found.value.resourceRef, item: 'minecraft:oak_log', count: 6, timeoutMs: 90000 });
   check('采集开始', !op.error && op.value.status === 'running', op.value);
   const deadline = Date.now() + 100000;
   while (op.value.status === 'running' && Date.now() < deadline) {
-    const sample = { t: Date.now(), bot: await pos('ServerBot'), trunk: await Promise.all(trunk.map(isLog)), stump: await Promise.all(stump.map(isLog)) };
+    const sample = { t: Date.now(), bot: await pos('Claude'), trunk: await Promise.all(trunk.map(isLog)), stump: await Promise.all(stump.map(isLog)) };
     report.samples.push(sample);
     await wait(100);
     op = await tool('get-operation', { operationId: op.value.operationId, details: true });

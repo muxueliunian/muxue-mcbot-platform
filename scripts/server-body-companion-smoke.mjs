@@ -19,7 +19,7 @@ const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connection.json');
 const connection = JSON.parse(await fs.readFile(connectionFile, 'utf8'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-companion-${new Date().toISOString().replaceAll(':', '-')}`);
 await fs.mkdir(dir, { recursive: true });
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime);
@@ -35,7 +35,7 @@ function check(name, passed, detail) { evidence.checks.push({ name, passed: !!pa
 async function alone() {
   const text = (await command('list')).trim();
   const names = text.match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), 'Unexpected real player; no fixture mutation');
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), 'Unexpected real player; no fixture mutation');
 }
 async function fixture(text) { await alone(); const reply = await command(text); assert(!/not loaded|Unknown or incomplete|Incorrect argument/i.test(reply), 'Fixture rejected: ' + reply); return reply; }
 async function tool(name, args = {}, allowError = false) {
@@ -53,7 +53,7 @@ async function until(read, predicate, description, timeout = 20000) {
 }
 const mode = () => tool('get-companion-mode');
 const settled = () => until(mode, state => state.state === 'waiting' && state.intent === 'follow', 'Follow did not reach waiting');
-async function position(name = 'ServerBot') {
+async function position(name = 'Claude') {
   const text = await command(`data get entity ${name} Pos`);
   const values = text.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
   assert(values?.length === 3 && values.every(Number.isFinite), 'Invalid position reply');
@@ -64,13 +64,13 @@ async function arena() {
   await tool('stop-action');
   await fixture('fill 1600 200 1600 1644 200 1644 stone');
   await fixture('fill 1600 201 1600 1644 204 1644 air');
-  await fixture('tp ServerBot 1610.5 201 1622.5');
+  await fixture('tp Claude 1610.5 201 1622.5');
   await fixture('tp C2Tester 1617.5 201 1622.5');
   await wait(350);
 }
 async function walkAway(ms = 900) {
   const began = Date.now();
-  await peerCommand({ type: 'look-at', username: 'ServerBot' });
+  await peerCommand({ type: 'look-at', username: 'Claude' });
   await until(peerEvents, records => records.some(event => event.type === 'looked' && Date.parse(event.time) >= began), 'Peer did not turn');
   await peerCommand({ type: 'walk', direction: 'back', ms });
   await until(peerEvents, records => records.some(event => event.type === 'position' && event.reason === 'walk-finished' && Date.parse(event.time) >= began), 'Peer did not walk');
@@ -82,11 +82,11 @@ async function startPeer() {
 }
 try {
   await alone();
-  const heartbeatFile = path.join(runtime, 'companion-ServerBot.json');
+  const heartbeatFile = path.join(runtime, 'companion-Claude.json');
   const refreshHeartbeat = () => writeHeartbeat(heartbeatFile, 'companion-validation');
   refreshHeartbeat(); heartbeat = setInterval(refreshHeartbeat, 3000);
   transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
   transport.stderr?.on('data', chunk => { stderr += chunk; });
   client = new Client({ name: 'companion-real-smoke', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools.map(value => value.name);
@@ -134,7 +134,7 @@ try {
   const sealed = await until(mode, value => value.state === 'waiting' && !!value.operationId, 'Sealed route should wait in place');
   const blockedAt = await position(); await wait(1500);
   check('no route waits in place without motion or ending the follow', distance(blockedAt, await position()) < 0.15 && distance(blockedAt, await position('C2Tester')) > 3 && (await mode()).state === 'waiting' && (await mode()).operationId === sealed.operationId);
-  const eventLines = (await fs.readFile(path.join(runtime, 'events-ServerBot.jsonl'), 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
+  const eventLines = (await fs.readFile(path.join(runtime, 'events-Claude.jsonl'), 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
   check('waiting for a route emits no blocked event', !eventLines.some(event => event.type === 'companion' && JSON.stringify(event).includes('blocked')));
   await fixture('fill 1613 201 1600 1613 203 1644 air');
   await until(position, value => distance(blockedAt, value) > 3, 'Cleared route was not followed', 15000);
@@ -147,11 +147,11 @@ try {
   await tool('stop-action'); await arena();
   await tool('companion-mode', { action: 'follow', player: 'C2Tester' });
   await until(mode, value => !!value.operationId, 'Native follow not started');
-  const control = JSON.parse(await fs.readFile(path.join(runtime, 'server-control-ServerBot.json'), 'utf8'));
+  const control = JSON.parse(await fs.readFile(path.join(runtime, 'server-control-Claude.json'), 'utf8'));
   const response = await fetch(connection.endpoint, { method: 'POST', headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ method: 'revoke', params: { instanceId: control.instanceId, sessionId: control.sessionId, leaseId: control.leaseId, stopToken: control.stopToken } }) });
   assert((await response.json()).ok, 'Independent revoke failed'); await wait(1000);
   const revokedAt = await position(); await fixture('tp C2Tester 1624.5 201 1622.5'); await wait(1000);
-  check('independent revoke stops physical body while player remains online', distance(revokedAt, await position()) < 0.15 && (await command('list')).includes('ServerBot'));
+  check('independent revoke stops physical body while player remains online', distance(revokedAt, await position()) < 0.15 && (await command('list')).includes('Claude'));
   const ended = await mode();
   check('lost lease clears resumable intent', ended.state === 'stopped' && !ended.intent);
   evidence.result = 'passed';

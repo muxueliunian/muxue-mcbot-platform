@@ -18,7 +18,7 @@ assert(backup.serverStopped && backup.comparison === 'actual bytes');
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connection.json');
 const connection = JSON.parse(await fs.readFile(connectionFile, 'utf8'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-gather-${new Date().toISOString().replaceAll(':', '-')}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const input = path.join(dir, 'peer-input.jsonl'), events = path.join(dir, 'peer-events.jsonl');
@@ -30,7 +30,7 @@ const command = async text => (await rcon([text], { serverDir }))[0];
 const send = value => fs.appendFile(input, JSON.stringify(value) + '\n');
 const peerEvents = async () => (await fs.readFile(events, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 function check(name, value, detail) { evidence.checks.push({ name, passed: !!value, ...(detail === undefined ? {} : { detail }) }); assert(value, name); console.log('PASS ' + name); }
-async function alone() { const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean); assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), 'Unexpected real player; no fixture changes'); }
+async function alone() { const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean); assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), 'Unexpected real player; no fixture changes'); }
 async function fixture(text) { await alone(); const value = await command(text); assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|Invalid component/i.test(value), value); return value; }
 async function tool(name, args = {}, allowError = false) {
   const started = performance.now(), reply = await client.callTool({ name, arguments: args }), value = JSON.parse(reply.content[0].text);
@@ -43,10 +43,10 @@ async function arena() {
   await tool('stop-action');
   await fixture('kill @e[type=minecraft:item,x=2000,y=199,z=2000,dx=24,dy=8,dz=24]');
   await fixture('fill 2000 200 2000 2024 200 2024 stone'); await fixture('fill 2000 201 2000 2024 204 2024 air');
-  await fixture('clear ServerBot'); await fixture('clear C2Tester');
-  await fixture('tp ServerBot 2008.5 201 2012.5'); await fixture('tp C2Tester 2001.5 201 2003.5');
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:diamond_pickaxe');
-  await fixture('item replace entity ServerBot hotbar.8 with minecraft:diamond 5'); await wait(300);
+  await fixture('clear Claude'); await fixture('clear C2Tester');
+  await fixture('tp Claude 2008.5 201 2012.5'); await fixture('tp C2Tester 2001.5 201 2003.5');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:diamond_pickaxe');
+  await fixture('item replace entity Claude hotbar.8 with minecraft:diamond 5'); await wait(300);
 }
 const resourcePositions = [[2010, 2010], [2010, 2014], [2013, 2012]];
 async function stones(count = 3) { for (const [x, z] of resourcePositions.slice(0, count)) await fixture(`setblock ${x} 201 ${z} stone`); }
@@ -59,10 +59,10 @@ const blockStill = async (x, z, block = 'minecraft:stone') => /^Test passed/.tes
 const received = async (item, count) => { const state = await tool('list-inventory'); return state.filter(stack => stack.id === item).reduce((sum, stack) => sum + stack.count, 0) === count; };
 try {
   await alone();
-  const heartbeatFile = path.join(runtime, 'companion-ServerBot.json');
+  const heartbeatFile = path.join(runtime, 'companion-Claude.json');
   writeHeartbeat(heartbeatFile, 'gather-validation'); heartbeat = setInterval(() => writeHeartbeat(heartbeatFile, 'gather-validation'), 3000);
   transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
   transport.stderr?.on('data', chunk => { stderr += chunk; }); client = new Client({ name: 'gather-real-smoke', version: '1' }); await client.connect(transport);
   const names = (await client.listTools()).tools.map(tool => tool.name);
   check('finite gathering tools exposed', ['discover-resources', 'gather-resources', 'collect-items'].every(name => names.includes(name)), { toolCount: names.length });
@@ -71,9 +71,9 @@ try {
   await fixture('forceload add 2000 2000 2024 2024'); await arena();
 
   phase = 'effective-stack-size';
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:snowball 16');
-  await fixture('item replace entity ServerBot hotbar.2 with minecraft:cobblestone 64');
-  await fixture('item replace entity ServerBot hotbar.3 with minecraft:stone[minecraft:max_stack_size=99] 99');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:snowball 16');
+  await fixture('item replace entity Claude hotbar.2 with minecraft:cobblestone 64');
+  await fixture('item replace entity Claude hotbar.3 with minecraft:stone[minecraft:max_stack_size=99] 99');
   const inventory = await tool('list-inventory');
   check('effective maximums 16, 64 and component-modified 99', inventory.find(v => v.slot === 1)?.maxStackSize === 16 && inventory.find(v => v.slot === 2)?.maxStackSize === 64 && inventory.find(v => v.slot === 3)?.maxStackSize === 99);
 
@@ -82,7 +82,7 @@ try {
     const op = await terminal('collect-items', { item, stacks: 1, radius: 6, say: '我按实际一组数量收起来。' });
     check(`one group resolves to actual ${maximum}`, op.status === 'succeeded' && op.result.targetCount === maximum && op.result.pickedUpCount === maximum && op.result.maxStackSize === maximum, op);
     check(`native inventory contains ${maximum} and own diamonds remain separate`, await received(item, maximum) && await received('minecraft:diamond', 5));
-    const nbt = await command('data get entity ServerBot Inventory');
+    const nbt = await command('data get entity Claude Inventory');
     check(`independent authority confirms ${maximum} received`, nbt.includes(item) && new RegExp(`count: ${maximum}(?:[,}])`).test(nbt));
   }
 
@@ -110,7 +110,7 @@ try {
   check('support platform remains intact', /^Test passed/.test(await command('execute if block 2008 200 2012 stone')));
 
   phase = 'log-drop-and-first-receipt-group'; await arena();
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:diamond_axe');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:diamond_axe');
   await fixture('setblock 2011 202 2013 oak_log');
   const logs = await tool('discover-resources', { blockIds: ['minecraft:oak_log'], radius: 6, maxResults: 64 });
   const logGroup = await terminal('gather-resources', { resourceRef: logs.resourceRef, item: 'minecraft:oak_log', stacks: 1 });
@@ -128,7 +128,7 @@ try {
   check('exhausted candidate set reports partial native amount', partial.status !== 'succeeded' && partial.result.pickedUpCount === 1 && partial.result.minedBlocks === 1 && await received('minecraft:cobblestone', 1), partial);
 
   phase = 'full-inventory'; await arena(); await stones(1);
-  for (let slot = 1; slot < 36; slot++) await fixture(`item replace entity ServerBot ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with minecraft:dirt 64`);
+  for (let slot = 1; slot < 36; slot++) await fixture(`item replace entity Claude ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with minecraft:dirt 64`);
   const full = await discover();
   const refusedFull = await terminal('gather-resources', { resourceRef: full.resourceRef, item: 'minecraft:cobblestone', count: 1 });
   check('full inventory stops before resource destruction', refusedFull.status !== 'succeeded' && await blockStill(2010, 2010), refusedFull);
@@ -138,7 +138,7 @@ try {
   check('component variants are not combined or guessed', ambiguous.status !== 'succeeded' && await received('minecraft:stone', 0), ambiguous);
 
   phase = 'stop-and-first-new-task'; await arena(); await stones(1);
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:wooden_pickaxe');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:wooden_pickaxe');
   const cancellable = await discover();
   const running = await tool('gather-resources', { resourceRef: cancellable.resourceRef, item: 'minecraft:cobblestone', count: 1 });
   await wait(150); await tool('stop-action');

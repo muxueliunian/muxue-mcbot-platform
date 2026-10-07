@@ -48,7 +48,7 @@ async function finish(op, ms = 100000) {
   while (op.value.status === 'running' && Date.now() < deadline) { await wait(250); op = await tool('get-operation', { operationId: op.value.operationId, details: true }); }
   return op;
 }
-async function countItem(id) { const reply = await command(`clear ServerBot ${id} 0`); const m = reply.match(/Found (\d+)/); return m ? Number(m[1]) : 0; }
+async function countItem(id) { const reply = await command(`clear Claude ${id} 0`); const m = reply.match(/Found (\d+)/); return m ? Number(m[1]) : 0; }
 const block = async ([x, y, z], id) => (await command(`execute if block ${x} ${y} ${z} ${id}`)).includes('passed');
 
 // 临时数据包：冒充模组的矿石和原木
@@ -78,7 +78,7 @@ const ores = { 'minecraft:diamond_ore': [3502, Y + 1, 3498], 'minecraft:lapis_or
   'minecraft:emerald_ore': [3498, Y + 1, 3502], 'minecraft:deepslate_redstone_ore': [3498, Y + 1, 3498], 'minecraft:amethyst_block': [3500, Y + 1, 3503] };
 const notLogs = { 'minecraft:stripped_oak_log': [3497, Y + 1, 3500], 'minecraft:oak_wood': [3503, Y + 1, 3501] };
 const tree = [1, 2, 3, 4, 5, 6].map(h => [3505, Y + h, 3505]);
-const park = () => command(`tp ServerBot ${X0 + 5.5} -60 ${Z0 + 5.5}`);
+const park = () => command(`tp Claude ${X0 + 5.5} -60 ${Z0 + 5.5}`);
 const near = id => Object.entries(ores).find(([key]) => key === id)[1];
 try {
   await fixture(`forceload add ${X0 - M} ${Z0 - M} ${X1 + M} ${Z1 + M}`);
@@ -92,12 +92,12 @@ try {
   client = new Client({ name: 'server-resource-tags-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
-  await command(`tp ServerBot ${start.join(' ')} -90 0`); await wait(1500);
-  await command('clear ServerBot');
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:iron_pickaxe');
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:iron_axe');
-  await fixture('item replace entity ServerBot hotbar.2 with minecraft:dirt 16');
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+  await command(`tp Claude ${start.join(' ')} -90 0`); await wait(1500);
+  await command('clear Claude');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:iron_pickaxe');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:iron_axe');
+  await fixture('item replace entity Claude hotbar.2 with minecraft:dirt 16');
   await wait(500);
 
   // 1. 按 #c:ores 发现：原版矿石全都认，掉落按掉落表算；假模组矿也认；不报精准采集的矿石块

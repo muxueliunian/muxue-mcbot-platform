@@ -37,7 +37,7 @@ const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const sourceConnection = path.join(serverDir, 'config/mcbot-server-control/connection.json');
 const connection = JSON.parse(await fs.readFile(sourceConnection, 'utf8'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-mixed-${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 await fs.mkdir(dir, { recursive: true });
 const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'peer-events.jsonl'), timeline = path.join(dir, 'timeline.jsonl');
@@ -78,7 +78,7 @@ const send = value => fs.appendFile(input, JSON.stringify(value) + '\n');
 const command = async text => (await rcon([text], { serverDir }))[0];
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), '非测试玩家在线，拒绝夹具修改'); return names;
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), '非测试玩家在线，拒绝夹具修改'); return names;
 }
 async function fixture(text) {
   await alone(); const reply = await command(text); record('fixture', { command: text, reply });
@@ -128,7 +128,7 @@ const mode = () => tool('get-companion-mode');
 const settled = () => until(mode, value => value.state === 'waiting' && value.intent === 'follow' && value.stage === 'active' && !['switching', 'picking-up'].includes(value.activity), '未进入跟随等待');
 const follow = () => tool('companion-mode', { action: 'follow', player: 'C2Tester', distance: 2, pickup: { items: ['minecraft:snowball'], radius: 4 } });
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-async function position(name = 'ServerBot') {
+async function position(name = 'Claude') {
   const text = await command(`data get entity ${name} Pos`), fields = text.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
   assert(fields?.length === 3 && fields.every(Number.isFinite), '独立位置证据无效'); return { x: fields[0], y: fields[1], z: fields[2] };
 }
@@ -138,7 +138,7 @@ async function stationary(name, duration = 900) {
   check(name, distance(first, last) < 0.15, { first, last, durationMs: duration }); return last;
 }
 async function motionSample() {
-  const at = await position(), reply = await command('data get entity ServerBot Motion');
+  const at = await position(), reply = await command('data get entity Claude Motion');
   const fields = reply.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
   assert(fields?.length === 3 && fields.every(Number.isFinite), '独立动量证据无效');
   return { ...stamp(), position: at, motion: { x: fields[0], y: fields[1], z: fields[2] }, horizontalSpeed: Math.hypot(fields[0], fields[2]) };
@@ -202,12 +202,12 @@ async function connect(label) {
   const index = allSessions.length + 1, runtime = path.join(dir, `session-${index}`); await fs.mkdir(runtime);
   const connectionFile = path.join(runtime, 'connection.json');
   await fs.writeFile(connectionFile, JSON.stringify({ ...connection, endpoint: `http://127.0.0.1:${proxy.address().port}/v2` }));
-  const heartbeatFile = path.join(runtime, 'companion-ServerBot.json');
+  const heartbeatFile = path.join(runtime, 'companion-Claude.json');
   writeHeartbeat(heartbeatFile, 'mixed-validation');
   const session = { index, runtime, connectionFile, heartbeatFile, label }; allSessions.push(session); active = session;
   session.transport = new ObservedTransport({ command: process.execPath,
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
   session.client = new Client({ name: 'mixed-real-smoke', version: '1' });
   await session.client.connect(session.transport); session.lease = evidence.leases.at(-1)?.index;
   record('explicit-claim', { session: index, lease: session.lease, label });
@@ -241,8 +241,8 @@ async function roundBody() {
     await tool('stop-action');
     await fixture('kill @e[type=minecraft:item,x=2400,y=199,z=2400,dx=44,dy=8,dz=44]');
     await fixture('fill 2400 200 2400 2444 200 2444 stone'); await fixture('fill 2400 201 2400 2444 204 2444 air');
-    await fixture('clear ServerBot'); await fixture('clear C2Tester');
-    await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2412.5 201 2422.5');
+    await fixture('clear Claude'); await fixture('clear C2Tester');
+    await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2412.5 201 2422.5');
     await fixture('gamemode survival C2Tester'); await wait(350);
   });
   await step(`round-${round}-follow-pickup-chat`, async () => {
@@ -251,10 +251,10 @@ async function roundBody() {
     check('授权跟随拾取实收三个雪球', await amount('minecraft:snowball') === 3);
     const before = await mode(), floor = (await peerEvents()).length, message = `混合回归第${round}轮，我继续跟着你。`;
     await send({ type: 'chat', message: `小克，第${round}轮聊天不停止。` }); await tool('send-chat', { message });
-    const responded = await until(peerEvents, rows => rows.slice(floor).some(row => row.type === 'chat' && row.username === 'ServerBot' && row.message === message), '协议玩家未收到游戏回应');
+    const responded = await until(peerEvents, rows => rows.slice(floor).some(row => row.type === 'chat' && row.username === 'Claude' && row.message === message), '协议玩家未收到游戏回应');
     const after = await mode();
     check('真实玩家收到聊天且原陪伴动作未替换', after.operationId === before.operationId && after.intent === 'follow' && after.pickup?.pickedUpCount === 3,
-      { responseAt: responded.slice(floor).find(row => row.type === 'chat' && row.username === 'ServerBot' && row.message === message)?.time });
+      { responseAt: responded.slice(floor).find(row => row.type === 'chat' && row.username === 'Claude' && row.message === message)?.time });
     const at = await position(); await fixture('tp C2Tester 2421.5 201 2422.5');
     await until(async () => ({ body: await position(), player: await position('C2Tester') }), state => distance(at, state.body) > 2 && distance(state.body, state.player) <= 2.7, '聊天后未跟上新位置');
     await settled();
@@ -274,7 +274,7 @@ async function roundBody() {
     const resume = await tool('companion-mode', { action: 'resume' }, true); check('stop 后不得恢复旧意图', resume.code === 'NO_COMPANION_INTENT', resume);
   });
   await step(`round-${round}-container`, async () => {
-    await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2412.5 201 2422.5');
+    await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2412.5 201 2422.5');
     await fixture('setblock 2415 201 2422 chest[facing=west]'); await fixture('item replace block 2415 201 2422 container.0 with minecraft:oak_log 8');
     await wait(350); const found = await tool('discover-containers', { radius: 8, maxResults: 16 });
     const target = found.candidates.find(value => value.position.x === 2415 && value.position.y === 201 && value.position.z === 2422); assert(target, '没有发现指定夹具箱子');
@@ -287,7 +287,7 @@ async function roundBody() {
     check('取物任务关箱且不恢复陪伴', (await tool('get-container', { details: true })) === null && !(await mode()).intent);
   });
   await step(`round-${round}-container-stop-immediate-new`, async () => {
-    await fixture('tp ServerBot 2422.5 201 2422.5'); await fixture('tp C2Tester 2421.5 201 2422.5');
+    await fixture('tp Claude 2422.5 201 2422.5'); await fixture('tp C2Tester 2421.5 201 2422.5');
     await fixture('setblock 2430 201 2422 chest[facing=west]'); await fixture('item replace block 2430 201 2422 container.0 with minecraft:oak_log 48');
     await wait(350); const before = await command('data get block 2430 201 2422 Items');
     await drop('minecraft:dirt', 1, { x: 2422.5, z: 2425.5 });
@@ -332,11 +332,11 @@ async function roundBody() {
     await wait(900); check('新有限任务完成后旧意图未重放', !(await mode()).intent && distance(finalAt, await position()) < 0.15);
   });
   await step(`round-${round}-disconnect-reclaim`, async () => {
-    await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2432.5 201 2422.5');
+    await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2432.5 201 2422.5');
     // A fixture teleport briefly clears grounded state. Establish the movement
     // precondition before injecting a disconnect; do not weaken the Body guard.
     await wait(350);
-    const ground = await until(() => command('data get entity ServerBot OnGround'), value => /entity data: 1b/.test(value), '故障夹具传送后身体尚未落地');
+    const ground = await until(() => command('data get entity Claude OnGround'), value => /entity data: 1b/.test(value), '故障夹具传送后身体尚未落地');
     record('disconnect-fixture-grounded', { ground, position: await position() });
     const at = await position(); await follow(); await until(position, value => distance(at, value) > 0.4, '故障前身体未开始移动');
     const fault = round % 2 === 1 ? 'stdio-close' : 'process-kill'; await disconnect(fault);
@@ -390,7 +390,7 @@ try {
   }
   if (forced) await fixture('forceload remove 2400 2400 2444 2444').then(reply => evidence.cleanup.push({ action: 'remove-own-platform-forceload', reply }), error => { evidence.result = 'failed'; process.exitCode = 1; evidence.cleanup.push({ action: 'remove-own-platform-forceload', error: redact(error.message) }); });
   for (const session of allSessions) {
-    const events = await jsonLines(path.join(session.runtime, 'events-ServerBot.jsonl')); record('runtime-events', { session: session.index, events });
+    const events = await jsonLines(path.join(session.runtime, 'events-Claude.jsonl')); record('runtime-events', { session: session.index, events });
     await fs.unlink(session.connectionFile).catch(error => { if (error.code !== 'ENOENT') evidence.cleanup.push({ action: 'remove-own-relay-credentials', error: redact(error.message) }); });
   }
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }

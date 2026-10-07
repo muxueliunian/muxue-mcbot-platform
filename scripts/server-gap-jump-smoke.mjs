@@ -57,7 +57,7 @@ async function tool(name, args = {}) {
 const [X0, X1, Z0, Z1, Y, GAP] = [3200, 3220, 3200, 3210, 200, 3210];
 // 改平台前先把 Bot 放到地面上（平坦世界地表 y=-60），不然拆平台时它会从高空掉下去
 const M = 4;
-const park = () => command(`tp ServerBot ${X0 + 5.5} -60 ${Z0 + 5.5}`);
+const park = () => command(`tp Claude ${X0 + 5.5} -60 ${Z0 + 5.5}`);
 async function build(gapWidth) {
   await park(); await wait(500);
   await command(`fill ${X0 - M} ${Y - 6} ${Z0 - M} ${X1 + M} ${Y + 5} ${Z1 + M} air`);
@@ -66,11 +66,11 @@ async function build(gapWidth) {
 }
 // 一段移动：每 100ms 记一次 Bot 的位置，看最低点有没有掉进沟里
 async function leg(name, start, target, run) {
-  await command(`tp ServerBot ${start.join(' ')}`); await wait(1500);
+  await command(`tp Claude ${start.join(' ')}`); await wait(1500);
   const samples = []; let done = false, result;
-  const sampler = (async () => { while (!done) { samples.push(await pos('ServerBot')); await wait(100); } })();
+  const sampler = (async () => { while (!done) { samples.push(await pos('Claude')); await wait(100); } })();
   try { result = await run(); } finally { done = true; await sampler; }
-  const end = await pos('ServerBot');
+  const end = await pos('Claude');
   const lowest = Math.min(...samples.map(s => s[1]), end[1]);
   const entry = { name, start, target, end, lowest, result };
   report.legs.push(entry); await save(); return entry;
@@ -92,7 +92,7 @@ try {
   client = new Client({ name: 'server-gap-jump-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   await tool('get-companion-mode');
   await command('tp GapPeer 3205.5 201 3208.5');
   await build(1);
@@ -114,7 +114,7 @@ try {
     const started = await tool('companion-mode', { action: 'follow', player: 'GapPeer' });
     assert(!started.error, JSON.stringify(started.value));
     const deadline = Date.now() + 25000; let state;
-    while (Date.now() < deadline) { await wait(500); state = (await tool('get-companion-mode')).value; if ((await pos('ServerBot'))[0] > GAP + 1 && state?.state === 'waiting') break; }
+    while (Date.now() < deadline) { await wait(500); state = (await tool('get-companion-mode')).value; if ((await pos('Claude'))[0] > GAP + 1 && state?.state === 'waiting') break; }
     await tool('stop-action'); return state;
   });
   check('跟随时跳过沟追上玩家', follow.end[0] > GAP + 1 && flat(follow.end, [3216.5, 0, 3207.5]) <= 4, follow);
@@ -135,11 +135,11 @@ try {
   await fixture(`fill ${X0} ${Y - 4} ${Z0} ${X0 + 8} ${Y} ${Z1} stone`);
   await fixture(`fill ${X0} ${Y - 2} 3205 ${X0 + 8} ${Y} 3205 air`);
   const north = [3204.5, Y + 1, 3201.5], south = [3204.5, Y + 1, 3209.5];
-  await command(`tp ServerBot ${north.join(' ')}`); await wait(1500);
+  await command(`tp Claude ${north.join(' ')}`); await wait(1500);
   const samples = []; let done = false;
-  const sampler = (async () => { while (!done) { samples.push(await pos('ServerBot')); await wait(100); } })();
+  const sampler = (async () => { while (!done) { samples.push(await pos('Claude')); await wait(100); } })();
   const ns = await moveTo(south); done = true; await sampler;
-  const nsEnd = await pos('ServerBot'); const nsLow = Math.min(...samples.map(s => s[1]), nsEnd[1]);
+  const nsEnd = await pos('Claude'); const nsLow = Math.min(...samples.map(s => s[1]), nsEnd[1]);
   report.legs.push({ name: '往南过 1 格沟', end: nsEnd, lowest: nsLow, result: ns });
   check('南北向的 1 格沟也能跳过去', !ns.error && ns.value?.status === 'succeeded' && flat(nsEnd, south) <= 0.8 && nsLow >= Y + 0.9, { end: nsEnd, lowest: nsLow, result: ns });
   report.result = 'passed';

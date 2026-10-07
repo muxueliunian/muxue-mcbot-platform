@@ -63,11 +63,11 @@ try {
   client = new Client({ name: 'server-perception-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   const names = (await client.listTools()).tools.map(t => t.name);
   check('look-around 工具已发布', names.includes('look-around'), names);
-  await command(`spreadplayers ${home[0]} ${home[1]} 0 1 false ServerBot`); await wait(2000);
-  const bot = (await posOf('ServerBot')).map(Math.floor);
+  await command(`spreadplayers ${home[0]} ${home[1]} 0 1 false Claude`); await wait(2000);
+  const bot = (await posOf('Claude')).map(Math.floor);
 
   // 夹具：远处玩家、生物、掉落物；空中露天的箱子和煤矿；一块被石头完全包住的钻石矿
   await command(`tp LookPeer ${bot[0] + 20} ${bot[1] + 10} ${bot[2]}`);
@@ -119,7 +119,7 @@ try {
   report.gather = op;
   check('自己走过去砍下并捡起原木', op.status === 'succeeded', op);
   check('原木那格已经没了', await isAir(...log));
-  const after = await posOf('ServerBot');
+  const after = await posOf('Claude');
   check('Bot 真的走过去了（离原木不到 5 格）', Math.hypot(after[0] - log[0] - 0.5, after[2] - log[2] - 0.5) < 5, { after, log, before });
   report.result = 'passed';
 } catch (error) {

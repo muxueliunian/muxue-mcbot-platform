@@ -46,7 +46,7 @@ async function pos(name) {
   const m = reply.match(/\[([^\]]+)\]/); assert(m, '读不到位置：' + reply);
   return m[1].split(',').map(v => Number(v.trim().replace(/[dfDF]$/, '')));
 }
-const sleepingAt = async () => { const reply = await command('data get entity ServerBot SleepingX'); const m = reply.match(/data: (-?\d+)/); return m ? Number(m[1]) : null; };
+const sleepingAt = async () => { const reply = await command('data get entity Claude SleepingX'); const m = reply.match(/data: (-?\d+)/); return m ? Number(m[1]) : null; };
 const dayTime = async () => Number((await command('time query daytime')).match(/(\d+)/)[1]);
 const gamerule = async name => (await command(`gamerule ${name}`)).match(/(true|false)\s*$/)?.[1];
 let client;
@@ -67,7 +67,7 @@ const [X0, X1, Z0, Z1, Y, M] = [3692, 3712, 3692, 3712, 200, 3];
 const start = [3700.5, Y + 1, 3700.5];
 const occupied = { foot: [3703, Y + 1, 3700], head: [3704, Y + 1, 3700], facing: 'east' };
 const free = { foot: [3700, Y + 1, 3707], head: [3700, Y + 1, 3708], facing: 'south' };
-const park = () => command(`tp ServerBot ${X0 + 5.5} -60 ${Z0 + 5.5}`);
+const park = () => command(`tp Claude ${X0 + 5.5} -60 ${Z0 + 5.5}`);
 const bed = async (b, taken) => {
   await fixture(`setblock ${b.head.join(' ')} red_bed[part=head,facing=${b.facing},occupied=${taken}]`);
   await fixture(`setblock ${b.foot.join(' ')} red_bed[part=foot,facing=${b.facing},occupied=${taken}]`);
@@ -81,7 +81,7 @@ async function ground() {
 const original = {};
 try {
   const online = await command('list');
-  check('服务器上没有其他玩家（跳夜要所有玩家都睡）', /There are 0 of/.test(online) || /: ServerBot\s*$/.test(online.trim()), online);
+  check('服务器上没有其他玩家（跳夜要所有玩家都睡）', /There are 0 of/.test(online) || /: Claude\s*$/.test(online.trim()), online);
   for (const name of ['doDaylightCycle', 'doMobSpawning']) original[name] = await gamerule(name);
   await command('gamerule doDaylightCycle true'); await command('gamerule doMobSpawning false');
   await fixture(`forceload add ${X0 - M} ${Z0 - M} ${X1 + M} ${Z1 + M}`);
@@ -89,15 +89,15 @@ try {
   client = new Client({ name: 'server-sleep-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   const names = (await client.listTools()).tools.map(t => t.name);
   check('sleep-in-bed／wake-up 工具已发布', names.includes('sleep-in-bed') && names.includes('wake-up'), names);
 
   // 1. 白天拒绝、没床拒绝
   await ground(); await bed(free, false);
-  await command(`tp ServerBot ${start.join(' ')}`); await wait(1500);
+  await command(`tp Claude ${start.join(' ')}`); await wait(1500);
   const day = await settle(await tool('sleep-in-bed'));
-  const stayed = await pos('ServerBot');
+  const stayed = await pos('Claude');
   check('白天 sleep-in-bed 拒绝（NOT_NIGHT），没走动', codeOf(day) === 'NOT_NIGHT' && Math.hypot(stayed[0] - start[0], stayed[2] - start[2]) < 0.1, { day: day.value, stayed });
   // Day or night is the sky brightness, refreshed on the next tick after the time changes (vanilla checks the same).
   await command('time set 14000'); await wait(1000);
@@ -109,12 +109,12 @@ try {
   await bed(occupied, true); await bed(free, false);
   const slept = await settle(await tool('sleep-in-bed'));
   report.runs.slept = slept.value;
-  const at = await pos('ServerBot');
+  const at = await pos('Claude');
   check('走到远处的空床躺下，没选标了有人的近床', !slept.error && slept.value.status === 'succeeded' && slept.value.result?.bed?.z === free.head[2] && slept.value.result?.bed?.x === free.head[0], slept.value);
   check('服务端确认在睡：SleepingX 是那张床，人在床上', await sleepingAt() === free.head[0] && Math.abs(at[2] - (free.head[2] + 0.5)) < 1.2, { sleepingX: await sleepingAt(), at });
   const status = await tool('get-status');
   check('get-status 里 sleeping 为 true、time.canSleep 为 true', status.value.sleeping === true && status.value.time?.canSleep === true, { sleeping: status.value.sleeping, time: status.value.time });
-  const spawn = await command('data get entity ServerBot SpawnX');
+  const spawn = await command('data get entity Claude SpawnX');
   check('重生点设到了这张床（和玩家一样）', new RegExp(`data: ${free.head[0]}\\b`).test(spawn), spawn);
 
   // 3. 睡着时不能走；wake-up 起床
@@ -128,7 +128,7 @@ try {
   // 4. 床边有怪：拒绝
   await command(`fill 3704 ${Y + 1} 3708 3706 ${Y + 3} 3710 glass hollow`);
   await fixture(`summon zombie 3705.5 ${Y + 2} 3709.5 {NoAI:1b,PersistenceRequired:1b,Silent:1b}`);
-  await command(`tp ServerBot ${start.join(' ')}`); await wait(1000);
+  await command(`tp Claude ${start.join(' ')}`); await wait(1000);
   const unsafe = await settle(await tool('sleep-in-bed'));
   check('床边 5 格有僵尸：拒绝（NOT_SAFE），没躺下', codeOf(unsafe) === 'NOT_SAFE' && await sleepingAt() === null, unsafe.value);
   await command(`kill @e[type=zombie,x=3705,y=${Y + 2},z=3709,distance=..4]`);

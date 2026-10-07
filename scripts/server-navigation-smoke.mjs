@@ -64,19 +64,19 @@ try {
   client = new Client({ name: 'server-navigation-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   await command(`tp NavPeer ${legs[0].join(' ')}`); await wait(1500);
-  await command(`spreadplayers ${legs[0][0] + 2} ${legs[0][2]} 0 1 false ServerBot`); await wait(2500);
+  await command(`spreadplayers ${legs[0][0] + 2} ${legs[0][2]} 0 1 false Claude`); await wait(2500);
   const follow = await tool('companion-mode', { action: 'follow', player: 'NavPeer' });
   check('开始跟随测试玩家', !follow.error, follow.value);
   let unreachable = 0;
   for (const [x, y, z] of legs.slice(1)) {
     await command(`tp NavPeer ${x} ${y} ${z}`); await wait(300);
     const target = await posOf('NavPeer');
-    const started = Date.now(); let bot = await posOf('ServerBot'), state;
+    const started = Date.now(); let bot = await posOf('Claude'), state;
     while (Date.now() - started < 20000) {
       await wait(1000);
-      bot = await posOf('ServerBot');
+      bot = await posOf('Claude');
       state = (await tool('get-companion-mode')).value;
       if (JSON.stringify(state).includes('"blocked"') || JSON.stringify(state).includes('BLOCKED') || dist(bot, target) <= 3.5) break;
     }

@@ -6,7 +6,7 @@
 
 控制口仅 `http://127.0.0.1:8766/v2`（端口可配置），POST JSON `{method,params}`，Bearer token；拒绝 Origin、重定向、超限请求。响应 `{ok:true,result}` 或 `{ok:false,error:{code,message}}`。游戏读写只在服务器主线程；HTTP 超时后尚未执行的排队请求必须丢弃。
 
-连接文件 `config/mcbot-server-control/connection.json`：`{protocol:2,backend:"server",endpoint,token,worldId,username}`，不记录模型凭据。worldId 与允许的唯一角色在服务端配置中固定，不接受客户端任意指定世界或玩家；默认角色 ServerBot。instanceId 每次服务启动随机变化；sessionId 每次角色创建或死亡／维度变化更新；leaseId 每次接管更新。均使用随机标识或字段比较，不计算哈希。
+连接文件 `config/mcbot-server-control/connection.json`：`{protocol:2,backend:"server",endpoint,token,worldId,username}`，不记录模型凭据。worldId 与允许的唯一角色在服务端配置中固定，不接受客户端任意指定世界或玩家；默认角色 Claude。instanceId 每次服务启动随机变化；sessionId 每次角色创建或死亡／维度变化更新；leaseId 每次接管更新。均使用随机标识或字段比较，不计算哈希。
 
 ## 方法
 
@@ -159,12 +159,12 @@ count和stacks必须二选一、1–256整数，最终解析目标最多256，�
 
 此前有限采集批次最终Java21 build通过**330项离线检查**；历史B为80项、第二批交互为163项、持续陪伴为227项，均保留为各自当时的结果，不与当前重复相加。该采集批次程序矩阵及真实Claude-b四阶段的最终证据见[有限采集验收](archive/server_gather_validation.md)，不是当前可选陪伴拾取批次的实测证据。33工具是能力齐备时的接线数量，不代表逐一验收所有参数、任意Mod或自动陪挖。
 
-`client-runtime --body server --connection-file ... --username ServerBot --world-id ...` 接此协议，原 `--body client`／默认路径保留。stdio MCP 仅发布 capabilities 允许的动作。
+`client-runtime --body server --connection-file ... --username Claude --world-id ...` 接此协议，原 `--body client`／默认路径保留。stdio MCP 仅发布 capabilities 允许的动作。
 
 死亡后的独立显式入口（在仓库根目录运行）：
 
 ```pwsh
-node client-runtime/dist/main.js --body server --respawn-only --connection-file <连接文件> --username ServerBot --world-id <世界标识>
+node client-runtime/dist/main.js --body server --respawn-only --connection-file <连接文件> --username Claude --world-id <世界标识>
 ```
 
 此命令只执行 hello→respawn，不开启 MCP、不写租约控制文件、不调用 claim，不能带 --hosted。返回确认后还须显式启动新的 MCP 取得新 lease；原失效 MCP 保持终止态。重生请求超时先查 hello／实际角色，不盲目重试。C 的真实模型陪玩与 D 的内容 Mod 验证分别验收，不由这些能力名称代表完成。

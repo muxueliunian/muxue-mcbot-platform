@@ -48,7 +48,7 @@ async function finish(op, ms = 100000) {
   while (op.value.status === 'running' && Date.now() < deadline) { await wait(250); op = await tool('get-operation', { operationId: op.value.operationId, details: true }); }
   return op;
 }
-async function countItem(id) { const reply = await command(`clear ServerBot ${id} 0`); const m = reply.match(/Found (\d+)/); return m ? Number(m[1]) : 0; }
+async function countItem(id) { const reply = await command(`clear Claude ${id} 0`); const m = reply.match(/Found (\d+)/); return m ? Number(m[1]) : 0; }
 const block = async ([x, y, z], id) => (await command(`execute if block ${x} ${y} ${z} ${id}`)).includes('passed');
 
 // 平台顶面 y=200，Bot 站在 (3600.5, 201, 3600.5)；冷杉在 (3605, 201..206, 3605)
@@ -60,7 +60,7 @@ const trunk = [1, 2, 3, 4, 5, 6].map(h => [3605, Y + h, 3605]);
 const leaves = [];
 for (const [h, r] of [[4, 2], [5, 1], [6, 1]]) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) if (dx || dz) leaves.push([3605 + dx, Y + h, 3605 + dz]);
 leaves.push([3605, Y + 7, 3605]);
-const park = () => command(`tp ServerBot ${X0 + 5.5} -60 ${Z0 + 5.5}`);
+const park = () => command(`tp Claude ${X0 + 5.5} -60 ${Z0 + 5.5}`);
 try {
   await fixture(`forceload add ${X0 - M} ${Z0 - M} ${X1 + M} ${Z1 + M}`);
   await park(); await wait(500);
@@ -74,12 +74,12 @@ try {
   client = new Client({ name: 'server-mod-resources-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
-  await command(`tp ServerBot ${start.join(' ')} -90 0`); await wait(1500);
-  await command('clear ServerBot');
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:iron_pickaxe');
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:iron_axe');
-  await fixture('item replace entity ServerBot hotbar.2 with minecraft:dirt 16');
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+  await command(`tp Claude ${start.join(' ')} -90 0`); await wait(1500);
+  await command('clear Claude');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:iron_pickaxe');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:iron_axe');
+  await fixture('item replace entity Claude hotbar.2 with minecraft:dirt 16');
   await wait(500);
 
   // 1. #c:ores：Mekanism 的矿都认，掉落按它自己的掉落表
@@ -110,7 +110,7 @@ try {
     report.cases[label] = op.value;
     const got = await countItem(item) - before;
     const [x, y, z] = ores[blockId];
-    const drops = op.value.status === 'succeeded' ? undefined : { item: await command(`data get entity @e[type=item,x=${x},y=${y},z=${z},distance=..12,sort=nearest,limit=1]`), bot: await command('data get entity ServerBot Pos') };
+    const drops = op.value.status === 'succeeded' ? undefined : { item: await command(`data get entity @e[type=item,x=${x},y=${y},z=${z},distance=..12,sort=nearest,limit=1]`), bot: await command('data get entity Claude Pos') };
     check(`${label}：采到 ${count} 个以上，挖了 ${maxBlocks} 块`, op.value.status === 'succeeded' && got >= count && op.value.result?.minedBlocks === maxBlocks && !(await block(ores[blockId], blockId)), { status: op.value.status, summary: op.value.summary, got, minedBlocks: op.value.result?.minedBlocks, drops, result: op.value.result });
   }
 

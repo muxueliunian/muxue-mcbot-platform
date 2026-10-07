@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Real-server spike verification only. RCON is an experimental entry, not a product API.
-// Mineflayer observes packets (and attacks once in hit); ServerBot has no network client. Never starts a server.
+// Mineflayer observes packets (and attacks once in hit); Claude has no network client. Never starts a server.
 import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -12,7 +12,7 @@ const usage = `node scripts/server-body-spike-smoke.mjs --server-dir <isolated s
 Requires Minecraft 1.21.1, loopback port 25568 and the mcbot-server-spike Mod.
 Default fixture origin: 512.5,201,512.5. Without --allow-fixture, prepare a clear level area there (or supply --origin).
 G1 requires --allow-fixture: floor, wall and elevated fall platform are written only in this isolated area.
-hit requires --allow-fixture: a survival test observer punches ServerBot once, then checks damage and knockback without active Bot movement.
+hit requires --allow-fixture: a survival test observer punches Claude once, then checks damage and knockback without active Bot movement.
 Back up the test world first. Human presence refuses mutations unless --allow-human is explicit.
 Exit 0: all assertions passed; exit 1: failed. Evidence is written even on failure.
 `;
@@ -52,7 +52,7 @@ async function main() {
   const opt = options(process.argv.slice(2));
   if (opt.help) { console.log(usage); return; }
   const evidence = { schema: 1, phase: opt.phase, started: new Date().toISOString(), serverDir: opt['server-dir'], origin: opt.origin,
-    boundary: 'Isolated spike commands; Mineflayer is a test observer, with one attacker in hit; no ServerBot protocol client',
+    boundary: 'Isolated spike commands; Mineflayer is a test observer, with one attacker in hit; no Claude protocol client',
     allowFixture: !!opt['allow-fixture'], allowHuman: !!opt['allow-human'], assertions: [], commands: [], observers: [], cleanup: [] };
   const observers = []; const acquiredChunks = []; const start = performance.now(); let mutationsAllowed = false; let ownedBody = false;
   const stamp = () => Math.round(performance.now() - start);
@@ -69,7 +69,7 @@ async function main() {
     const match = text.match(/:\s*([^\r\n]*)$/);
     insist(match || /There are 0\b/.test(text), 'Cannot parse online player list; refuse mutation');
     const names = match ? match[1].split(',').map(s => s.trim()).filter(Boolean) : [];
-    return names.filter(name => !['ServerBot', ...observers.map(o => o.name)].includes(name));
+    return names.filter(name => !['Claude', ...observers.map(o => o.name)].includes(name));
   }
   async function mutate(text) {
     insist(mutationsAllowed, 'Mutations not authorized for this server');
@@ -131,7 +131,7 @@ async function main() {
     await until(`${o.name} authoritative position`, () => o.bot.entity && dist(o.bot.entity.position, target) < 0.25);
     check(`${o.name}: observer position confirmed`, dist(o.bot.entity.position, target) < 0.25, { actual: pos(o.bot.entity.position), target });
   }
-  function infos(o, uuid) { return o.packets.filter(p => p.packet === 'player_info' && p.players.some(e => e.uuid === uuid && e.name === 'ServerBot') && (p.action?.add_player === true || p.action === 'add_player' || (typeof p.action === 'number' && (p.action & 1) !== 0))); }
+  function infos(o, uuid) { return o.packets.filter(p => p.packet === 'player_info' && p.players.some(e => e.uuid === uuid && e.name === 'Claude') && (p.action?.add_player === true || p.action === 'add_player' || (typeof p.action === 'number' && (p.action & 1) !== 0))); }
   function spawns(o, uuid, after = 0) { return o.packets.filter(p => p.packet === 'spawn_entity' && p.uuid === uuid && p.seq > after); }
   function visible(o, uuid) { return Object.values(o.bot.entities).filter(e => e.uuid === uuid); }
   async function visibleCheck(o, s, name, after = 0) {
@@ -149,7 +149,7 @@ async function main() {
     await entityCount(1, s.uuid); return s;
   }
   async function entityCount(expected, uuid) {
-    const reply = await command('execute as @e[type=minecraft:player,name=ServerBot] run data get entity @s UUID');
+    const reply = await command('execute as @e[type=minecraft:player,name=Claude] run data get entity @s UUID');
     const arrays = [...reply.matchAll(/\[I;\s*([-+\d,\s]+)\]/g)].map(match => match[1].split(',').map(part => Number(part.trim())));
     const expectedArray = uuid ? Array.from({ length: 4 }, (_, index) => Buffer.from(uuid.replaceAll('-', ''), 'hex').readInt32BE(index * 4)) : undefined;
     check(`independent player entity count ${expected}`, arrays.length === expected && arrays.every(array => array.length === 4 && array.every((value, index) => value === expectedArray[index])), { reply, arrays, expectedArray });
@@ -161,7 +161,7 @@ async function main() {
     check('remove clears server body and registration', s.exists === false && s.registered === 0, s);
     await entityCount(0);
     for (const o of observers.filter(o => !o.closed)) {
-      await until(`${o.name} removal`, () => visible(o, uuid).length === 0 && !o.bot.players.ServerBot);
+      await until(`${o.name} removal`, () => visible(o, uuid).length === 0 && !o.bot.players.Claude);
       const marker = markers.get(o);
       check(`${o.name}: removed entity and player info`, o.packets.some(p => p.seq > marker.seq && p.packet === 'player_remove' && p.uuids.includes(uuid)) && (marker.entityId === undefined || o.packets.some(p => p.seq > marker.seq && p.packet === 'entity_destroy' && p.entityIds.includes(marker.entityId))), { uuid, marker });
     }
@@ -264,13 +264,13 @@ async function main() {
     check('isolated loopback test port', props['server-ip'] === '127.0.0.1' && +props['server-port'] === 25568);
     const online = await humans();
     check('human mutation permission', online.length === 0 || !!opt['allow-human'], { online });
-    const initial = await status(); check('initially no ServerBot', initial.exists === false && initial.registered === 0, initial);
+    const initial = await status(); check('initially no Claude', initial.exists === false && initial.registered === 0, initial);
     await entityCount(0);
     mutationsAllowed = true;
-    if (opt['allow-human']) await command(tellrawCommand('[ServerBody test] Isolated experiment: ServerBot will be spawned, removed and respawned. Test observers may teleport.', { color: 'yellow' }));
+    if (opt['allow-human']) await command(tellrawCommand('[ServerBody test] Isolated experiment: Claude will be spawned, removed and respawned. Test observers may teleport.', { color: 'yellow' }));
     await fixture();
     const a = await observer('SBObserveA');
-    check('observer initially has no ServerBot', !a.bot.players.ServerBot && !Object.values(a.bot.entities).some(e => e.username === 'ServerBot'));
+    check('observer initially has no Claude', !a.bot.players.Claude && !Object.values(a.bot.entities).some(e => e.username === 'Claude'));
     let s = await spawn(opt.origin);
     await visibleCheck(a, s, 'existing observer');
     if (opt.phase === 'g0') {
@@ -285,12 +285,12 @@ async function main() {
       await visibleCheck(a, s, 'respawn existing observer', a.packets.findLast(p => p.packet === 'player_remove' && p.uuids.includes(uuid))?.seq ?? 0);
       await quit(b); b = await observer('SBObserveB'); await visibleCheck(b, s, 'reconnected observer');
       const beforeKick = s, kickSeq = a.sequence;
-      await mutate('kick ServerBot ServerBody smoke kick lifecycle');
+      await mutate('kick Claude ServerBody smoke kick lifecycle');
       const kicked = await until('kick reconciles lifecycle', async () => { const now = await status(); return !now.exists && now.registered === 0 ? now : false; });
       ownedBody = false;
       check('vanilla kick unregisters body', kicked.exists === false && kicked.registered === 0, kicked);
       await entityCount(0);
-      await until('kick clears observer player', () => !a.bot.players.ServerBot && visible(a, uuid).length === 0);
+      await until('kick clears observer player', () => !a.bot.players.Claude && visible(a, uuid).length === 0);
       check('kick notifies observers', a.packets.some(p => p.seq > kickSeq && p.packet === 'player_remove' && p.uuids.includes(uuid)));
       await mutate('mcbot-spike remove');
       const kickRemoved = await status(); check('remove after kick is idempotent', !kickRemoved.exists && kickRemoved.registered === 0, kickRemoved);
@@ -322,7 +322,7 @@ async function main() {
       check('stop clears movement and remains still', stopped.controlActive === false && still.controlActive === false && stopped.movingTicks === still.movingTicks && horizontal(pos(stopped), pos(still)) < 0.03, { preStop, stopped, still });
       await mutate('mcbot-spike move 0 1 8'); await bounded(wait(1000), 'new movement', 1200); const newMove = await status();
       check('new movement works after stop', pos(newMove).z - pos(still).z > 0.3 && Math.abs(pos(newMove).x - pos(still).x) < 0.1, { still, newMove });
-      // Recreate only through the explicit spawn entry; never teleport ServerBot to fake movement.
+      // Recreate only through the explicit spawn entry; never teleport Claude to fake movement.
       await remove(s.uuid); s = await spawn({ x: Math.floor(opt.origin.x) + 6.5, y: opt.origin.y, z: opt.origin.z });
       await mutate('mcbot-spike move 1 0 60'); await bounded(wait(3800), 'wall collision', 4000); const wall = await status();
       check('wall physically blocks movement', pos(wall).x > Math.floor(opt.origin.x) + 6.6 && pos(wall).x <= Math.floor(opt.origin.x) + 7.71, wall);

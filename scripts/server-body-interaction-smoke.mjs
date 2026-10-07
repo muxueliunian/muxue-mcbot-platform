@@ -20,7 +20,7 @@ const backup=JSON.parse(await fs.readFile(path.join(root,'output/serverbody-inte
 assert(backup.serverStopped&&backup.comparison==='actual bytes');
 const props=readServerProps(serverDir);assert.equal(props['server-port'],'25568');assert.equal(props['rcon.port'],'25578');
 const connection=JSON.parse(await fs.readFile(path.join(serverDir,'config/mcbot-server-control/connection.json'),'utf8'));
-assert.equal(connection.endpoint,'http://127.0.0.1:8766/v2');assert.equal(connection.worldId,'serverbody-validation');assert.equal(connection.username,'ServerBot');
+assert.equal(connection.endpoint,'http://127.0.0.1:8766/v2');assert.equal(connection.worldId,'serverbody-validation');assert.equal(connection.username,'Claude');
 const runtime=await fs.mkdtemp(path.join(os.tmpdir(),'mcbot-interaction-'));
 const commands=path.join(runtime,'peer-commands.jsonl'),events=path.join(root,'output/serverbody-interaction-peer.jsonl');
 await fs.writeFile(commands,'');await fs.writeFile(events,'');
@@ -29,7 +29,7 @@ let client,transport,peer,hostTimer,control,phase='startup',stderr='',proxy;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function check(name,passed,detail){evidence.checks.push({name,passed:!!passed,...(detail===undefined?{}:{detail})});assert(passed,name);console.log('PASS '+name);}
 async function command(text){const [reply]=await rcon([text],{serverDir});return reply;}
-async function alone(){const reply=(await command('list')).trim();const names=reply.match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(v=>v.trim()).filter(Boolean);assert(names&&names.every(v=>['ServerBot','C2Tester'].includes(v)),'Unknown player online; refuse fixture mutation');}
+async function alone(){const reply=(await command('list')).trim();const names=reply.match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(v=>v.trim()).filter(Boolean);assert(names&&names.every(v=>['Claude','C2Tester'].includes(v)),'Unknown player online; refuse fixture mutation');}
 async function fixture(text){await alone();const reply=await command(text);evidence.fixtures.push({command:text,reply});assert(!/not loaded|Unknown or incomplete command|Incorrect argument/i.test(reply),'Fixture rejected');return reply;}
 async function peerCommand(value){await fs.appendFile(commands,JSON.stringify(value)+'\n');}
 async function peerEvents(){return (await fs.readFile(events,'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);}
@@ -44,18 +44,18 @@ try{
   proxy=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const request=JSON.parse(body);const started=performance.now(),atPhase=phase;try{const answer=await fetch(connection.endpoint,{method:'POST',headers:{authorization:`Bearer ${connection.token}`,'content-type':'application/json'},body});const bytes=Buffer.from(await answer.arrayBuffer());const decoded=JSON.parse(bytes);evidence.rpc.push({phase:atPhase,method:request.method,...(request.method==='act'?{action:request.params.name}:{}),ms:performance.now()-started,ok:decoded.ok});res.writeHead(answer.status,{'content-type':'application/json'});res.end(bytes);}catch{res.writeHead(502);res.end('{}');}});
   await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
   const connectionFile=path.join(runtime,'connection.json');await fs.writeFile(connectionFile,JSON.stringify({...connection,endpoint:`http://127.0.0.1:${proxy.address().port}/v2`}));
-  const host=path.join(runtime,'companion-ServerBot.json');const writeHost=()=>fs.writeFile(host,JSON.stringify({pid:process.pid,updatedAt:Date.now()}));await writeHost();hostTimer=setInterval(()=>void writeHost(),3000);
-  transport=new StdioClientTransport({command:process.execPath,args:[path.join(root,'client-runtime/dist/main.js'),'--body','server','--connection-file',connectionFile,'--username','ServerBot','--world-id',connection.worldId,'--runtime-dir',runtime,'--controller-id',randomUUID(),'--hosted'],cwd:root,stderr:'pipe'});
+  const host=path.join(runtime,'companion-Claude.json');const writeHost=()=>fs.writeFile(host,JSON.stringify({pid:process.pid,updatedAt:Date.now()}));await writeHost();hostTimer=setInterval(()=>void writeHost(),3000);
+  transport=new StdioClientTransport({command:process.execPath,args:[path.join(root,'client-runtime/dist/main.js'),'--body','server','--connection-file',connectionFile,'--username','Claude','--world-id',connection.worldId,'--runtime-dir',runtime,'--controller-id',randomUUID(),'--hosted'],cwd:root,stderr:'pipe'});
   transport.stderr?.on('data',chunk=>{stderr+=chunk;});
   client=new Client({name:'interaction-real-smoke',version:'1'});await client.connect(transport);
-  control=JSON.parse(await fs.readFile(path.join(runtime,'server-control-ServerBot.json'),'utf8'));
+  control=JSON.parse(await fs.readFile(path.join(runtime,'server-control-Claude.json'),'utf8'));
   const tools=(await client.listTools()).tools;check('shared task tools discoverable through real MCP',['discover-containers','container-list','container-withdraw','give-item','fetch-and-give'].every(name=>tools.some(v=>v.name===name)),{toolCount:tools.length});
   await fixture('forceload add 752 752 784 784');
   await fixture('fill 760 200 760 777 200 777 stone');await fixture('fill 760 201 760 777 204 777 air');
-  await fixture('clear ServerBot');await fixture('item replace entity ServerBot hotbar.8 with minecraft:diamond 5');
+  await fixture('clear Claude');await fixture('item replace entity Claude hotbar.8 with minecraft:diamond 5');
   await fixture('setblock 770 201 768 chest[facing=west]');await fixture('item replace block 770 201 768 container.0 with minecraft:oak_log 8');
   await fixture('setblock 764 201 768 chest[facing=east]');await fixture('fill 766 201 767 766 203 769 stone');
-  await fixture('tp ServerBot 768.5 201 768.5');await wait(400);
+  await fixture('tp Claude 768.5 201 768.5');await wait(400);
   peer=spawn(process.execPath,[path.join(root,'scripts/server-play-test-peer.mjs'),'--commands',commands,'--events',events,'--username','C2Tester'],{cwd:root,stdio:['ignore','ignore','pipe'],windowsHide:true});
   peer.stderr?.on('data',()=>{});
   let deadline=performance.now()+20000;while(!(await peerEvents()).some(v=>v.type==='spawn')){assert(performance.now()<deadline,'Test player did not spawn');await wait(200);}
@@ -88,7 +88,7 @@ try{
   const authority=await command('data get entity C2Tester Inventory');check('independent server player inventory confirms exact three logs',/minecraft:oak_log/.test(authority)&&/count: 3/.test(authority),{reply:authority});
   const chest=await command('data get block 770 201 768 Items');check('exact source remainder is five logs',/minecraft:oak_log/.test(chest)&&/count: 5/.test(chest),{reply:chest});
   const inventory=await tool('list-inventory');check('Bot diamonds conserved and cursor closed after composed task',inventory.filter(v=>v.id==='minecraft:diamond').reduce((a,v)=>a+v.count,0)===5&&(await tool('get-container',{details:true}))===null);
-  const chats=await peerEvents();check('task-supplied response arrived before confirmed drop',chats.some(v=>v.type==='chat'&&v.username==='ServerBot'&&v.message==='我看看旁边的箱子。'&&Date.parse(v.time)<=Date.parse(taskStartedAt)+evidence.task.ms));
+  const chats=await peerEvents();check('task-supplied response arrived before confirmed drop',chats.some(v=>v.type==='chat'&&v.username==='Claude'&&v.message==='我看看旁边的箱子。'&&Date.parse(v.time)<=Date.parse(taskStartedAt)+evidence.task.ms));
   phase='safety-regression';
   await fixture(`item replace block 770 201 768 container.1 with minecraft:oak_log[minecraft:custom_name='${JSON.stringify({text:'variant probe'})}'] 2`);
   const variantBefore=await command('data get block 770 201 768 Items');
@@ -97,12 +97,12 @@ try{
   check('same-ID component ambiguity fails before withdrawing',variant.status==='failed'&&variant.result.code==='AMBIGUOUS_ITEM'&&variant.result.withdrawnCount===0,variant.result);
   check('ambiguity preserves exact source fields and closes owned menu',(await command('data get block 770 201 768 Items'))===variantBefore&&(await tool('get-container',{details:true}))===null);
   await fixture('item replace block 770 201 768 container.1 with minecraft:air');
-  for(let slot=0;slot<8;slot++)await fixture(`item replace entity ServerBot hotbar.${slot} with minecraft:stone 64`);
+  for(let slot=0;slot<8;slot++)await fixture(`item replace entity Claude hotbar.${slot} with minecraft:stone 64`);
   const fullBefore=await command('data get block 770 201 768 Items');
   discovery=await tool('discover-containers',{radius:4,maxResults:8});target=discovery.candidates.find(c=>c.position.x===770);
   const full=await tool('container-withdraw',{containerRef:target.containerRef,item:'minecraft:oak_log',count:1});
   check('full hotbar refuses transfer without consuming source',full.status==='failed'&&full.result.withdrawnCount===0&&(await command('data get block 770 201 768 Items'))===fullBefore,full.result);
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:air');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:air');
   discovery=await tool('discover-containers',{radius:4,maxResults:8});target=discovery.candidates.find(c=>c.position.x===770);
   await tool('stop-action');
   const stale=await tool('container-list',{containerRef:target.containerRef});

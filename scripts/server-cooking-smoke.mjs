@@ -23,7 +23,7 @@ const { rcon, readServerProps } = await import('./rcon.mjs');
 const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.username, 'Claude');
 const { Client } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
 const { StdioClientTransport } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
 
@@ -38,7 +38,7 @@ function check(name, passed, detail) { report.checks.push({ name, passed: !!pass
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function fixture(text) {
   const list = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(n => n.trim()).filter(Boolean) ?? [];
-  assert(list.every(name => name === 'ServerBot'), '有其他玩家在线，拒绝修改夹具');
+  assert(list.every(name => name === 'Claude'), '有其他玩家在线，拒绝修改夹具');
   const reply = await command(text); report.calls.push({ fixture: text, reply: redact(reply) });
   assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|No entity was found|Unknown block|Unknown item/i.test(reply), '夹具命令被拒绝：' + redact(reply)); return reply;
 }
@@ -70,7 +70,7 @@ try {
   const ids = ['add_oil', 'add_ingredient', 'stir', 'take_out'].map(s => `kaleidoscope_cookery:pot/${s}`);
   check('附属模组登记的四个炒锅交互都可用', ids.every(id => h.interactions.includes(id)), { interactions: h.interactions });
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'cooking-fixture', version: '1' }); await client.connect(transport);
   const survival = (await tool('get-survival-state', { details: false })).value;
   await tool('set-reflexes', { expectedRevision: survival.policy.revision, autoEat: false, autoDefend: false, armed: false }); await tool('stop-action');
@@ -78,10 +78,10 @@ try {
   await fixture('forceload add 6392 6392 6415 6415'); forced.push('6392 6392 6415 6415');
   await fixture('fill 6396 200 6396 6412 200 6406 minecraft:stone');
   await fixture('fill 6396 201 6396 6412 204 6406 minecraft:air');
-  await fixture('gamemode survival ServerBot'); await fixture('clear ServerBot');
-  await fixture('tp ServerBot 6400.5 201 6400.5'); await wait(300);
+  await fixture('gamemode survival Claude'); await fixture('clear Claude');
+  await fixture('tp Claude 6400.5 201 6400.5'); await wait(300);
   for (const [slot, item] of [[0, 'kaleidoscope_cookery:oil 2'], [1, 'minecraft:sugar 3'], [2, 'minecraft:porkchop 3'], [3, 'kaleidoscope_cookery:kitchen_shovel 1'], [4, 'minecraft:bowl 2']])
-    await fixture(`item replace entity ServerBot hotbar.${slot} with ${item}`);
+    await fixture(`item replace entity Claude hotbar.${slot} with ${item}`);
   await fixture('setblock 6402 200 6400 minecraft:magma_block');
   await fixture('setblock 6402 201 6400 kaleidoscope_cookery:pot'); await wait(300);
 
@@ -123,7 +123,7 @@ try {
   report.result = 'failed'; report.error = redact(error.stack ?? error.message); process.exitCode = 1; console.error(redact(error.message));
 } finally {
   for (const pos of ['6402 201 6400', '6402 200 6400']) { try { await command(`setblock ${pos} minecraft:air`); report.cleanup.push({ cleared: pos }); } catch (error) { report.cleanup.push({ clearFailed: pos, error: redact(error.message) }); } }
-  try { await command('clear ServerBot'); report.cleanup.push({ cleared: 'ServerBot inventory' }); } catch {}
+  try { await command('clear Claude'); report.cleanup.push({ cleared: 'Claude inventory' }); } catch {}
   for (const range of forced) { try { await command(`forceload remove ${range}`); report.cleanup.push({ forceloadRemoved: range }); } catch (error) { report.cleanup.push({ forceloadRemoveFailed: range, error: redact(error.message) }); } }
   try { await client?.close(); } catch {}
   report.finished = new Date().toISOString(); await save();

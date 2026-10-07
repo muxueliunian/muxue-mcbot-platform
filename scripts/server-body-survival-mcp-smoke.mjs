@@ -27,7 +27,7 @@ const connectionFile = path.resolve(options['connection-file']), output = path.r
 let connection;
 try { connection = JSON.parse(await fs.readFile(connectionFile, 'utf8')); } catch { throw new Error('Cannot read valid connection JSON'); }
 assert.equal(connection.protocol, 2); assert.equal(connection.backend, 'server');
-assert.equal(connection.username, 'ServerBot'); assert.equal(connection.worldId, 'serverbody-validation');
+assert.equal(connection.username, 'Claude'); assert.equal(connection.worldId, 'serverbody-validation');
 const endpoint = new URL(connection.endpoint);
 assert.equal(endpoint.protocol, 'http:'); assert.equal(endpoint.hostname, '127.0.0.1'); assert.equal(endpoint.port, '8766'); assert.equal(endpoint.pathname, '/v2');
 assert(!endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash, 'Plain selected endpoint required');
@@ -37,7 +37,7 @@ assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '2
 const backup = JSON.parse(await fs.readFile(path.join(root, 'output/serverbody-B-backup.json'), 'utf8'));
 assert.equal(backup.serverStopped, true, 'Isolated stopped-server backup evidence required');
 const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcbot-server-B-mcp-'));
-const controlFile = path.join(runtimeDir, 'server-control-ServerBot.json'), journalFile = path.join(runtimeDir, 'events-ServerBot.jsonl');
+const controlFile = path.join(runtimeDir, 'server-control-Claude.json'), journalFile = path.join(runtimeDir, 'events-Claude.jsonl');
 const origin = { x: 514.5, y: 201, z: 512.5 }, target = { x: 516, y: 201, z: 512 }, anchor = { x: 516, y: 200, z: 512 };
 const evidence = { started: new Date().toISOString(), checks: [], operations: [], fixtures: [], cleanup: [], boundary: 'Actual hosted stdio MCP; RCON only prepares/independently observes isolated 25568 fixture; no model' };
 let client, transport, control, rawLease, stderr = '';
@@ -51,7 +51,7 @@ async function alone() {
   const reply = (await command('list')).trim();
   if (!reply.includes('players online:')) throw new Error('Cannot parse online player list; refuse fixture mutation');
   const names = reply.match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean) ?? [];
-  assert(names.every(name => name === 'ServerBot'), 'Unattended isolated fixture required; another player is online');
+  assert(names.every(name => name === 'Claude'), 'Unattended isolated fixture required; another player is online');
 }
 async function fixture(text) { await alone(); const reply = await command(text); evidence.fixtures.push({ command: text, reply }); if (/not loaded|Unknown or incomplete command|Incorrect argument/i.test(reply)) throw new Error(`Fixture rejected: ${text}: ${reply.trim()}`); return reply; }
 async function rpc(method, params = {}) {
@@ -93,9 +93,9 @@ async function success(name, args, label = name, backgroundWait = false) { const
 
 try {
   await alone();
-  await fs.writeFile(path.join(runtimeDir, 'companion-ServerBot.json'), JSON.stringify({ pid: process.pid, updatedAt: Date.now() }));
+  await fs.writeFile(path.join(runtimeDir, 'companion-Claude.json'), JSON.stringify({ pid: process.pid, updatedAt: Date.now() }));
   transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtimeDir, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtimeDir, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
   transport.stderr?.on('data', chunk => { stderr += chunk; });
   client = new Client({ name: 'actual-B-MCP-smoke', version: '1' }); await client.connect(transport);
   control = JSON.parse(await fs.readFile(controlFile, 'utf8'));
@@ -105,11 +105,11 @@ try {
   check('server click schema requires full components and current revision', ['expectedRevision', 'expectedComponents', 'expectedCarriedComponents'].every(field => tools.find(tool => tool.name === 'click-slot').inputSchema.required.includes(field)));
   const initial = await status();
   check('authoritative inventory preserves complete components and selectedSlot', initial.source === 'server-observed' && initial.inventory.every(item => item.components && typeof item.components === 'object') && Number.isInteger(initial.selectedSlot));
-  await fixture(`tp ServerBot ${origin.x} ${origin.y} ${origin.z}`); await wait(250);
+  await fixture(`tp Claude ${origin.x} ${origin.y} ${origin.z}`); await wait(250);
   await fixture('fill 511 200 509 523 200 516 stone'); await fixture('fill 511 201 509 523 203 516 air');
-  await fixture('clear ServerBot'); await fixture('item replace entity ServerBot hotbar.0 with minecraft:iron_pickaxe');
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:cobblestone 8'); await fixture('item replace entity ServerBot hotbar.2 with minecraft:dirt 4');
-  await fixture('setblock 516 201 512 stone'); await fixture(`tp ServerBot ${origin.x} ${origin.y} ${origin.z}`); await wait(250);
+  await fixture('clear Claude'); await fixture('item replace entity Claude hotbar.0 with minecraft:iron_pickaxe');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:cobblestone 8'); await fixture('item replace entity Claude hotbar.2 with minecraft:dirt 4');
+  await fixture('setblock 516 201 512 stone'); await fixture(`tp Claude ${origin.x} ${origin.y} ${origin.z}`); await wait(250);
   await success('select-slot', stackGuard(await stack(0)), 'MCP selects real guarded hotbar tool');
   await success('dig-block', await guarded(target), 'MCP native one-block survival dig succeeds', true);
   check('independent block authority confirms MCP dig', (await command('execute if block 516 201 512 air')).trim() === 'Test passed');

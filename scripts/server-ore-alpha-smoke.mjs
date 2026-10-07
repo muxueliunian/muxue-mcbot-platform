@@ -30,7 +30,7 @@ function validateBackup(serverDir, backup) {
 }
 if (argv.includes('--help')) {
   console.log('node scripts/server-ore-alpha-smoke.mjs --check | --allow-fixture [--case=stop-mid-dig-and-first-fresh-task]');
-  console.log('执行需显式绝对MC_SERVER_DIR及output/serverbody-alpha-release-backup.json；固定25568/25578/8766/ServerBot。夹具x6000..6024,z6000..6024；不启停服务器、不调用模型。');
+  console.log('执行需显式绝对MC_SERVER_DIR及output/serverbody-alpha-release-backup.json；固定25568/25578/8766/Claude。夹具x6000..6024,z6000..6024；不启停服务器、不调用模型。');
   console.log('单场景结果标记partial并写server-ore-alpha-case-latest.json，不覆盖完整矩阵latest。');
   process.exit(0);
 }
@@ -59,7 +59,7 @@ const [{ Client }, { StdioClientTransport }, { rcon, readServerProps }, { writeH
 const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-ore-alpha-${selectedCase ? 'case-' : ''}${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const report = { started: new Date().toISOString(), serverDir, backup: backup.backup, node: process.version,
@@ -87,7 +87,7 @@ function check(name, passed, detail) { report.checks.push(safe({ ...stamp(), nam
 async function alone() {
   const reply = await command('list');
   const names = reply.trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean);
-  assert(names && names.every(name => name === 'ServerBot'), '其他玩家在线，拒绝夹具修改');
+  assert(names && names.every(name => name === 'Claude'), '其他玩家在线，拒绝夹具修改');
 }
 async function fixture(text) {
   await alone(); const reply = await command(text); report.calls.push(safe({ ...stamp(), fixture: text, reply }));
@@ -115,7 +115,7 @@ async function scenario(name, run) {
   finally { row.finished = new Date().toISOString(); await fs.writeFile(path.join(dir, 'report.json'), JSON.stringify(safe(report), null, 2)); }
 }
 const positions = [[6010, 6010], [6010, 6014], [6013, 6012]];
-const replace = (slot, item) => fixture(`item replace entity ServerBot ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with ${item}`);
+const replace = (slot, item) => fixture(`item replace entity Claude ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with ${item}`);
 const blockStill = async ([x, z], id) => /^Test passed/.test(await command(`execute if block ${x} 201 ${z} minecraft:${id}`));
 async function blockSnapshot(id) {
   const snapshot = [];
@@ -134,15 +134,15 @@ async function arena(block, count = 1, toolItem = 'minecraft:diamond_pickaxe', s
   await fixture('kill @e[type=minecraft:item,x=6000,y=199,z=6000,dx=24,dy=8,dz=24]');
   await fixture('fill 6000 200 6000 6024 200 6024 minecraft:stone');
   await fixture('fill 6000 201 6000 6024 205 6024 minecraft:air');
-  await fixture('clear ServerBot'); await fixture('tp ServerBot 6008.5 201 6012.5');
-  await fixture('effect give ServerBot minecraft:instant_health 1 5 true');
-  await fixture('effect give ServerBot minecraft:saturation 1 5 true');
+  await fixture('clear Claude'); await fixture('tp Claude 6008.5 201 6012.5');
+  await fixture('effect give Claude minecraft:instant_health 1 5 true');
+  await fixture('effect give Claude minecraft:saturation 1 5 true');
   if (toolItem) await replace(slot, toolItem);
   for (const [x, z] of positions.slice(0, count)) await fixture(`setblock ${x} 201 ${z} minecraft:${block}`);
   await wait(350);
 }
 async function independentCount(item) {
-  const reply = await command(`clear ServerBot minecraft:${item} 0`); report.calls.push({ ...stamp(), independentCount: item, reply });
+  const reply = await command(`clear Claude minecraft:${item} 0`); report.calls.push({ ...stamp(), independentCount: item, reply });
   if (/No items (?:were )?found/i.test(reply)) return 0;
   const value = reply.match(/Found (\d+) matching item/i); assert(value, '独立库存数量无法解析：' + reply); return Number(value[1]);
 }
@@ -172,10 +172,10 @@ try {
   await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
   const temporaryConnection = path.join(runtime, 'connection.json');
   await fs.writeFile(temporaryConnection, JSON.stringify({ ...connection, endpoint: `http://127.0.0.1:${proxy.address().port}/v2` }));
-  const heartbeatFile = path.join(runtime, 'companion-ServerBot.json');
+  const heartbeatFile = path.join(runtime, 'companion-Claude.json');
   writeHeartbeat(heartbeatFile, 'ore-alpha-validation'); heartbeat = setInterval(() => writeHeartbeat(heartbeatFile, 'ore-alpha-validation'), 3000);
   transport = new OwnedTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', temporaryConnection,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'ore-alpha-real-smoke', version: '1' }); await client.connect(transport); mcpProcess = transport._process;
   transport.stderr?.on('data', chunk => { report.stderr = redact((report.stderr ?? '') + chunk).slice(-32768); });
   const names = (await client.listTools()).tools.map(value => value.name);
@@ -206,7 +206,7 @@ try {
     await arena('deepslate_iron_ore', 1, 'minecraft:wooden_pickaxe'); await replace(10, 'minecraft:iron_pickaxe');
     const found = await scan('deepslate_iron_ore'), floor = report.rpc.length;
     const op = await terminal('gather-resources', { resourceRef: found.resourceRef, item: 'minecraft:raw_iron', count: 1 });
-    const held = await command('data get entity ServerBot SelectedItem');
+    const held = await command('data get entity Claude SelectedItem');
     check('合格主背包镐实际搬到手持再采矿', op.status === 'succeeded' && report.rpc.slice(floor).some(value => value.action === 'swap-inventory') && held.includes('minecraft:iron_pickaxe'), { op, held });
     await verifyQuantity('raw_iron', op);
   });

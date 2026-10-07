@@ -46,7 +46,7 @@ async function pos(name) {
   return m[1].split(',').map(v => Number(v.trim().replace(/[dfDF]$/, '')));
 }
 const isBlock = async ([x, y, z], id) => (await command(`execute if block ${x} ${y} ${z} ${id}`)).includes('passed');
-const countItem = async id => { const reply = await command(`clear ServerBot ${id} 0`); const m = reply.match(/Found (\d+)/); return m ? Number(m[1]) : 0; };
+const countItem = async id => { const reply = await command(`clear Claude ${id} 0`); const m = reply.match(/Found (\d+)/); return m ? Number(m[1]) : 0; };
 let client;
 async function tool(name, args = {}) {
   const reply = await client.callTool({ name, arguments: args }, undefined, { timeout: 120000 });
@@ -61,7 +61,7 @@ async function settle(op, ms = 150000) {
 
 // 平台顶面 y=200（人站 201），四周 3 格清空；场地在 X/Z 3400 附近
 const [X0, X1, Z0, Z1, Y, M] = [3394, 3414, 3394, 3414, 200, 3];
-const park = () => command(`tp ServerBot ${X0 + 5.5} -60 ${Z0 + 5.5}`);
+const park = () => command(`tp Claude ${X0 + 5.5} -60 ${Z0 + 5.5}`);
 async function ground() {
   await park(); await wait(500);
   await command(`fill ${X0 - M} ${Y - 2} ${Z0 - M} ${X1 + M} ${Y + 16} ${Z1 + M} air`);
@@ -74,7 +74,7 @@ try {
   client = new Client({ name: 'server-pillar-smoke', version: '0.1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
   const names = (await client.listTools()).tools.map(t => t.name);
   check('pillar-up／pillar-down 工具已发布', names.includes('pillar-up') && names.includes('pillar-down'), names);
 
@@ -84,14 +84,14 @@ try {
   await fixture(`fill 3402 ${Y + 6} 3402 3406 ${Y + 9} 3406 oak_leaves[persistent=true]`);
   await fixture(`fill 3403 ${Y + 10} 3403 3405 ${Y + 10} 3405 oak_leaves[persistent=true]`);
   for (const p of trunk) await fixture(`setblock ${p.join(' ')} oak_log`);
-  await command('clear ServerBot');
-  await command(`tp ServerBot 3401.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
+  await command('clear Claude');
+  await command(`tp Claude 3401.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
   const found = await tool('discover-resources', { blockIds: ['minecraft:oak_log'], radius: 6, maxResults: 32 });
   check('发现时顺着树干找到整棵树的 9 节原木（扫描带以上的标为看不见）', !found.error && found.value.candidates?.length === 9 && found.value.candidates.some(c => c.visible === false), found.value.candidates?.map(c => [c.position.y, c.visible]));
   let op = await settle(await tool('gather-resources', { resourceRef: found.value.resourceRef, item: 'minecraft:oak_log', count: 9, timeoutMs: 120000 }));
   report.runs.tree = op.value;
   const left = []; for (const p of trunk) if (await isBlock(p, 'minecraft:oak_log')) left.push(p[1]);
-  const end = await pos('ServerBot');
+  const end = await pos('Claude');
   check('整棵树砍完：9 节原木都没了', left.length === 0, { left, op: op.value });
   check('采集成功，实际拿到 9 个原木（垫脚用的也收回来了）', op.value.status === 'succeeded' && op.value.result?.pickedUpCount >= 9 && await countItem('minecraft:oak_log') >= 9, { status: op.value.status, summary: op.value.summary, result: op.value.result, logs: await countItem('minecraft:oak_log') });
   check('真的垫高了，柱子也都挖回来了', (op.value.result?.pillarPlaced ?? 0) >= 3 && op.value.result?.pillarRecovered === op.value.result?.pillarPlaced, op.value.result);
@@ -104,10 +104,10 @@ try {
   // 2. 挖头顶够不着的指定方块：石头悬在头顶 7 格 (3404, 208, 3404)，pillar-up 3 格、换石镐、dig-block、pillar-down
   await ground();
   await fixture(`setblock 3404 ${Y + 8} 3404 stone`);
-  await command('clear ServerBot'); await command('give ServerBot stone_pickaxe'); await command('give ServerBot dirt 16');
-  await command(`tp ServerBot 3404.5 ${Y + 1} 3404.5`); await wait(1500);
+  await command('clear Claude'); await command('give Claude stone_pickaxe'); await command('give Claude dirt 16');
+  await command(`tp Claude 3404.5 ${Y + 1} 3404.5`); await wait(1500);
   const climbed = await tool('pillar-up', { blocks: 3 });
-  check('pillar-up 3 格垫到 y=204', !climbed.error && climbed.value.placed === 3 && Math.abs((await pos('ServerBot'))[1] - (Y + 4)) < 0.01, climbed.value);
+  check('pillar-up 3 格垫到 y=204', !climbed.error && climbed.value.placed === 3 && Math.abs((await pos('Claude'))[1] - (Y + 4)) < 0.01, climbed.value);
   const inv = (await tool('list-inventory')).value;
   const pick = (Array.isArray(inv) ? inv : inv.inventory ?? []).find(item => item.id === 'minecraft:stone_pickaxe');
   const selected = await tool('select-slot', { slot: pick.slot, expectedItem: pick.id, expectedCount: pick.count, expectedComponents: pick.components ?? {} });
@@ -119,18 +119,18 @@ try {
   // 圆石从 7 格高处落下带随机水平速度，可能落在柱子旁边一两格：没顺带碰到就用 collect-items 捡（pillar-down 只收柱子）。
   if (await countItem('minecraft:cobblestone') === 0) report.runs.highDig.collected = (await settle(await tool('collect-items', { item: 'minecraft:cobblestone', count: 1, radius: 4 }))).value;
   await wait(500);
-  check('pillar-down 回到地面，泥土 16 个一个不少，圆石也捡到了', !back.error && back.value.recovered === 3 && Math.abs((await pos('ServerBot'))[1] - (Y + 1)) < 0.01 && await countItem('minecraft:dirt') === 16 && await countItem('minecraft:cobblestone') === 1,
-    { back: back.value, dirt: await countItem('minecraft:dirt'), cobblestone: await countItem('minecraft:cobblestone'), bot: await pos('ServerBot'), drops: await command('execute as @e[type=item,x=3404,y=204,z=3404,distance=..12] run data get entity @s Pos'), items: await command('execute as @e[type=item,x=3404,y=204,z=3404,distance=..12] run data get entity @s Item.id') });
+  check('pillar-down 回到地面，泥土 16 个一个不少，圆石也捡到了', !back.error && back.value.recovered === 3 && Math.abs((await pos('Claude'))[1] - (Y + 1)) < 0.01 && await countItem('minecraft:dirt') === 16 && await countItem('minecraft:cobblestone') === 1,
+    { back: back.value, dirt: await countItem('minecraft:dirt'), cobblestone: await countItem('minecraft:cobblestone'), bot: await pos('Claude'), drops: await command('execute as @e[type=item,x=3404,y=204,z=3404,distance=..12] run data get entity @s Pos'), items: await command('execute as @e[type=item,x=3404,y=204,z=3404,distance=..12] run data get entity @s Item.id') });
 
   // 3. 手动垫高 3 格再下来
   await ground();
-  await command('clear ServerBot'); await command('give ServerBot dirt 8');
-  await command(`tp ServerBot 3404.5 ${Y + 1} 3404.5`); await wait(1500);
+  await command('clear Claude'); await command('give Claude dirt 8');
+  await command(`tp Claude 3404.5 ${Y + 1} 3404.5`); await wait(1500);
   const up = await tool('pillar-up', { blocks: 3 });
-  const high = await pos('ServerBot');
+  const high = await pos('Claude');
   check('pillar-up 3 格：站到 y=204、用掉 3 个泥土', !up.error && up.value.placed === 3 && Math.abs(high[1] - (Y + 4)) < 0.01 && await countItem('minecraft:dirt') === 5, { up: up.value, high });
   const down = await tool('pillar-down');
-  const low = await pos('ServerBot');
+  const low = await pos('Claude');
   await wait(1000);
   check('pillar-down 回到 y=201，3 个泥土收回', !down.error && down.value.recovered === 3 && Math.abs(low[1] - (Y + 1)) < 0.01 && await countItem('minecraft:dirt') === 8, { down: down.value, low, dirt: await countItem('minecraft:dirt') });
   const again = await tool('pillar-down');
@@ -142,8 +142,8 @@ try {
   for (const [y, r] of [[Y + 3, 2], [Y + 4, 1], [Y + 5, 2], [Y + 6, 1], [Y + 7, 1]]) await fixture(`fill ${3404 - r} ${y} ${3404 - r} ${3404 + r} ${y} ${3404 + r} spruce_leaves[persistent=true]`);
   await fixture(`setblock 3404 ${Y + 8} 3404 spruce_leaves[persistent=true]`);
   for (const p of spruce) await fixture(`setblock ${p.join(' ')} spruce_log`);
-  await command('clear ServerBot');
-  await command(`tp ServerBot 3401.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
+  await command('clear Claude');
+  await command(`tp Claude 3401.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
   const sprucePlan = await tool('discover-resources', { blockIds: ['minecraft:spruce_log'], radius: 6, maxResults: 32 });
   check('云杉：扫描带里被树叶挡住的原木也算进这棵树，6 节都找到', !sprucePlan.error && sprucePlan.value.candidates?.length === 6, sprucePlan.value.candidates ? { candidates: sprucePlan.value.candidates.map(c => [c.position.y, c.visible]), budget: sprucePlan.value.budget } : sprucePlan.value);
   op = await settle(await tool('gather-resources', { resourceRef: sprucePlan.value.resourceRef, item: 'minecraft:spruce_log', count: 6, timeoutMs: 120000 }));
@@ -151,7 +151,7 @@ try {
   const spruceLeft = []; for (const p of spruce) if (await isBlock(p, 'minecraft:spruce_log')) spruceLeft.push(p[1]);
   // 树叶是人工放的（不会腐烂），顶上那节的掉落可能卡在树叶上：那时要如实报出卡住的数量，而不是笼统的“候选用完”
   const spruceLogs = await countItem('minecraft:spruce_log'), stuck = op.value.result?.stuckHigh ?? 0;
-  check('云杉整棵砍完：6 节都挖了，拿到的加上如实报告卡在树叶上的正好 6 个', spruceLeft.length === 0 && op.value.result?.minedBlocks === 6 && !op.value.result?.unreachable && spruceLogs + stuck === 6 && (op.value.status === 'succeeded' ? spruceLogs >= 6 : stuck > 0 && /卡在高处/.test(op.value.summary)), { spruceLeft, spruceLogs, stuck, status: op.value.status, summary: op.value.summary, result: op.value.result, logs: await countItem('minecraft:spruce_log'), drops: await command('execute as @e[type=item,x=3404,y=205,z=3404,distance=..12] run data get entity @s Pos'), bot: await pos('ServerBot') });
+  check('云杉整棵砍完：6 节都挖了，拿到的加上如实报告卡在树叶上的正好 6 个', spruceLeft.length === 0 && op.value.result?.minedBlocks === 6 && !op.value.result?.unreachable && spruceLogs + stuck === 6 && (op.value.status === 'succeeded' ? spruceLogs >= 6 : stuck > 0 && /卡在高处/.test(op.value.summary)), { spruceLeft, spruceLogs, stuck, status: op.value.status, summary: op.value.summary, result: op.value.result, logs: await countItem('minecraft:spruce_log'), drops: await command('execute as @e[type=item,x=3404,y=205,z=3404,distance=..12] run data get entity @s Pos'), bot: await pos('Claude') });
   let spruceColumn = 0; for (let y = Y + 1; y <= Y + 6; y++) if (!(await isBlock([3404, y, 3404], 'minecraft:air'))) spruceColumn++;
   check('云杉那一列没有留下垫脚方块，柱子都收回了', spruceColumn === 0 && (op.value.result?.pillarRecovered ?? 0) === (op.value.result?.pillarPlaced ?? 0), { spruceColumn, result: op.value.result });
   // 5. 两棵挨着的云杉（树干相距 3 格，树叶连在一起）：要 7 个原木，只砍完西边那一棵，东边那棵一节不动
@@ -160,8 +160,8 @@ try {
   await fixture(`fill 3401 ${Y + 4} 3402 3408 ${Y + 7} 3406 spruce_leaves[persistent=true]`);
   await fixture(`fill 3402 ${Y + 8} 3403 3407 ${Y + 8} 3405 spruce_leaves[persistent=true]`);
   for (const p of [...west, ...east]) await fixture(`setblock ${p.join(' ')} spruce_log`);
-  await command('clear ServerBot');
-  await command(`tp ServerBot 3400.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
+  await command('clear Claude');
+  await command(`tp Claude 3400.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
   const pair = await tool('discover-resources', { blockIds: ['#minecraft:logs'], radius: 8, maxResults: 32 });
   check('两棵树的 14 节原木都找到了', !pair.error && pair.value.candidates?.length === 14, pair.value.candidates?.map(c => [c.position.x, c.position.y]));
   op = await settle(await tool('gather-resources', { resourceRef: pair.value.resourceRef, item: 'minecraft:spruce_log', count: 7, timeoutMs: 120000 }));
@@ -178,6 +178,6 @@ try {
 } finally {
   try { await tool('stop-action'); } catch {}
   try { await client?.close(); } catch {}
-  try { await park(); await wait(500); await command(`fill ${X0 - M} ${Y - 2} ${Z0 - M} ${X1 + M} ${Y + 16} ${Z1 + M} air`); await command(`forceload remove ${X0 - M} ${Z0 - M} ${X1 + M} ${Z1 + M}`); await command('clear ServerBot'); } catch {}
+  try { await park(); await wait(500); await command(`fill ${X0 - M} ${Y - 2} ${Z0 - M} ${X1 + M} ${Y + 16} ${Z1 + M} air`); await command(`forceload remove ${X0 - M} ${Z0 - M} ${X1 + M} ${Z1 + M}`); await command('clear Claude'); } catch {}
   await save(); console.log('报告：' + path.relative(root, path.join(dir, 'report.json')));
 }

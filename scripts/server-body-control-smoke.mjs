@@ -17,7 +17,7 @@ const connection = JSON.parse(await readFile(resolve(opt['connection-file']), 'u
 assert.equal(connection.protocol, 2); assert.equal(connection.backend, 'server');
 const url = new URL(connection.endpoint);
 assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/v2'); assert.equal(url.port, '8766');
-const evidence = { started: new Date().toISOString(), protocol: 2, checks: [], cleanup: [], boundary: 'Only v2 HTTP controls ServerBot; no RCON movement or model' };
+const evidence = { started: new Date().toISOString(), protocol: 2, checks: [], cleanup: [], boundary: 'Only v2 HTTP controls Claude; no RCON movement or model' };
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const position = state => ({ x: state.position.x, y: state.position.y, z: state.position.z });
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
@@ -88,9 +88,9 @@ try {
   const afterChat = await observe();
   check('same action ID emits one chat line', afterChat.chat.filter(line => line.username === connection.username && line.message === message).length === 1);
   await refuses('same ID different arguments rejected', 'act', { ...scope, controlGeneration: lease.controlGeneration, operationId: chatId, name: 'send-chat', args: { message: `${message}-different` } }, ['OPERATION_CONFLICT']);
-  const slash = await wire('act', { ...scope, controlGeneration: lease.controlGeneration, operationId: randomUUID(), name: 'send-chat', args: { message: '/op ServerBot' } });
+  const slash = await wire('act', { ...scope, controlGeneration: lease.controlGeneration, operationId: randomUUID(), name: 'send-chat', args: { message: '/op Claude' } });
   check('chat cannot run slash command', (!slash.ok && slash.error?.code === 'INVALID_ARGUMENT') || (slash.ok && slash.result?.status === 'failed'));
-  check('rejected slash message was not broadcast', !(await observe()).chat.some(line => line.username === connection.username && line.message === '/op ServerBot'));
+  check('rejected slash message was not broadcast', !(await observe()).chat.some(line => line.username === connection.username && line.message === '/op Claude'));
   await heartbeat();
   const p = position(await observe()), oldGeneration = lease.controlGeneration;
   const move = await act('move-to-position', { x: p.x, y: p.y, z: p.z + 2, tolerance: 0.25, timeoutMs: 5000 });

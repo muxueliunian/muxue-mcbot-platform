@@ -32,14 +32,14 @@ const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connect
 const mcpConfig = path.join(dir, 'mcp.json');
 await fs.writeFile(mcpConfig, JSON.stringify({ mcpServers: { minecraft: { command: process.execPath,
   args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--nickname', '小克', '--world-id', 'serverbody-validation'] } } }));
+    '--username', 'Claude', '--nickname', '小克', '--world-id', 'serverbody-validation'] } } }));
 const result = { started: new Date().toISOString(), model: 'claude-sonnet-5-5', effort: 'low', account, configDir: configDirName,
   boundary: 'Real Claude via product companion; only the Agent calls Minecraft MCP. RCON is fixture setup and independent observation.', phases: [], cleanup: [] };
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = async text => (await rcon([text], { serverDir }))[0];
 const messages = async () => (await fs.readFile(peerOutput, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 const send = async value => fs.appendFile(peerInput, JSON.stringify(value) + '\n');
-const driverText = async () => fs.readFile(path.join(runtime, 'companion-ServerBot.log'), 'utf8').catch(() => '');
+const driverText = async () => fs.readFile(path.join(runtime, 'companion-Claude.log'), 'utf8').catch(() => '');
 let peer, driver;
 async function until(check, timeout = 120000) {
   const deadline = Date.now() + timeout;
@@ -49,18 +49,18 @@ async function until(check, timeout = 120000) {
 async function alone() {
   const reply = (await command('list')).trim();
   const names = reply.match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), 'Unexpected real player; no fixture mutation');
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), 'Unexpected real player; no fixture mutation');
 }
 async function fixture(text) { await alone(); const reply = await command(text); assert(!/not loaded|Unknown or incomplete command|Incorrect argument/i.test(reply), 'Fixture rejected'); return reply; }
 async function ready() { await until(async () => /本轮结束/.test(await driverText())); await wait(2000); }
 async function prepare(far = false) {
   await fixture('fill 1024 201 1024 1043 204 1043 air');
-  await fixture('clear ServerBot'); await fixture('clear C2Tester');
-  await fixture('item replace entity ServerBot hotbar.8 with minecraft:diamond 5');
+  await fixture('clear Claude'); await fixture('clear C2Tester');
+  await fixture('item replace entity Claude hotbar.8 with minecraft:diamond 5');
   await fixture(`setblock ${far ? 1034 : 1033} 201 1034 chest[facing=west]`);
   await fixture(`item replace block ${far ? 1034 : 1033} 201 1034 container.0 with minecraft:oak_log 6`);
   if (far) await fixture('fill 1032 201 1033 1032 202 1035 stone');
-  await fixture(`tp ServerBot ${far ? 1030.5 : 1031.5} 201 1034.5`);
+  await fixture(`tp Claude ${far ? 1030.5 : 1031.5} 201 1034.5`);
   await fixture(`tp C2Tester ${far ? 1027.5 : 1031.5} 201 ${far ? 1034.5 : 1033.2}`);
   await wait(700);
 }
@@ -78,7 +78,7 @@ async function phase(name, text, expectedLogs) {
   await until(async () => /本轮结束/.test((await driverText()).slice(logStart)), 45000);
   await wait(2000);
   const events = (await messages()).filter(event => Date.parse(event.time) >= began);
-  const replies = events.filter(event => event.type === 'chat' && event.username === 'ServerBot');
+  const replies = events.filter(event => event.type === 'chat' && event.username === 'Claude');
   phase.firstReplyMs = replies.length ? Date.parse(replies[0].time) - began : null;
   phase.replies = replies.map(event => ({ ms: Date.parse(event.time) - began, message: event.message }));
   const log = (await driverText()).slice(logStart);
@@ -93,7 +93,7 @@ try {
   await fixture('fill 1024 200 1024 1043 200 1043 stone');
   peer = spawn(process.execPath, [path.join(root, 'scripts/server-play-test-peer.mjs'), '--commands', peerInput, '--events', peerOutput], { cwd: root, stdio: 'ignore', windowsHide: true });
   await until(async () => (await messages()).some(event => event.type === 'spawn'), 20000);
-  driver = spawn(process.execPath, [path.join(root, 'scripts/companion.mjs'), '--agent', 'claude', '--body', 'server', '--name', 'ServerBot', '--nickname', '小克',
+  driver = spawn(process.execPath, [path.join(root, 'scripts/companion.mjs'), '--agent', 'claude', '--body', 'server', '--name', 'Claude', '--nickname', '小克',
     '--mcp-config', mcpConfig, '--config-dir', configDir, '--model', result.model, '--effort', 'low', '--headless'],
   { cwd: root, env: { ...process.env, COMPANION_RUNTIME_DIR: runtime }, stdio: 'ignore', windowsHide: true });
   await ready();
@@ -106,7 +106,7 @@ try {
   const began = Date.now(), logStart = (await driverText()).length;
   await send({ type: 'chat', message: '小克，再去箱子里拿三个橡木原木给我。' });
   await until(async () => {
-    const position = await command('data get entity ServerBot Pos');
+    const position = await command('data get entity Claude Pos');
     const numbers = position.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value.trim()));
     return numbers?.length === 3 && Math.hypot(numbers[0] - 1030.5, numbers[2] - 1034.5) > 0.8;
   });
@@ -118,15 +118,15 @@ try {
   assert.match(box, /count: 6/);
   const nextAt = Date.now(), nextLog = (await driverText()).length;
   await send({ type: 'chat', message: '小克，现在告诉我你的背包里有多少钻石，不要继续拿原木。' });
-  await until(async () => (await messages()).some(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= nextAt), 90000);
+  await until(async () => (await messages()).some(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= nextAt), 90000);
   await until(async () => /本轮结束/.test((await driverText()).slice(nextLog)), 30000);
   result.phases.push({ name: 'stop-while-moving-and-new-task', started: new Date(began).toISOString(), stopMs, boxAfterStop: box,
-    replies: (await messages()).filter(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= nextAt) });
+    replies: (await messages()).filter(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= nextAt) });
   result.result = 'passed';
 } catch (error) { result.result = 'failed'; result.error = error.message; console.error(error.message); process.exitCode = 1; }
 finally {
   if (driver && driver.exitCode === null) {
-    await fs.writeFile(path.join(runtime, 'companion-ServerBot.stop'), '');
+    await fs.writeFile(path.join(runtime, 'companion-Claude.stop'), '');
     await until(() => driver.exitCode !== null, 20000).catch(() => {});
     if (driver.exitCode === null) { const killer = spawn('taskkill', ['/PID', String(driver.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); await new Promise(resolve => killer.once('exit', resolve)); }
   }

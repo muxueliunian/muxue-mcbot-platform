@@ -36,7 +36,7 @@ assert.equal(path.resolve(matrix.backup).toLowerCase(), path.resolve(backup.back
 assert(Date.parse(matrix.started) >= (await fs.stat(backupFile)).mtimeMs - 2000, 'Program evidence predates the current backup record');
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connection.json'), connection = await readJson(connectionFile);
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 assert(process.env.USERPROFILE, 'Missing local profile');
 const configDir = path.join(process.env.USERPROFILE, '.claude-b'); assert((await fs.stat(configDir)).isDirectory(), 'Explicit Claude-b profile is missing');
 const dir = path.join(root, 'output', `navigation-defense-agent-claude-${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
@@ -44,7 +44,7 @@ const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: 
 const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'peer-events.jsonl'), mcpConfig = path.join(dir, 'mcp.json');
 await fs.writeFile(input, ''); await fs.writeFile(peerFile, '');
 await fs.writeFile(mcpConfig, JSON.stringify({ mcpServers: { minecraft: { command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'),
-  '--body', 'server', '--connection-file', connectionFile, '--username', 'ServerBot', '--world-id', connection.worldId,
+  '--body', 'server', '--connection-file', connectionFile, '--username', 'Claude', '--world-id', connection.worldId,
   '--runtime-dir', runtime, '--hosted'] } } }));
 const started = Date.now(), deadline = started + 180000, protocol = getAgentProtocol('claude'), model = 'claude-sonnet-5-5';
 const secrets = [connection.token, props['rcon.password']].filter(Boolean);
@@ -69,7 +69,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 2500 }))[0];
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), 'Unexpected real player; fixture writes blocked'); return names;
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), 'Unexpected real player; fixture writes blocked'); return names;
 }
 async function fixture(text) { await alone(); const reply = await command(text); assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|Invalid component/i.test(reply), 'Fixture rejected: ' + redact(reply)); return reply; }
 async function peerEvents() { const text = await fs.readFile(peerFile, 'utf8'); return text.slice(0, text.lastIndexOf('\n') + 1).split(/\r?\n/).filter(Boolean).map(JSON.parse); }
@@ -165,22 +165,22 @@ async function closeOwned(tracked) {
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { interrupted = signal; });
 try {
-  const names = await alone(); assert(names.includes('ServerBot') && !names.includes('C2Tester'), 'Requires online body and no unowned test peer');
+  const names = await alone(); assert(names.includes('Claude') && !names.includes('C2Tester'), 'Requires online body and no unowned test peer');
   await forceOwnChunks();
   // The platform is empty of this trial's enemy when MCP starts with default autoDefend.
   await fixture('fill 2600 201 2600 2628 211 2628 air');
   await fixture('fill 2600 200 2600 2628 200 2628 stone');
   await fixture('fill 2607 201 2611 2614 201 2617 stone');
-  await fixture('tp ServerBot 2604.5 201 2614.5');
-  await fixture('effect give ServerBot minecraft:instant_health 1 5 true');
-  await fixture('effect give ServerBot minecraft:saturation 1 5 true');
-  await fixture('clear ServerBot');
-  await until(async () => /1b\s*$/.test(await command('data get entity ServerBot OnGround')), 'fixture landing before MCP', 4000);
+  await fixture('tp Claude 2604.5 201 2614.5');
+  await fixture('effect give Claude minecraft:instant_health 1 5 true');
+  await fixture('effect give Claude minecraft:saturation 1 5 true');
+  await fixture('clear Claude');
+  await until(async () => /1b\s*$/.test(await command('data get entity Claude OnGround')), 'fixture landing before MCP', 4000);
   peer = launch('own-protocol-player', process.execPath, [path.join(root, 'scripts/server-play-test-peer.mjs'), '--commands', input, '--events', peerFile]);
   peer.child.stdout.resume();
   await until(async () => (await peerEvents()).some(event => event.type === 'spawn'), 'own test player join', 15000);
   await fixture('tp C2Tester 2625.5 201 2625.5');
-  writeHeartbeat(path.join(runtime, 'companion-ServerBot.json'), 'claude'); heartbeat = setInterval(() => writeHeartbeat(path.join(runtime, 'companion-ServerBot.json'), 'claude'), 10000);
+  writeHeartbeat(path.join(runtime, 'companion-Claude.json'), 'claude'); heartbeat = setInterval(() => writeHeartbeat(path.join(runtime, 'companion-Claude.json'), 'claude'), 10000);
   const instructions = serverClaudeInstructions(root, path.join(root, 'memory/xiaoke'));
   const commandLine = protocol.command({ body: 'server', hostedConfigFile: mcpConfig, model, effort: 'low', gameInstructions: instructions });
   assert.equal(commandLine.a[commandLine.a.indexOf('--tools') + 1], ''); assert(commandLine.a.includes('--restricted') && commandLine.a.includes('--strict-mcp-config') && commandLine.a.includes('--disable-slash-commands'));
@@ -198,16 +198,16 @@ try {
     assert(policy, 'No effective disabled-reflex policy receipt');
     assert.equal(report.liveInitTools?.length, 39, 'Missing verified restricted 39-tool init');
   });
-  const beforeMoveHealth = nativeHealth(await command('data get entity ServerBot Health'));
+  const beforeMoveHealth = nativeHealth(await command('data get entity Claude Health'));
   await phase('native-height-navigation', context + '用move-to-position走到x:2611.5,y:202,z:2614.5，tolerance:0.35、timeoutMs:20000；只能原生走跳，通过一格高台。查询至succeeded后get-position核对，不做其他动作。', ['move-to-position', 'get-position'], async row => {
     assert(row.responses.some(response => ['move-to-position', 'get-operation'].includes(response.name) && response.value?.name === 'move-to-position' && response.value.status === 'succeeded'), 'Missing native navigation successful terminal receipt');
-    row.independentPosition = nativePosition(await command('data get entity ServerBot Pos'));
+    row.independentPosition = nativePosition(await command('data get entity Claude Pos'));
     assert(Math.hypot(row.independentPosition.x - 2611.5, row.independentPosition.y - 202, row.independentPosition.z - 2614.5) < 0.7, 'Independent native position did not reach the raised goal');
-    row.healthBefore = beforeMoveHealth; row.healthAfter = nativeHealth(await command('data get entity ServerBot Health'));
+    row.healthBefore = beforeMoveHealth; row.healthAfter = nativeHealth(await command('data get entity Claude Health'));
     assert(row.healthAfter >= beforeMoveHealth, 'Native navigation caused health loss');
   });
   // Introduce the only enemy after the model has explicitly disabled automatic defense.
-  await fixture('item replace entity ServerBot inventory.1 with minecraft:diamond_axe');
+  await fixture('item replace entity Claude inventory.1 with minecraft:diamond_axe');
   await fixture(`summon minecraft:husk 2613.5 202 2614.5 {Tags:["${fixtureTag}"],PersistenceRequired:1b,NoAI:1b,Silent:1b}`);
   const enemyHealthBefore = nativeHealth(await command(`data get entity ${ownEnemy} Health`));
   await phase('native-finite-defense', context + '先get-survival-state读取附近唯一minecraft:husk的entityId和明确敌对来源，再defend-self指定该UUID。钻石斧在主背包slot:10，任务会复用prepare-item准备；最多一次原生攻击，不追击。确认succeeded且confirmedHits>=1、confirmedDamage>0、damageConfirmation:native_damage_event；必要时get-operation查询。', ['get-survival-state', 'defend-self'], async row => {
@@ -217,7 +217,7 @@ try {
     assert(receipt, 'No native damage-event-confirmed finite defense terminal receipt');
     row.confirmedReceipt = receipt; row.enemyHealthBefore = enemyHealthBefore; row.enemyHealthAfter = nativeHealth(await command(`data get entity ${ownEnemy} Health`));
     assert(row.enemyHealthAfter < enemyHealthBefore && row.enemyHealthAfter > 0, 'Independent target health does not confirm damage and retained identity');
-    assert(/entity data:\s*"minecraft:diamond_axe"\s*$/.test(await command('data get entity ServerBot SelectedItem.id')), 'Backpack axe was not prepared as selected hand');
+    assert(/entity data:\s*"minecraft:diamond_axe"\s*$/.test(await command('data get entity Claude SelectedItem.id')), 'Backpack axe was not prepared as selected hand');
     assert.equal(receipt.result.attemptedAttacks, 1, 'The model phase exceeded configured single-attack limit');
   });
   // Return the still-living fixture inside defense range while autoDefend remains false.
@@ -233,7 +233,7 @@ try {
   await phase('completion-marker-and-hard-stop', context + '用send-chat发送精确文本NAVDEF_AGENT_DONE，然后stop-action硬停止，最后get-survival-state确认policy.armed:false。结束本轮，不能复活旧移动或防卫。', ['send-chat', 'stop-action', 'get-survival-state'], async row => {
     assert(row.responses.some(response => response.name === 'stop-action' && response.value?.stopped === true), 'No hard-stop confirmation');
     assert(row.responses.some(response => response.name === 'get-survival-state' && response.value?.policy?.armed === false), 'Missing final disarmed state');
-    await until(async () => (await peerEvents()).some(event => event.type === 'chat' && event.username === 'ServerBot' && event.message === 'NAVDEF_AGENT_DONE' && Date.parse(event.time) >= row.start), 'independent in-game completion marker', 3000);
+    await until(async () => (await peerEvents()).some(event => event.type === 'chat' && event.username === 'Claude' && event.message === 'NAVDEF_AGENT_DONE' && Date.parse(event.time) >= row.start), 'independent in-game completion marker', 3000);
     row.independentGameChatObserved = true; await wait(700);
     assert.equal(await command(`data get entity ${ownEnemy} Health`), exclusionHealth, 'Hard stop allowed a delayed attack');
   });

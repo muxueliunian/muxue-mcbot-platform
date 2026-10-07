@@ -35,7 +35,7 @@ const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connect
 const connection = await readJson(connectionFile), endpoint = new URL(connection.endpoint);
 assert.equal(endpoint.protocol, 'http:'); assert.equal(endpoint.hostname, '127.0.0.1');
 assert.equal(endpoint.port, '8766'); assert.equal(endpoint.pathname, '/v2');
-assert.equal(connection.username, 'ServerBot'); assert.equal(connection.worldId, 'serverbody-validation');
+assert.equal(connection.username, 'Claude'); assert.equal(connection.worldId, 'serverbody-validation');
 assert(process.env.USERPROFILE, 'Missing USERPROFILE');
 const configDir = path.join(process.env.USERPROFILE, '.claude-b');
 assert((await fs.stat(configDir)).isDirectory(), 'The explicitly selected Claude-b configuration is missing');
@@ -46,7 +46,7 @@ const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'pee
 await fs.writeFile(input, ''); await fs.writeFile(peerFile, '');
 await fs.writeFile(mcpConfig, JSON.stringify({ mcpServers: { minecraft: { command: process.execPath,
   args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', 'serverbody-validation'] } } }));
+    '--username', 'Claude', '--world-id', 'serverbody-validation'] } } }));
 const model = 'claude-sonnet-5-5', startedAt = Date.now(), deadline = startedAt + 300000;
 const report = { started: new Date(startedAt).toISOString(), agent: 'claude', account: 'b', model, effort: 'low',
   backup: backup.backup, backupRecord: backupFile, programEvidence: matrixFile, scenarioBudgetMs: 300000,
@@ -65,14 +65,14 @@ async function lines(file) {
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
 }
 const peerEvents = () => lines(peerFile);
-const driverText = () => fs.readFile(path.join(runtime, 'companion-ServerBot.log'), 'utf8').catch(() => '');
-const operations = () => lines(path.join(runtime, 'operations-ServerBot.jsonl'));
-const journal = () => lines(path.join(runtime, 'events-ServerBot.jsonl'));
+const driverText = () => fs.readFile(path.join(runtime, 'companion-Claude.log'), 'utf8').catch(() => '');
+const operations = () => lines(path.join(runtime, 'operations-Claude.jsonl'));
+const journal = () => lines(path.join(runtime, 'events-Claude.jsonl'));
 const send = value => fs.appendFile(input, JSON.stringify(value) + '\n');
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 2500 }))[0];
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), 'Unexpected real player: abort without further fixture writes');
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), 'Unexpected real player: abort without further fixture writes');
   return names;
 }
 async function fixture(text) {
@@ -134,7 +134,7 @@ async function forceOwnClaude(owner) {
   // /T is scoped to the verified child; includes only that Agent's MCP descendants.
   await helper('force-own-claude-tree', 'taskkill', ['/PID', String(owner.pid), '/T', '/F']);
 }
-async function position(name = 'ServerBot') {
+async function position(name = 'Claude') {
   const values = (await command(`data get entity ${name} Pos`)).match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
   assert(values?.length === 3 && values.every(Number.isFinite), 'Missing real game position for ' + name);
   const result = { x: values[0], y: values[1], z: values[2] };
@@ -154,7 +154,7 @@ function beginPhase(name, message) {
 }
 async function finishPhase(phase, offset) {
   const log = (await driverText()).slice(offset);
-  const replies = (await peerEvents()).filter(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= phase.start);
+  const replies = (await peerEvents()).filter(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= phase.start);
   phase.firstReplyMs = replies.length ? Date.parse(replies[0].time) - phase.start : null;
   phase.replies = replies.map(event => ({ ms: Date.parse(event.time) - phase.start, message: event.message }));
   phase.tools = [...log.matchAll(/· ([^\s]+) /g)].map(match => match[1]);
@@ -200,7 +200,7 @@ async function finite(name, message, taskName, verify) {
   finally { phase.elapsedMs = Date.now() - phase.start; }
 }
 async function walk(ms = 700) {
-  const start = Date.now(); await send({ type: 'look-at', username: 'ServerBot' });
+  const start = Date.now(); await send({ type: 'look-at', username: 'Claude' });
   await until(async () => (await peerEvents()).some(event => event.type === 'looked' && Date.parse(event.time) >= start), 'Peer look failed', 5000);
   await send({ type: 'walk', direction: 'back', ms });
   await until(async () => (await peerEvents()).some(event => event.type === 'position' && event.reason === 'walk-finished' && Date.parse(event.time) >= start), 'Peer walk failed', 5000);
@@ -218,7 +218,7 @@ async function ensureForcedChunks() {
 }
 async function stopWhileBusy() {
   // All previous modes must already be paused/stopped before fixture changes.
-  await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2408 201 2422.5');
+  await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2408 201 2422.5');
   await fixture('setblock 2416 201 2422 chest[facing=west]');
   await fixture('item replace block 2416 201 2422 container.0 with minecraft:oak_log 64');
   const offset = (await driverText()).length;
@@ -233,14 +233,14 @@ async function stopWhileBusy() {
   phase.positionAtRevoke = await position();
   await wait(750);
   const firstBox = await command('data get block 2416 201 2422 Items');
-  const firstInventory = await command('data get entity ServerBot Inventory'), stopped = await position();
+  const firstInventory = await command('data get entity Claude Inventory'), stopped = await position();
   phase.settledAfterRevokeMs = Date.now() - stopAt - phase.stopConfirmedMs;
   phase.inertialDisplacement = distance(phase.positionAtRevoke, stopped);
   await wait(1800);
   assert.equal(await command('data get block 2416 201 2422 Items'), firstBox, 'Old container task kept changing the chest after revoke');
-  assert.equal(await command('data get entity ServerBot Inventory'), firstInventory, 'Old task kept changing body inventory after revoke');
+  assert.equal(await command('data get entity Claude Inventory'), firstInventory, 'Old task kept changing body inventory after revoke');
   assert(distance(stopped, await position()) < 0.2, 'Old movement continued after host revoke');
-  assert((await alone()).includes('ServerBot'), 'Stop removed the game role');
+  assert((await alone()).includes('Claude'), 'Stop removed the game role');
   phase.partialChestAuthority = firstBox; phase.partialBodyInventoryAuthority = firstInventory;
   phase.lastTerminalReceipt = (await operations()).filter(record => record.timestamp >= phase.start).at(-1)?.operation ?? null;
   await finishPhase(phase, offset); phase.result = 'passed'; console.log('PASS ' + phase.name);
@@ -249,15 +249,15 @@ async function stopWhileBusy() {
 
 try {
   const initial = await alone(); assert(!initial.includes('C2Tester'), 'An existing C2Tester is not owned by this trial');
-  assert(initial.includes('ServerBot'), 'ServerBody role must already be online');
+  assert(initial.includes('Claude'), 'ServerBody role must already be online');
   await ensureForcedChunks();
   await fixture('fill 2400 200 2400 2444 200 2444 stone'); await fixture('fill 2400 201 2400 2444 204 2444 air');
   await fixture('kill @e[type=minecraft:item,x=2400,y=199,z=2400,dx=44,dy=8,dz=44]');
   peer = launch('own-test-peer', process.execPath, [path.join(root, 'scripts/server-play-test-peer.mjs'), '--commands', input, '--events', peerFile]);
   await until(async () => (await peerEvents()).some(event => event.type === 'spawn'), 'Own test peer did not join', 20000);
-  await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2413 201 2422.5');
-  await fixture('clear ServerBot'); await fixture('clear C2Tester');
-  await fixture('item replace entity ServerBot hotbar.8 with minecraft:diamond 5');
+  await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2413 201 2422.5');
+  await fixture('clear Claude'); await fixture('clear C2Tester');
+  await fixture('item replace entity Claude hotbar.8 with minecraft:diamond 5');
   const strategy = getAgentProtocol('claude').command({ body: 'server', hostedConfigFile: mcpConfig, model, effort: 'low' });
   assert.equal(strategy.a[strategy.a.indexOf('--tools') + 1], '');
   assert(strategy.a.includes('--restricted') && strategy.a.includes('--strict-mcp-config'));
@@ -267,7 +267,7 @@ try {
   const env = { ...process.env, COMPANION_RUNTIME_DIR: runtime };
   for (const key of Object.keys(env)) if (/^ANTHROPIC_|^CLAUDE_CONFIG_DIR$|^CLAUDE_CODE_(?:OAUTH|USE_)|^COMPANION_AGENT_CMD$|^ENABLE_TOOL_SEARCH$/i.test(key)) delete env[key];
   driver = launch('own-product-host', process.execPath, [path.join(root, 'scripts/companion.mjs'), '--agent', 'claude', '--body', 'server',
-    '--name', 'ServerBot', '--nickname', '小克', '--mcp-config', mcpConfig, '--config-dir', configDir, '--model', model, '--effort', 'low', '--headless'], { env });
+    '--name', 'Claude', '--nickname', '小克', '--mcp-config', mcpConfig, '--config-dir', configDir, '--model', model, '--effort', 'low', '--headless'], { env });
   ownHost = (await childrenOf(process.pid)).find(value => value.pid === driver.child.pid && value.parentPid === process.pid);
   assert(ownHost && ownHost.name.toLowerCase() === path.basename(process.execPath).toLowerCase(), 'Cannot record own host identity');
   driver.record.ownedProcess = ownHost;
@@ -285,8 +285,8 @@ try {
   const drop = { x: (body.x + player.x) / 2 - dz / length * 2.5, y: 201.1, z: (body.z + player.z) / 2 + dx / length * 2.5 };
   assert(distance(drop, body) > 2 && distance(drop, player) > 2 && distance(drop, player) < 4);
   const dropAt = Date.now(); await fixture(`summon item ${drop.x.toFixed(3)} ${drop.y} ${drop.z.toFixed(3)} {Item:{id:"minecraft:cobblestone",count:3},PickupDelay:0}`);
-  await until(async () => (await itemCount('ServerBot', 'minecraft:cobblestone')) === 3, 'Authorized continuous pickup did not collect three', 18000);
-  follow.pickupAuthorityMs = Date.now() - dropAt; follow.pickupInventoryAuthority = await command('data get entity ServerBot Inventory');
+  await until(async () => (await itemCount('Claude', 'minecraft:cobblestone')) === 3, 'Authorized continuous pickup did not collect three', 18000);
+  follow.pickupAuthorityMs = Date.now() - dropAt; follow.pickupInventoryAuthority = await command('data get entity Claude Inventory');
   await nearPlayer(); await wait(500);
   assert.equal((await journal()).filter(event => event.timestamp >= dropAt && ['task', 'companion'].includes(event.type)).length, 0, 'Ordinary pickup woke model');
   follow.result = 'passed'; follow.elapsedMs = Date.now() - follow.start; console.log('PASS ' + follow.name);
@@ -301,7 +301,7 @@ try {
     await wait(750); const waiting = await position(); await walk(350); await wait(700);
     assert(distance(waiting, await position()) < 0.2, 'Agent-managed wait did not remain stationary');
   });
-  await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2413 201 2422.5');
+  await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2413 201 2422.5');
   await fixture('setblock 2411 201 2420 chest[facing=south]');
   await fixture('item replace block 2411 201 2420 container.0 with minecraft:oak_log 6');
   await finite('container-fetch-return', '小克，把附近唯一箱子里的3个橡木原木拿给C2Tester，先回应一句。', 'fetch-and-give', async phase => {
@@ -332,12 +332,12 @@ try {
   crash.settledAfterRevokeMs = Date.now() - crash.start - crash.stopConfirmedMs;
   await walk(400); await wait(800);
   assert(distance(held, await position()) < 0.2, 'Old follow survived Agent crash/revoke');
-  assert((await alone()).includes('ServerBot'), 'Agent crash removed the game role');
+  assert((await alone()).includes('Claude'), 'Agent crash removed the game role');
   const filteredAt = Date.now(), filteredOffset = (await driverText()).length;
   await send({ type: 'chat', message: '今天的天气不错，我们先休息一下。' }); await wait(1800);
   assert(!(await childrenOf(driver.child.pid)).some(value => /^claude(?:\.exe)?$/i.test(value.name)), 'Unaddressed idle chat restarted the Agent');
   assert(!/· |启动 claude/.test((await driverText()).slice(filteredOffset)), 'Idle chat triggered old work');
-  assert(!(await peerEvents()).some(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= filteredAt), 'Unaddressed idle chat was replayed');
+  assert(!(await peerEvents()).some(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= filteredAt), 'Unaddressed idle chat was replayed');
   crash.unaddressedIdleChatFiltered = true; crash.roleStayedOnline = true; crash.result = 'passed';
   console.log('PASS ' + crash.name);
   await request('explicit-new-task-takes-over-after-crash', '小克，这是崩溃后的新任务：查询你现在的状态和背包里钻石数量，不恢复之前的跟随或取物。',
@@ -358,7 +358,7 @@ try {
   // Cleanup never retries gameplay or selects a different account. The role stays
   // on the server for the owner to save/shut down after inspecting this evidence.
   if (driver && !driver.done) {
-    await fs.writeFile(path.join(runtime, 'companion-ServerBot.stop'), '').catch(() => {});
+    await fs.writeFile(path.join(runtime, 'companion-Claude.stop'), '').catch(() => {});
     await until(() => driver.done, 'Own host close timeout', 12000, true).catch(error => report.cleanup.push(redact(error.message)));
     if (!driver.done && driver.child.exitCode === null && driver.child.signalCode === null) {
       try {

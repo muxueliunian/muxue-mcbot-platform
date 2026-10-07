@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// C 批次测试玩家：模拟真人在 25568 隔离服说话、走动，读取 ServerBot 的回应和收到的物品。
+// C 批次测试玩家：模拟真人在 25568 隔离服说话、走动，读取 Claude 的回应和收到的物品。
 // 只是测试发言者，不是 Body；不执行命令、不自动重连、不接触控制口或模型凭据。
 // 指令从 --commands 文件按行追加读取（便于后台运行），事件写入 --events JSONL。
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ const help = `node scripts/server-play-test-peer.mjs --commands <file> --events 
 Fixed 127.0.0.1:25568, offline, 1.21.1. Append one JSON object per line to the commands file:
   {"type":"chat","message":"小克，你在哪"}
   {"type":"walk","direction":"forward|back|left|right","ms":800}
-  {"type":"look-at","username":"ServerBot"}
+  {"type":"look-at","username":"Claude"}
   {"type":"inventory"}
   {"type":"quit"}`;
 const opts = { username: 'C2Tester' };

@@ -56,7 +56,7 @@ const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connection.json');
 const connection = await readJson(connectionFile);
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const point = value => value && ['x', 'y', 'z'].every(key => Number.isFinite(value[key]));
 let route;
 if (values['natural-only']) {
@@ -91,7 +91,7 @@ const observerFile = path.join(dir, 'mcp-observer.jsonl'), mcpConfig = path.join
 await fs.writeFile(input, ''); await fs.writeFile(peerFile, '');
 await fs.writeFile(mcpConfig, JSON.stringify({ mcpServers: { minecraft: { command: process.execPath, args: [
   path.join(root, 'scripts/server-play-mcp-observer.mjs'), '--observer-log', observerFile,
-  '--body', 'server', '--connection-file', connectionFile, '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime,
+  '--body', 'server', '--connection-file', connectionFile, '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime,
 ] } } }));
 const started = Date.now(), deadline = started + 20 * 60000;
 const report = { started: new Date(started).toISOString(), agent: 'codex', account: 'existing local login', model: 'host default', effort: 'low', serverDir,
@@ -116,8 +116,8 @@ async function lines(file) {
   let text; try { text = await fs.readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   return text.slice(0, text.lastIndexOf('\n') + 1).split(/\r?\n/).filter(Boolean).map(JSON.parse);
 }
-const driverText = () => fs.readFile(path.join(runtime, 'companion-ServerBot.log'), 'utf8').catch(() => '');
-const operations = () => lines(path.join(runtime, 'operations-ServerBot.jsonl'));
+const driverText = () => fs.readFile(path.join(runtime, 'companion-Claude.log'), 'utf8').catch(() => '');
+const operations = () => lines(path.join(runtime, 'operations-Claude.jsonl'));
 const send = value => fs.appendFile(input, JSON.stringify(value) + '\n');
 // Keep this evaluator's native queries serial even if later checks use concurrent promises.
 // A command failure remains a failure; this queue never retries or changes command content.
@@ -128,7 +128,7 @@ const command = text => {
 };
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), 'Unowned real player online; fixture and trial blocked'); return names;
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), 'Unowned real player online; fixture and trial blocked'); return names;
 }
 async function fixture(text) {
   await alone(); const reply = await command(text);
@@ -156,7 +156,7 @@ function launch(label, args, env = process.env) {
     owned.done = true; Object.assign(record, { exitCode, signal, finished: new Date().toISOString(), stderrTail: owned.stderr, stdoutTail: owned.stdout }); resolve();
   })); return owned;
 }
-async function position(name = 'ServerBot') {
+async function position(name = 'Claude') {
   const match = (await command(`data get entity ${name} Pos`)).match(/entity data:\s*\[([^\]]+)\]\s*$/);
   const numbers = match?.[1].split(',').map(value => Number.parseFloat(value));
   assert(numbers?.length === 3 && numbers.every(Number.isFinite), 'Missing native position: ' + name);
@@ -164,7 +164,7 @@ async function position(name = 'ServerBot') {
 }
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 async function nativeNumber(field) {
-  const reply = await command(`data get entity ServerBot ${field}`), match = reply.match(/entity data:\s*([-+\d.eE]+)[fFdDbBsSlL]?\s*$/);
+  const reply = await command(`data get entity Claude ${field}`), match = reply.match(/entity data:\s*([-+\d.eE]+)[fFdDbBsSlL]?\s*$/);
   assert(match && Number.isFinite(Number(match[1])), 'Missing native numeric field: ' + field); return Number(match[1]);
 }
 async function entityHealth(entity) {
@@ -180,20 +180,20 @@ async function taggedDefenseUUID() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 async function inventoryCount(item) {
-  const reply = await command(`data get entity ServerBot Inventory[{id:"${item}"}].count`);
+  const reply = await command(`data get entity Claude Inventory[{id:"${item}"}].count`);
   if (/Found no elements matching/.test(reply)) return 0;
   const payload = reply.match(/entity data:\s*(.+)\s*$/)?.[1]; assert(payload, 'Unrecognized inventory count response');
   const numbers = payload.replace(/[\[\]]/g, '').split(',').map(value => Number(value.trim().replace(/[bBsSlL]$/, '')));
   assert(numbers.length && numbers.every(value => Number.isSafeInteger(value) && value >= 0)); return numbers.reduce((a, b) => a + b, 0);
 }
-async function settled(name = 'ServerBot') {
+async function settled(name = 'Claude') {
   let previous, stable = 0;
   await until(async () => { const pos = await position(name), ground = await command(`data get entity ${name} OnGround`);
     stable = /1b\s*$/.test(ground) && previous && distance(previous, pos) < 0.015 ? stable + 1 : 0; previous = pos; return stable >= 3;
   }, name + ' natural motion did not settle', 7000);
 }
 async function identity() {
-  const owner = await readJson(path.join(runtime, 'server-control-ServerBot.json'));
+  const owner = await readJson(path.join(runtime, 'server-control-Claude.json'));
   for (const key of ['leaseId', 'stopToken']) if (owner[key]) secrets.push(owner[key]);
   return { instanceId: owner.instanceId, sessionId: owner.sessionId, configuredWorldId: owner.worldId };
 }
@@ -203,7 +203,7 @@ async function request(name, text, required = [], verify) {
   const cue = `ALPHA_${report.phases.length + 1}`;
   const message = `小克，${text} 本阶段游戏回复带${cue}。`;
   assert(message.length <= 256, 'Player chat exceeds 256 characters');
-  assert(!isAddressedStop({ type: 'chat', text: `C2Tester: ${message}` }, { name: 'ServerBot', nickname: '小克' }), 'Non-stop phase accidentally matches hard stop');
+  assert(!isAddressedStop({ type: 'chat', text: `C2Tester: ${message}` }, { name: 'Claude', nickname: '小克' }), 'Non-stop phase accidentally matches hard stop');
   const offset = (await driverText()).length, row = { name, cue, message, start: Date.now(), result: 'running', nativeLastWriteMs: null }; report.phases.push(row);
   await send({ type: 'chat', message });
   try {
@@ -211,16 +211,16 @@ async function request(name, text, required = [], verify) {
       const log = (await driverText()).slice(offset), tools = toolNames(log);
       if (!required.every(tool => tools.includes(tool))) return false;
       const lastTool = required.length ? Math.max(...required.map(tool => log.lastIndexOf(`· ${tool} `))) : 0;
-      return /本轮结束/.test(log.slice(lastTool)) && (await lines(peerFile)).some(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= row.start && event.message.includes(cue));
+      return /本轮结束/.test(log.slice(lastTool)) && (await lines(peerFile)).some(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= row.start && event.message.includes(cue));
     }, name + ': actual required tools / game reply / turn end');
     row.tools = toolNames((await driverText()).slice(offset));
     assert(!row.tools.some(tool => /^(Read|Edit|Write|Bash|PowerShell|Agent|Task)$/i.test(tool)), 'Unexpected host tool');
-    row.replies = (await lines(peerFile)).filter(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= row.start).map(event => ({ ms: Date.parse(event.time) - row.start, message: event.message }));
+    row.replies = (await lines(peerFile)).filter(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= row.start).map(event => ({ ms: Date.parse(event.time) - row.start, message: event.message }));
     row.firstGameReplyMs = row.replies[0]?.ms ?? null;
     row.stageMarkerReplyMs = row.replies.find(reply => reply.message.includes(cue))?.ms ?? null;
     await verify?.(row);
     row.tools = toolNames((await driverText()).slice(offset));
-    row.replies = (await lines(peerFile)).filter(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= row.start).map(event => ({ ms: Date.parse(event.time) - row.start, message: event.message }));
+    row.replies = (await lines(peerFile)).filter(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= row.start).map(event => ({ ms: Date.parse(event.time) - row.start, message: event.message }));
     row.firstGameReplyMs = row.replies[0]?.ms ?? null;
     row.result = 'passed'; console.log('PASS ' + name); return row;
   } catch (error) { row.result = 'failed'; row.error = redact(error.message); throw error; }
@@ -234,7 +234,7 @@ async function receipt(row, name) {
     // until the distinct terminal notification has elicited an actual completion reply.
     let completion;
     await until(async () => {
-      completion = (await lines(peerFile)).find(event => event.type === 'chat' && event.username === 'ServerBot' && Date.parse(event.time) >= record.timestamp);
+      completion = (await lines(peerFile)).find(event => event.type === 'chat' && event.username === 'Claude' && Date.parse(event.time) >= record.timestamp);
       return !!completion;
     }, 'Asynchronous gather completion chat', 45000);
     await until(async () => (await driverText()).split('\n').some(line => {
@@ -263,13 +263,13 @@ async function hardStop(name = 'explicit-hard-stop') {
   row.result = 'passed'; await checkpoint(); return row;
 }
 async function peerWalk(walk) {
-  const start = Date.now(); await send({ type: 'look-at', username: 'ServerBot' });
+  const start = Date.now(); await send({ type: 'look-at', username: 'Claude' });
   await until(async () => (await lines(peerFile)).some(event => event.type === 'looked' && Date.parse(event.time) >= start), 'Peer look', 5000);
   await send({ type: 'walk', ...walk });
   await until(async () => (await lines(peerFile)).some(event => event.type === 'position' && event.reason === 'walk-finished' && Date.parse(event.time) >= start), 'Native peer walk', 6000);
 }
 try {
-  const names = await alone(); assert(names.includes('ServerBot') && !names.includes('C2Tester'), 'Requires existing Bot and no unowned peer');
+  const names = await alone(); assert(names.includes('Claude') && !names.includes('C2Tester'), 'Requires existing Bot and no unowned peer');
   if (!route) {
     for (let x = 175; x <= 176; x++) for (let z = 175; z <= 176; z++) {
       const reply = await command(`forceload query ${x * 16} ${z * 16}`);
@@ -277,22 +277,22 @@ try {
       forced.push([x * 16, z * 16]); await fixture(`forceload add ${x * 16} ${z * 16}`);
     }
     await fixture('fill 2800 200 2800 2828 200 2828 stone'); await fixture('fill 2800 201 2800 2828 207 2828 air');
-    await fixture('tp ServerBot 2814.5 201 2814.5'); await fixture('clear ServerBot');
-    await fixture('item replace entity ServerBot hotbar.0 with minecraft:iron_axe');
-    await fixture('item replace entity ServerBot inventory.1 with minecraft:diamond_pickaxe');
-    await fixture('item replace entity ServerBot inventory.2 with minecraft:bread 3');
-    await fixture('effect give ServerBot minecraft:instant_health 1 5 true'); await fixture('effect give ServerBot minecraft:saturation 1 5 true');
+    await fixture('tp Claude 2814.5 201 2814.5'); await fixture('clear Claude');
+    await fixture('item replace entity Claude hotbar.0 with minecraft:iron_axe');
+    await fixture('item replace entity Claude inventory.1 with minecraft:diamond_pickaxe');
+    await fixture('item replace entity Claude inventory.2 with minecraft:bread 3');
+    await fixture('effect give Claude minecraft:instant_health 1 5 true'); await fixture('effect give Claude minecraft:saturation 1 5 true');
     await fixture('setblock 2816 201 2813 iron_ore'); await fixture('setblock 2816 201 2815 iron_ore');
   } else {
     // Do not build/fill/force terrain here; owner selected an existing loaded natural route.
     for (const pos of [route.start, route.peerStart, ...(route.waypoints ?? [])]) assert(/^Test passed/.test(await command(`execute if loaded ${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`)), 'Selected natural route chunk is not already loaded');
-    await fixture(`tp ServerBot ${route.start.x} ${route.start.y} ${route.start.z}`);
+    await fixture(`tp Claude ${route.start.x} ${route.start.y} ${route.start.z}`);
   }
   peer = launch('actual-test-player', [path.join(root, 'scripts/server-play-test-peer.mjs'), '--commands', input, '--events', peerFile]);
   await until(async () => (await lines(peerFile)).some(event => event.type === 'spawn'), 'Peer join', 30000);
   const peerStart = route?.peerStart ?? { x: 2806.5, y: 201, z: 2808.5 };
   await fixture(`tp C2Tester ${peerStart.x} ${peerStart.y} ${peerStart.z}`); await settled(); await settled('C2Tester');
-  driver = launch('actual-production-codex-host', [path.join(root, 'scripts/companion.mjs'), '--agent', 'codex', '--body', 'server', '--name', 'ServerBot', '--nickname', '小克', '--mcp-config', mcpConfig, '--effort', 'low', '--headless'], { ...process.env, COMPANION_RUNTIME_DIR: runtime });
+  driver = launch('actual-production-codex-host', [path.join(root, 'scripts/companion.mjs'), '--agent', 'codex', '--body', 'server', '--name', 'Claude', '--nickname', '小克', '--mcp-config', mcpConfig, '--effort', 'low', '--headless'], { ...process.env, COMPANION_RUNTIME_DIR: runtime });
   await until(async () => /本轮结束/.test(await driverText()), 'Actual Codex startup');
   report.identity = await identity(); await disable();
   if (route) {
@@ -318,16 +318,16 @@ try {
     report.natural.actualBodyMotion = totalMotion; await hardStop('natural-follow-hard-stop'); report.natural.result = 'passed';
   } else {
     await request('read-tool-and-prepare-main-inventory', '用assess-tool评估2816,201,2813的minecraft:iron_ore，dropPreference:no_silk_touch；prepare-item槽10到targetSlot:0，再prepare-item槽11到targetSlot:1，不吃不挖。', ['assess-tool', 'prepare-item'], async row => {
-      row.inventory = await command('data get entity ServerBot Inventory');
-      assert(/^Test passed/.test(await command('execute if items entity ServerBot weapon.mainhand minecraft:bread')), 'Last prepared bread was not selected');
-      assert(/^Test passed/.test(await command('execute if items entity ServerBot hotbar.0 minecraft:diamond_pickaxe')));
-      assert(/^Test passed/.test(await command('execute if items entity ServerBot inventory.1 minecraft:iron_axe')), 'Occupied hotbar item was lost instead of swapped');
+      row.inventory = await command('data get entity Claude Inventory');
+      assert(/^Test passed/.test(await command('execute if items entity Claude weapon.mainhand minecraft:bread')), 'Last prepared bread was not selected');
+      assert(/^Test passed/.test(await command('execute if items entity Claude hotbar.0 minecraft:diamond_pickaxe')));
+      assert(/^Test passed/.test(await command('execute if items entity Claude inventory.1 minecraft:iron_axe')), 'Occupied hotbar item was lost instead of swapped');
       assert.equal(await inventoryCount('minecraft:bread'), 3);
     });
-    await fixture('clear ServerBot minecraft:bread'); await fixture('item replace entity ServerBot inventory.2 with minecraft:bread 3');
-    await fixture('effect give ServerBot minecraft:hunger 8 255 true');
+    await fixture('clear Claude minecraft:bread'); await fixture('item replace entity Claude inventory.2 with minecraft:bread 3');
+    await fixture('effect give Claude minecraft:hunger 8 255 true');
     try { await until(async () => await nativeNumber('foodLevel') <= 10, 'Actual native hunger', 9000); }
-    finally { await fixture('effect clear ServerBot minecraft:hunger'); }
+    finally { await fixture('effect clear Claude minecraft:hunger'); }
     const beforeFood = await nativeNumber('foodLevel');
     await request('native-main-inventory-food', 'get-survival-state读现在饥饿；用eat-food槽11只吃一次，确认后报告原生消费；不改本能，不采矿。', ['get-survival-state', 'eat-food'], async row => {
       const op = await receipt(row, 'eat'); assert.equal(op.result?.consumedCount, 1); assert.equal(op.result?.consumption, 'confirmed');
@@ -337,8 +337,8 @@ try {
     const defenseBody = await position(), defenseBodyHealth = await nativeNumber('Health');
     // The earlier swap intentionally preserved an iron axe. Remove only that owned
     // fixture item so the defender's legitimate first-safe-weapon choice is unambiguous.
-    await fixture('clear ServerBot minecraft:iron_axe');
-    await fixture('item replace entity ServerBot inventory.3 with minecraft:diamond_axe');
+    await fixture('clear Claude minecraft:iron_axe');
+    await fixture('item replace entity Claude inventory.3 with minecraft:diamond_axe');
     await fixture(`summon minecraft:husk ${defenseBody.x + 2} ${defenseBody.y} ${defenseBody.z} {Tags:["mcbot_alpha_codex_defense"],PersistenceRequired:1b,NoAI:1b,Silent:1b}`);
     defenseTarget = await taggedDefenseUUID(); const enemyHealthBefore = await entityHealth(defenseTarget);
     await request('finite-native-defense', 'get-survival-state读取本轮唯一husk的UUID和敌对来源；set-reflexes当前expectedRevision设autoEat:false、autoDefend:false、armed:false、maxAttacks:1；defend-self指定该UUID，斧在主背包slot12。只打一次不追击，确认原生伤害后回应。', ['get-survival-state', 'set-reflexes', 'defend-self'], async row => {
@@ -351,7 +351,7 @@ try {
       row.targetUUID = defenseTarget; row.enemyHealthBefore = enemyHealthBefore; row.enemyHealthAfter = await entityHealth(defenseTarget);
       assert(row.enemyHealthAfter < enemyHealthBefore && row.enemyHealthAfter > 0, 'One finite axe hit did not reduce native enemy health');
       row.bodyHealthBefore = defenseBodyHealth; row.bodyHealthAfter = await nativeNumber('Health'); assert.equal(row.bodyHealthAfter, defenseBodyHealth);
-      assert(/^Test passed/.test(await command('execute if items entity ServerBot weapon.mainhand minecraft:diamond_axe')), 'Defense failed to prepare main-inventory axe');
+      assert(/^Test passed/.test(await command('execute if items entity Claude weapon.mainhand minecraft:diamond_axe')), 'Defense failed to prepare main-inventory axe');
     });
     await fixture(`kill ${defenseTarget}`);
     await until(async () => !/^Test passed/.test(await command(`execute if entity ${defenseTarget}`)), 'Owned defense corpse removal', 5000); defenseTarget = undefined;
@@ -385,7 +385,7 @@ try {
 } catch (error) { report.result = 'failed'; report.error = redact(error.stack || error.message); process.exitCode = 1; console.error(redact(error.message)); }
 finally {
   if (driver && !driver.done) {
-    driver.record.intentional = true; await fs.writeFile(path.join(runtime, 'companion-ServerBot.stop'), '').catch(() => {});
+    driver.record.intentional = true; await fs.writeFile(path.join(runtime, 'companion-Claude.stop'), '').catch(() => {});
     await Promise.race([driver.closed, wait(20000)]);
     if (!driver.done) {
       report.cleanup.push('Host graceful close exceeded deadline; terminate only this owned child tree');
@@ -400,10 +400,10 @@ finally {
   if (report.result === 'passed' && [driver, peer].some(owned => !owned?.done || owned.record.exitCode !== 0 || owned.record.signal)) {
     report.result = 'failed'; report.error = 'Owned process cleanup did not finish with exitCode 0'; process.exitCode = 1;
   }
-  await fs.unlink(path.join(runtime, 'server-control-ServerBot.json')).catch(() => {});
+  await fs.unlink(path.join(runtime, 'server-control-Claude.json')).catch(() => {});
   // Only this script's private directory/config is eligible for credential cleanup.
-  await fs.unlink(mcpConfig).catch(() => {}); await fs.unlink(path.join(runtime, 'mcp-hosted-ServerBot.json')).catch(() => {});
-  for (const file of [path.join(runtime, 'companion-ServerBot.log'), `${path.join(runtime, 'companion-ServerBot.log')}.1`]) {
+  await fs.unlink(mcpConfig).catch(() => {}); await fs.unlink(path.join(runtime, 'mcp-hosted-Claude.json')).catch(() => {});
+  for (const file of [path.join(runtime, 'companion-Claude.log'), `${path.join(runtime, 'companion-Claude.log')}.1`]) {
     const text = await fs.readFile(file, 'utf8').catch(() => null); if (text !== null) await fs.writeFile(file, redact(text));
   }
   report.cleanup.push('Cleanup attempted only for owned host/player/forcechunks; any failure is recorded and fails the run. Server remains running for root save/stop. No retry or account fallback.');

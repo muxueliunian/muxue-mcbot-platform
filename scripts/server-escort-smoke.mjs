@@ -19,7 +19,7 @@ const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connectionFile = path.join(serverDir, 'config/mcbot-server-control/connection.json');
 const connection = JSON.parse(await fs.readFile(connectionFile, 'utf8'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-escort-${new Date().toISOString().replaceAll(':', '-')}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'peer-events.jsonl');
@@ -39,14 +39,14 @@ async function jsonLines(file) {
   return last < 0 ? [] : text.slice(0, last).split(/\r?\n/).filter(value => value.trim()).map(JSON.parse);
 }
 const peerEvents = () => jsonLines(peerFile);
-const runtimeEvents = () => jsonLines(path.join(runtime, 'events-ServerBot.jsonl'));
+const runtimeEvents = () => jsonLines(path.join(runtime, 'events-Claude.jsonl'));
 function check(name, passed, detail) {
   evidence.checks.push({ name, passed: !!passed, ...(detail === undefined ? {} : { detail }) });
   assert(passed, name); console.log('PASS ' + name);
 }
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(value => value.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), '存在非测试玩家，拒绝夹具修改');
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), '存在非测试玩家，拒绝夹具修改');
 }
 async function fixture(text) {
   await alone(); const reply = await command(text);
@@ -67,7 +67,7 @@ const mode = () => tool('get-companion-mode');
 const settled = () => until(mode, value => value.state === 'waiting' && value.intent === 'follow' && value.activity !== 'picking-up' && value.activity !== 'switching', '未回到跟随等待');
 const follow = () => tool('companion-mode', { action: 'follow', player: 'C2Tester', distance: 2, pickup: { items: ['minecraft:snowball'], radius: 4 } });
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-async function position(name = 'ServerBot') {
+async function position(name = 'Claude') {
   const text = await command(`data get entity ${name} Pos`);
   const fields = text.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
   assert(fields?.length === 3 && fields.every(Number.isFinite), '独立位置证据无效');
@@ -79,8 +79,8 @@ async function arena() {
   await fixture('kill @e[type=minecraft:item,x=2400,y=199,z=2400,dx=44,dy=8,dz=44]');
   await fixture('fill 2400 200 2400 2444 200 2444 stone');
   await fixture('fill 2400 201 2400 2444 204 2444 air');
-  await fixture('clear ServerBot'); await fixture('clear C2Tester');
-  await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2412.5 201 2422.5'); await wait(350);
+  await fixture('clear Claude'); await fixture('clear C2Tester');
+  await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2412.5 201 2422.5'); await wait(350);
 }
 async function drop(item, count, x = 2412.5, z = 2425.5, delay = 0) {
   await fixture(`summon item ${x} 201.05 ${z} {Tags:["mcbot_escort_fixture"],Motion:[0.0d,0.0d,0.0d],Item:{id:"${item}",count:${count}},PickupDelay:${delay}}`);
@@ -97,17 +97,17 @@ async function startPeer() {
   await until(peerEvents, values => values.some(value => value.type === 'spawn' && Date.parse(value.time) >= began), '测试玩家未进服');
 }
 async function walkAway() {
-  const began = Date.now(); await send({ type: 'look-at', username: 'ServerBot' });
+  const began = Date.now(); await send({ type: 'look-at', username: 'Claude' });
   await until(peerEvents, values => values.some(value => value.type === 'looked' && Date.parse(value.time) >= began), '测试玩家未转头');
   await send({ type: 'walk', direction: 'back', ms: 650 });
   await until(peerEvents, values => values.some(value => value.type === 'position' && value.reason === 'walk-finished' && Date.parse(value.time) >= began), '测试玩家未完成行走');
 }
 try {
   await alone();
-  const heartbeatFile = path.join(runtime, 'companion-ServerBot.json');
+  const heartbeatFile = path.join(runtime, 'companion-Claude.json');
   writeHeartbeat(heartbeatFile, 'escort-validation'); heartbeat = setInterval(() => writeHeartbeat(heartbeatFile, 'escort-validation'), 3000);
   transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
   transport.stderr?.on('data', chunk => { stderr += chunk; }); client = new Client({ name: 'escort-real-smoke', version: '1' }); await client.connect(transport);
   const names = (await client.listTools()).tools.map(value => value.name);
   check('陪伴与有限收取工具可用，底层拾取不作为模型工具', names.includes('companion-mode') && names.includes('get-companion-mode') && names.includes('collect-items') && !names.includes('pickup-item'));
@@ -124,7 +124,7 @@ try {
   await drop('minecraft:snowball', 3);
   await until(mode, value => value.pickup?.pickedUpCount === 3, '首个掉落原生收取未确认'); await settled();
   check('首个掉落实收并自动回跟随', await amount('minecraft:snowball') === 3 && distance(await position(), await position('C2Tester')) <= 2.7);
-  const authority = await command('data get entity ServerBot Inventory');
+  const authority = await command('data get entity Claude Inventory');
   check('独立服务端库存确认三个雪球', authority.includes('minecraft:snowball') && /count: 3(?:[,}])/.test(authority), authority);
   await drop('minecraft:snowball', 2, 2412.5, 2419.5);
   await until(mode, value => value.pickup?.pickedUpCount === 5, '第二个新掉落未自动收取'); await settled();
@@ -154,7 +154,7 @@ try {
   check('stop清除意图且resume不能重播', stopped.state === 'stopped' && !stopped.pickup && !stopped.intent && !!(await tool('companion-mode', { action: 'resume' }, true)).code);
 
   phase = 'full-inventory'; await arena();
-  for (let slot = 0; slot < 36; slot++) await fixture(`item replace entity ServerBot ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with minecraft:dirt 64`);
+  for (let slot = 0; slot < 36; slot++) await fixture(`item replace entity Claude ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with minecraft:dirt 64`);
   const fullFloor = (await runtimeEvents()).at(-1)?.seq ?? 0;
   await follow(); await settled(); await drop('minecraft:snowball', 4);
   const full = await until(mode, value => value.state === 'blocked', '满包未受阻'); const fullAt = await position(); await wait(1300);
@@ -173,7 +173,7 @@ try {
   await until(position, value => distance(value, motionStart) > 0.4, '身体未开始跟随运动'); await tool('stop-action');
   const stopAt = await position(), coast = [], coastStarted = Date.now();
   for (let sample = 0; sample < 12; sample++) {
-    const raw = await command('data get entity ServerBot Motion');
+    const raw = await command('data get entity Claude Motion');
     const motion = raw.match(/\[([^\]]+)\]/)?.[1].split(',').map(value => Number.parseFloat(value));
     assert(motion?.length === 3 && motion.every(Number.isFinite), '无法独立读取停止后速度');
     coast.push({ ms: Date.now() - coastStarted, position: await position(), horizontalSpeed: Math.hypot(motion[0], motion[2]) });
@@ -187,7 +187,7 @@ try {
   await drop('minecraft:snowball', 16, settledStop.x, settledStop.z + 3); await wait(1200);
   const stopEnd = await position(), stoppedMode = await mode(), stoppedCount = await amount('minecraft:snowball');
   check('运动叫停没有迟到追物或旧意图', stoppedMode.state === 'stopped' && !stoppedMode.pickup && distance(settledStop, stopEnd) < 0.15 && stoppedCount === 0,
-    { stopAt, settledStop, stopEnd, movedAfterSettling: distance(settledStop, stopEnd), finalMotion: await command('data get entity ServerBot Motion'), stoppedMode, stoppedCount });
+    { stopAt, settledStop, stopEnd, movedAfterSettling: distance(settledStop, stopEnd), finalMotion: await command('data get entity Claude Motion'), stoppedMode, stoppedCount });
   const next = await terminal('collect-items', { item: 'minecraft:snowball', count: 16, radius: 4 });
   check('叫停后第一新collect任务成功', next.status === 'succeeded' && next.result.pickedUpCount === 16 && await amount('minecraft:snowball') === 16, next);
 

@@ -33,7 +33,7 @@ async function alone() {
   const reply = (await command('list')).trim();
   if (!reply.includes('players online:')) throw new Error('Cannot parse online player list; refuse fixture mutation');
   const names = reply.match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(s => s.trim()).filter(Boolean) ?? [];
-  if (names.some(name => name !== 'ServerBot')) throw new Error('Human or unrelated player online; refuse fixture mutations');
+  if (names.some(name => name !== 'Claude')) throw new Error('Human or unrelated player online; refuse fixture mutations');
 }
 async function fixture(text) { await alone(); const reply = await command(text); if (/not loaded|Unknown or incomplete command|Incorrect argument/i.test(reply)) throw new Error(`Fixture rejected: ${text}: ${reply.trim()}`); return reply; }
 async function wire(method, params = {}) {
@@ -76,7 +76,7 @@ async function guarded(position = target) { const observed = await block(positio
 async function stack(slot) { return (await body.observe()).inventory.find(item => item.slot === slot); }
 function stackGuard(item) { return { slot: item.slot, expectedItem: item.id, expectedCount: item.count, expectedComponents: item.components }; }
 async function select(slot) { return success('select-slot', stackGuard(await stack(slot))); }
-async function pose() { await fixture(`tp ServerBot ${origin.x} ${origin.y} ${origin.z}`); await delay(250); }
+async function pose() { await fixture(`tp Claude ${origin.x} ${origin.y} ${origin.z}`); await delay(250); }
 async function resetTarget(id = 'stone') {
   await fixture(`setblock ${marker} stone`);
   await fixture(`setblock ${target.x} ${target.y} ${target.z} ${id}`);
@@ -84,7 +84,7 @@ async function resetTarget(id = 'stone') {
   await pose();
 }
 async function placeArgs() { return { ...await guarded(anchor), face: 'up', ...stackGuard(await stack(1)) }; }
-async function inventoryNbt() { return command('data get entity ServerBot Inventory'); }
+async function inventoryNbt() { return command('data get entity Claude Inventory'); }
 async function serverBlockIs(position, id) { return (await command(`execute if block ${position.x} ${position.y} ${position.z} ${id}`)).trim() === 'Test passed'; }
 function clickArgs(menu, slot, button = 0) {
   const item = menu.slots.find(value => value.slot === slot);
@@ -96,27 +96,27 @@ try {
   const props = readServerProps(serverDir);
   check('isolated ports only', props['server-port'] === '25568' && props['rcon.port'] === '25578');
   connection = await readServerConnection(connectionFile);
-  check('expected isolated role/world', connection.username === 'ServerBot' && connection.worldId === 'serverbody-validation');
+  check('expected isolated role/world', connection.username === 'Claude' && connection.worldId === 'serverbody-validation');
   check('backup evidence present', JSON.parse(await readFile('output/serverbody-B-backup.json', 'utf8')).serverStopped === true);
   await alone();
   await connect();
   const hello = await rpc('hello');
   check('B actions advertised', ['dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item'].every(name => hello.capabilities.includes(name)));
   check('test-only cancellation hooks enabled', hello.validationFixture?.enabled === true);
-  check('non-OP bot', !JSON.parse(await readFile(resolve(serverDir, 'ops.json'), 'utf8')).some(item => item.name === 'ServerBot'));
+  check('non-OP bot', !JSON.parse(await readFile(resolve(serverDir, 'ops.json'), 'utf8')).some(item => item.name === 'Claude'));
   const initial = await body.observe();
   check('authority includes complete item components', initial.inventory.every(item => item.components && typeof item.components === 'object'));
-  check('survival role', /0/.test(await command('data get entity ServerBot playerGameType')));
+  check('survival role', /0/.test(await command('data get entity Claude playerGameType')));
   await pose(); // Ensure the fixture chunk is loaded before writing blocks after a respawn elsewhere.
   await fixture('fill 511 200 509 523 200 516 stone');
   await fixture('fill 511 201 509 523 203 516 air');
   await fixture('kill @e[type=item,x=511,y=199,z=509,dx=12,dy=5,dz=7]');
   await pose();
   // This backed-up test NPC has no user-owned inventory; isolate measured contents.
-  await fixture('clear ServerBot');
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:iron_pickaxe');
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:cobblestone 16');
-  await fixture('item replace entity ServerBot hotbar.2 with minecraft:dirt 10');
+  await fixture('clear Claude');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:iron_pickaxe');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:cobblestone 16');
+  await fixture('item replace entity Claude hotbar.2 with minecraft:dirt 10');
   await select(0);
   await resetTarget();
   const pickBefore = await stack(0);
@@ -153,7 +153,7 @@ try {
 
   await resetTarget('obsidian'); await select(0);
   const changedTool = await act('dig-block', { ...await guarded(), timeoutMs: 120000 }, false);
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:diamond_pickaxe');
+  await fixture('item replace entity Claude hotbar.0 with minecraft:diamond_pickaxe');
   const changedTerminal = await until('changed tool rejection', async () => { const op = await body.operation(changedTool.operationId); return op.status !== 'running' && op; });
   check('tool change during digging rejected', changedTerminal.status === 'failed', changedTerminal);
   await delay(1300);
@@ -250,7 +250,7 @@ try {
   await rejected('click-slot', stale, 'old window cannot act on new window');
   await rejected('click-slot', { ...clickArgs(secondMenu, 0), slot: 99999 }, 'invalid slot refused');
   await fixture('setblock 530 200 512 stone');
-  await fixture('tp ServerBot 530.5 201 512.5');
+  await fixture('tp Claude 530.5 201 512.5');
   await rejected('click-slot', clickArgs(secondMenu, 0), 'distant or closed menu cannot be clicked');
   await pose();
   if (await menu()) { const m = await menu(); await success('close-container', { containerId: m.id, expectedRevision: m.revision }); }

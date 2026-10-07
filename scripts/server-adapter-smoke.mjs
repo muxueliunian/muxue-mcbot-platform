@@ -23,7 +23,7 @@ const { rcon, readServerProps } = await import('./rcon.mjs');
 const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.username, 'Claude');
 const { Client } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
 const { StdioClientTransport } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
 
@@ -38,7 +38,7 @@ function check(name, passed, detail) { report.checks.push({ name, passed: !!pass
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function fixture(text) {
   const list = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(n => n.trim()).filter(Boolean) ?? [];
-  assert(list.every(name => name === 'ServerBot'), '有其他玩家在线，拒绝修改夹具');
+  assert(list.every(name => name === 'Claude'), '有其他玩家在线，拒绝修改夹具');
   const reply = await command(text); report.calls.push({ fixture: text, reply: redact(reply) });
   assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|No entity was found|Unknown block/i.test(reply), '夹具命令被拒绝：' + redact(reply)); return reply;
 }
@@ -71,7 +71,7 @@ try {
   check('服务端声明 Iron Furnaces 容器适配', JSON.stringify(h.adapters) === '["ironfurnaces:iron_furnace"]', { adapters: h.adapters });
   check('JSON 声明的重生锚交互和内置堆肥桶都登记了，写错的文件被跳过', h.interactions.includes('minecraft:composter/add') && h.interactions.includes('minecraft:respawn_anchor/charge') && !h.interactions.includes('example:broken'), { interactions: h.interactions });
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'adapter-fixture', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools;
   check('interact-block 的说明列出 JSON 交互，open-container 的说明列出 Mod 适配', tools.find(t => t.name === 'interact-block')?.description.includes('minecraft:respawn_anchor/charge') &&
@@ -82,10 +82,10 @@ try {
   await fixture('forceload add 6392 6392 6415 6415'); forced.push('6392 6392 6415 6415');
   await fixture('fill 6396 200 6396 6412 200 6406 minecraft:stone');
   await fixture('fill 6396 201 6396 6412 204 6406 minecraft:air');
-  await fixture('gamemode survival ServerBot'); await fixture('clear ServerBot');
-  await fixture('tp ServerBot 6400.5 201 6400.5'); await wait(300);
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:glowstone 8');
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:dirt 4');
+  await fixture('gamemode survival Claude'); await fixture('clear Claude');
+  await fixture('tp Claude 6400.5 201 6400.5'); await wait(300);
+  await fixture('item replace entity Claude hotbar.0 with minecraft:glowstone 8');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:dirt 4');
 
   // 1. JSON 交互：给重生锚充能，每次消耗 1 个荧石，charges +1
   await fixture(`setblock ${at(ANCHOR)} minecraft:respawn_anchor[charges=0]`); await wait(200);

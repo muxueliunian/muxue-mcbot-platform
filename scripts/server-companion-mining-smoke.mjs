@@ -42,7 +42,7 @@ const require = createRequire(new URL('../mcp-server/package.json', import.meta.
 const mineflayer = require('mineflayer');
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-companion-mining-${selectedCase ? 'case-' : ''}${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const report = { started: new Date().toISOString(), serverDir, backup: backup.backup, plan, selectedCase: selectedCase ?? null,
@@ -68,7 +68,7 @@ let rconQueue = Promise.resolve();
 const command = text => { const pending = rconQueue.then(async () => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0]); rconQueue = pending.then(() => {}, () => {}); return pending; };
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), '不属于本脚本的玩家在线，禁止夹具修改'); return names;
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), '不属于本脚本的玩家在线，禁止夹具修改'); return names;
 }
 async function fixture(text) {
   await alone(); const reply = await command(text); report.calls.push(safe({ ...stamp(), fixture: text, reply }));
@@ -103,11 +103,11 @@ const targets = [{ x: 6415, y: 201, z: 6412 }, { x: 6414, y: 201, z: 6415 }, { x
 const blockIs = async (pos, id) => /^Test passed/.test(await command(`execute if block ${pos.x} ${pos.y} ${pos.z} minecraft:${id}`));
 const setOre = (pos = targets[0], ore = 'coal_ore') => fixture(`setblock ${pos.x} ${pos.y} ${pos.z} minecraft:${ore}`);
 async function amount(id) {
-  const reply = await command(`clear ServerBot minecraft:${id} 0`); report.calls.push({ ...stamp(), independentAmount: id, reply: redact(reply) });
+  const reply = await command(`clear Claude minecraft:${id} 0`); report.calls.push({ ...stamp(), independentAmount: id, reply: redact(reply) });
   if (/No items (?:were )?found/i.test(reply)) return 0;
   const value = reply.match(/Found (\d+) matching item/i); assert(value, '原生数量读取无法解析'); return Number(value[1]);
 }
-async function position(name = 'ServerBot') {
+async function position(name = 'Claude') {
   const reply = await command(`data get entity ${name} Pos`), fields = reply.match(/entity data:\s*\[([^\]]+)\]\s*$/)?.[1].split(',').map(value => Number.parseFloat(value));
   assert(fields?.length === 3 && fields.every(Number.isFinite), '原生位置读取失败'); return { x: fields[0], y: fields[1], z: fields[2] };
 }
@@ -117,10 +117,10 @@ async function reset(toolItem = 'minecraft:diamond_pickaxe') {
   if (activePlayerDig) playerDig(1, activePlayerDig);
   await fixture('kill @e[type=minecraft:item,x=6400,y=199,z=6400,dx=30,dy=8,dz=30]');
   await fixture('fill 6400 200 6400 6430 200 6430 minecraft:stone'); await fixture('fill 6400 201 6400 6430 205 6430 minecraft:air');
-  await fixture('clear ServerBot'); await fixture('clear C2Tester');
-  await fixture('tp ServerBot 6410.5 201 6412.5'); await fixture('tp C2Tester 6412.5 201 6412.5');
-  await fixture('effect give ServerBot minecraft:instant_health 1 5 true'); await fixture('effect give ServerBot minecraft:saturation 1 5 true');
-  if (toolItem) await fixture(`item replace entity ServerBot hotbar.0 with ${toolItem}`);
+  await fixture('clear Claude'); await fixture('clear C2Tester');
+  await fixture('tp Claude 6410.5 201 6412.5'); await fixture('tp C2Tester 6412.5 201 6412.5');
+  await fixture('effect give Claude minecraft:instant_health 1 5 true'); await fixture('effect give Claude minecraft:saturation 1 5 true');
+  if (toolItem) await fixture(`item replace entity Claude hotbar.0 with ${toolItem}`);
   await wait(400);
 }
 async function follow(maxBlocks = 2, durationMs = 60000) {
@@ -177,11 +177,11 @@ try {
   });
   await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
   const tempConnection = path.join(runtime, 'connection.json'); await fs.writeFile(tempConnection, JSON.stringify({ ...connection, endpoint: `http://127.0.0.1:${proxy.address().port}/v2` }));
-  const heartbeatFile = path.join(runtime, 'companion-ServerBot.json');
+  const heartbeatFile = path.join(runtime, 'companion-Claude.json');
   const beat = () => { try { writeHeartbeat(heartbeatFile, 'companion-mining-smoke'); } catch (error) { heartbeatError = error; } };
   beat(); if (heartbeatError) throw heartbeatError; heartbeat = setInterval(beat, 3000);
   transport = new OwnedTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', tempConnection,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--hosted'], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'companion-mining-real-smoke', version: '1' }); await client.connect(transport);
   transport.stderr?.on('data', chunk => { report.stderr = redact((report.stderr ?? '') + chunk).slice(-16000); });
   const survival = await tool('get-survival-state'); await tool('set-reflexes', { expectedRevision: survival.policy.revision, autoEat: false, autoDefend: false, armed: false });
@@ -241,7 +241,7 @@ try {
     await wait(2200); const later = await mode(); check('错误工具不会反复尝试同矿', later.mining.attemptedBlocks === row.snapshot.mining.attemptedBlocks && digCalls(floor).length === 0 && report.rpc.slice(floor).filter(call => call.method === 'act' && call.action === 'swap-inventory').length === 0, { scans, later });
   });
   await scenario('full-inventory-no-loop', async row => {
-    await reset(); for (let slot = 1; slot < 36; slot++) await fixture(`item replace entity ServerBot ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with minecraft:diamond 64`);
+    await reset(); for (let slot = 1; slot < 36; slot++) await fixture(`item replace entity Claude ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with minecraft:diamond 64`);
     await setOre(); const floor = report.rpc.length; await follow(2); row.snapshot = await until(mode, value => value.mining?.attemptedBlocks >= 1, '满背包候选未被审视');
     check('背包满不挖新矿、不丢旧物', digCalls(floor).length === 0 && await blockIs(targets[0], 'coal_ore') && await amount('diamond') === 35 * 64, row.snapshot);
     await wait(2200); const later = await mode(); check('满背包后不循环dig', later.mining.attemptedBlocks === row.snapshot.mining.attemptedBlocks && digCalls(floor).length === 0, later);
@@ -258,7 +258,7 @@ try {
     await until(() => Promise.resolve(digCalls(floor)), calls => calls.length === 1, '没有在途挖掘'); await tool('stop-action'); const stoppedAt = Date.now();
     await wait(500); const old = await mode(); await setOre(targets[1]); await wait(1600);
     check('硬停丢弃mining意图和后续scan/dig，角色留服', old.state === 'stopped' && !old.intent && digCalls(floor).length === 1 && await blockIs(targets[0], 'deepslate_coal_ore') && await blockIs(targets[1], 'coal_ore'), { old, stoppedAt });
-    await fixture('item replace entity ServerBot hotbar.0 with minecraft:diamond_pickaxe'); const found = await tool('discover-resources', { blockIds: ['minecraft:coal_ore'], radius: 6, maxResults: 8 }); // 停止后Bot停在约6410.7，新矿在4.7格外
+    await fixture('item replace entity Claude hotbar.0 with minecraft:diamond_pickaxe'); const found = await tool('discover-resources', { blockIds: ['minecraft:coal_ore'], radius: 6, maxResults: 8 }); // 停止后Bot停在约6410.7，新矿在4.7格外
     let next = await tool('gather-resources', { resourceRef: found.resourceRef, item: 'minecraft:coal', count: 1, maxSteps: 16 });
     if (next.status === 'running') next = await until(() => tool('get-operation', { operationId: next.operationId, details: true }), value => value.status !== 'running', '首个新任务未完成');
     row.fresh = next; check('停止后首个明确新有限任务成功，不恢复旧陪挖', next.status === 'succeeded' && next.result?.minedBlocks === 1 && next.result?.pickedUpCount === 1 && (await mode()).state === 'stopped', next);
@@ -282,7 +282,7 @@ finally {
   });
   for (const [x, z] of forced) await fixture(`forceload remove ${x} ${z}`).catch(error => { report.result = 'failed'; process.exitCode = 1; report.cleanup.push({ action: 'remove-own-ticket-failed', error: redact(error.message) }); });
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
-  await fs.unlink(path.join(runtime, 'connection.json')).catch(() => {}); await fs.unlink(path.join(runtime, 'server-control-ServerBot.json')).catch(() => {});
+  await fs.unlink(path.join(runtime, 'connection.json')).catch(() => {}); await fs.unlink(path.join(runtime, 'server-control-Claude.json')).catch(() => {});
   report.cleanup.push({ action: 'server-left-running', detail: '仅自身MCP／原生测试玩家／强加载票清理；夹具世界由root最终保存关闭，无模型调用。' });
   report.finished = new Date().toISOString(); await checkpoint();
   await fs.writeFile(path.join(root, `output/server-companion-mining-${selectedCase ? 'case-' : ''}latest.json`), JSON.stringify({ dir, ...safe(report) }, null, 2) + '\n');

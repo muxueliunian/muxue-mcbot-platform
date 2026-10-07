@@ -25,7 +25,7 @@ assert(options.allow&&['prepare','verify','verify-direct','kick'].includes(optio
 const root=path.resolve('.'),serverDir=path.join(root,'runtime/serverbody-validation');
 const checkpointFile=path.resolve(options.checkpoint||'output/serverbody-dead-save-checkpoint.json');
 const output=path.resolve(options.output||`output/serverbody-dead-save-${options.phase}.json`);
-const evidence={started:new Date().toISOString(),phase:options.phase,checks:[],fixtures:[],cleanup:[],scope:'Only isolated ServerBot; explicit real Node --respawn-only through method-recording loopback relay; no model/server lifecycle action or hashes'};
+const evidence={started:new Date().toISOString(),phase:options.phase,checks:[],fixtures:[],cleanup:[],scope:'Only isolated Claude; explicit real Node --respawn-only through method-recording loopback relay; no model/server lifecycle action or hashes'};
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let connection,body,lease,checkpoint,mutated=false,leaveDead=false;
 
@@ -40,7 +40,7 @@ async function alone() {
   const reply=(await command('list')).trim();
   const match=reply.match(/:\s*([^\r\n]*)$/);assert(match,'Cannot parse list; refuse mutations');
   const names=match[1].split(',').map(name=>name.trim()).filter(Boolean);
-  assert(names.every(name=>name==='ServerBot'),'Other player present; refuse mutations');return names;
+  assert(names.every(name=>name==='Claude'),'Other player present; refuse mutations');return names;
 }
 async function fixture(text) {await alone();mutated=true;const reply=await command(text);if(/not loaded|Unknown or incomplete command|Incorrect argument/i.test(reply))throw Error(`Fixture rejected: ${text}: ${reply.trim()}`);return reply;}
 async function wire(method,params={}) {
@@ -68,26 +68,26 @@ async function prepareDeath() {
   await connect();const initial=await body.observe(),hello=await rpc('hello'),spawn=await fixtureState();
   check('fixture enabled and unique native body',spawn.enabled&&spawn.bodyClass==='BodyPlayer'&&spawn.registered===1);
   const keepText=(await command('gamerule keepInventory')).trim(),keepMatch=keepText.match(/\b(true|false)\b$/);assert(keepMatch,'Cannot read keepInventory');
-  checkpoint={version:1,username:'ServerBot',worldId:'serverbody-validation',oldInstanceId:hello.instanceId,
+  checkpoint={version:1,username:'Claude',worldId:'serverbody-validation',oldInstanceId:hello.instanceId,
     originalKeepInventory:keepMatch[1]==='true',originalSpawn:spawn,uuid:spawn.uuid,initialPosition:initial.position};
   await body.stop();
-  await fixture('tp ServerBot 514.5 201 512.5');
+  await fixture('tp Claude 514.5 201 512.5');
   await delay(250);
   check('existing bounded fixture floor',(await command('execute if block 514 200 512 minecraft:stone')).trim()==='Test passed');
   await fixture('mcbot-respawn-fixture clear');
-  await fixture('clear ServerBot');
+  await fixture('clear Claude');
   checkpoint.marker=`B4Save-${randomUUID().slice(0,8)}`;
-  await fixture(`item replace entity ServerBot hotbar.0 with minecraft:iron_pickaxe[minecraft:damage=9,minecraft:custom_name='{"text":"${checkpoint.marker}"}']`);
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:gold_ingot 4');
+  await fixture(`item replace entity Claude hotbar.0 with minecraft:iron_pickaxe[minecraft:damage=9,minecraft:custom_name='{"text":"${checkpoint.marker}"}']`);
+  await fixture('item replace entity Claude hotbar.1 with minecraft:gold_ingot 4');
   await fixture('gamerule keepInventory true');
   checkpoint.inventory=(await body.observe()).inventory;
-  checkpoint.inventorySnbt=(await command('data get entity ServerBot Inventory')).trim();
+  checkpoint.inventorySnbt=(await command('data get entity Claude Inventory')).trim();
   const old={...lease};
-  await fixture('kill ServerBot');
+  await fixture('kill Claude');
   const dead=await until('death invalidation',async()=>{const h=await rpc('hello');return !h.connected&&h.sessionId!==old.sessionId&&h;});
   check('old lease invalid immediately after death',!(await wire('observe',auth(old))).ok);
-  check('dead health remains zero',/\b0(?:\.0)?f?$/.test((await command('data get entity ServerBot Health')).trim()));
-  check('death save keeps full inventory fields',(await command('data get entity ServerBot Inventory')).trim()===checkpoint.inventorySnbt);
+  check('dead health remains zero',/\b0(?:\.0)?f?$/.test((await command('data get entity Claude Health')).trim()));
+  check('death save keeps full inventory fields',(await command('data get entity Claude Inventory')).trim()===checkpoint.inventorySnbt);
   checkpoint.deadSessionId=dead.sessionId;checkpoint.preparedAt=new Date().toISOString();
   await body.close();body=undefined;
   return {old,dead};
@@ -112,7 +112,7 @@ async function cliRespawn() {
   try{
     const selected=path.join(directory,'connection.json');
     await fs.writeFile(selected,JSON.stringify({...connection,endpoint:`http://127.0.0.1:${relay.address().port}/v2`}),{mode:0o600});
-    const child=spawn(process.execPath,[path.join(root,'client-runtime/dist/main.js'),'--body','server','--respawn-only','--connection-file',selected,'--username','ServerBot','--world-id','serverbody-validation','--runtime-dir',directory],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn(process.execPath,[path.join(root,'client-runtime/dist/main.js'),'--body','server','--respawn-only','--connection-file',selected,'--username','Claude','--world-id','serverbody-validation','--runtime-dir',directory],{windowsHide:true,stdio:['ignore','pipe','pipe']});
     let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);
     const result=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{child.kill();reject(Error('Explicit respawn CLI timed out'));},15000);
@@ -136,10 +136,10 @@ async function verifyReborn(before) {
   const result=await cliRespawn();
   check('explicit CLI advances death epoch',result.sessionId!==before.sessionId);
   await connect();const state=await body.observe(),native=await fixtureState();
-  check('new explicit claim has unique same-UUID BodyPlayer',native.uuid===checkpoint.uuid&&native.bodyClass==='BodyPlayer'&&native.registered===1&&(await alone()).filter(name=>name==='ServerBot').length===1);
+  check('new explicit claim has unique same-UUID BodyPlayer',native.uuid===checkpoint.uuid&&native.bodyClass==='BodyPlayer'&&native.registered===1&&(await alone()).filter(name=>name==='Claude').length===1);
   check('native respawn is alive with normal health',state.connected&&state.health===20,{health:state.health});
   check('persisted slot/count/components preserved',isDeepStrictEqual(state.inventory,checkpoint.inventory));
-  check('independent persisted inventory unchanged',(await command('data get entity ServerBot Inventory')).trim()===checkpoint.inventorySnbt);
+  check('independent persisted inventory unchanged',(await command('data get entity Claude Inventory')).trim()===checkpoint.inventorySnbt);
   check('persistent named/damaged tool is present',JSON.stringify(state.inventory).includes(checkpoint.marker)&&state.inventory.some(stack=>stack.id==='minecraft:iron_pickaxe'&&stack.components?.['minecraft:damage']?.value===9));
   const action=await body.act('look-at',{x:state.position.x+1,y:state.position.y+1,z:state.position.z});
   check('first new explicit action works',action.status==='succeeded');
@@ -150,7 +150,7 @@ try{
   check('fixed isolated server ports',props['server-ip']==='127.0.0.1'&&props['server-port']==='25568'&&props['rcon.port']==='25578');
   check('stopped-world backup evidence',JSON.parse(await fs.readFile('output/serverbody-B-backup.json','utf8')).serverStopped===true);
   connection=await readServerConnection(path.join(serverDir,'config/mcbot-server-control/connection.json'));
-  check('fixed role/world',connection.username==='ServerBot'&&connection.worldId==='serverbody-validation');await alone();
+  check('fixed role/world',connection.username==='Claude'&&connection.worldId==='serverbody-validation');await alone();
   if(options.phase==='prepare'){
     await prepareDeath();
     const saved=await fixture('save-all flush');check('dead player save flushed',/saved/i.test(saved));
@@ -159,7 +159,7 @@ try{
     evidence.next='Root must gracefully stop and restart this isolated server, then run --phase verify. Dead body intentionally retained; keepInventory restoration is in verify.';
   }else if(options.phase==='verify'||options.phase==='verify-direct'){
     checkpoint=JSON.parse(await fs.readFile(checkpointFile,'utf8'));
-    check('matching completed preparation',checkpoint.version===1&&checkpoint.stage==='prepared'&&checkpoint.username==='ServerBot'&&checkpoint.worldId==='serverbody-validation'&&typeof checkpoint.originalKeepInventory==='boolean');
+    check('matching completed preparation',checkpoint.version===1&&checkpoint.stage==='prepared'&&checkpoint.username==='Claude'&&checkpoint.worldId==='serverbody-validation'&&typeof checkpoint.originalKeepInventory==='boolean');
     const initial=await rpc('hello');
     check('new service starts with no automatic role',initial.instanceId!==checkpoint.oldInstanceId&&initial.connected===false&&initial.sessionId===null);
     check('no role registered before explicit load',(await alone()).length===0);
@@ -170,16 +170,16 @@ try{
     if(claim.ok) await rpc('release',auth(claim.result));
     check('loading dead save rejects ordinary claim',!claim.ok&&claim.error?.code==='DEAD_BODY',{code:claim.error?.code});
     loaded=await rpc('hello');
-    check('dead save remains dead after rejected claim',loaded.connected===false&&typeof loaded.sessionId==='string'&&/\b0(?:\.0)?f?$/.test((await command('data get entity ServerBot Health')).trim()));
-    check('load did not change inventory fields',(await command('data get entity ServerBot Inventory')).trim()===checkpoint.inventorySnbt);
+    check('dead save remains dead after rejected claim',loaded.connected===false&&typeof loaded.sessionId==='string'&&/\b0(?:\.0)?f?$/.test((await command('data get entity Claude Health')).trim()));
+    check('load did not change inventory fields',(await command('data get entity Claude Inventory')).trim()===checkpoint.inventorySnbt);
     }else check('direct respawn begins at null session without first claiming',loaded.sessionId===null);
     const old=await wire('heartbeat',{instanceId:checkpoint.oldInstanceId,sessionId:checkpoint.deadSessionId,leaseId:randomUUID()});
     check('previous service scope is rejected',!old.ok&&old.error?.code==='WRONG_INSTANCE',{code:old.error?.code});
     await verifyReborn(loaded);evidence.result='passed';
   }else{
     const killed=await prepareDeath();
-    await fixture('kick ServerBot B4 death-disconnect validation');
-    await until('kicked body unregistered',async()=>!(await alone()).includes('ServerBot'));
+    await fixture('kick Claude B4 death-disconnect validation');
+    await until('kicked body unregistered',async()=>!(await alone()).includes('Claude'));
     check('dead kick unregisters body',(await alone()).length===0);
     check('old controller stays invalid after kick',!(await wire('observe',auth(killed.old))).ok);
     const current=await rpc('hello');check('kicked role is not controllable',!current.connected);

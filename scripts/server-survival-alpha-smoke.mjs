@@ -29,7 +29,7 @@ assert(!serverDir.toLowerCase().startsWith('g:\\mc\\mcbot\\'), '拒绝修改旧�
 assert((await fs.stat(backup.backup)).isDirectory());
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-survival-alpha-${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'peer-events.jsonl'); await fs.writeFile(input, ''); await fs.writeFile(peerFile, '');
@@ -62,14 +62,14 @@ async function lines(file) {
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => ['ServerBot', 'C2Tester'].includes(name)), '其他玩家在线，拒绝夹具修改'); return names;
+  assert(names && names.every(name => ['Claude', 'C2Tester'].includes(name)), '其他玩家在线，拒绝夹具修改'); return names;
 }
 async function fixture(text) {
   await alone(); const reply = await command(text);
   report.calls.push({ ...stamp(), fixture: text, reply });
   assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|Invalid component/i.test(reply), '夹具命令失败：' + reply); return reply;
 }
-const replace = (slot, item, count = 1) => fixture(`item replace entity ServerBot ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with ${item} ${count}`);
+const replace = (slot, item, count = 1) => fixture(`item replace entity Claude ${slot < 9 ? `hotbar.${slot}` : `inventory.${slot - 9}`} with ${item} ${count}`);
 async function until(read, accept, name, timeout = 15000, interval = 75) {
   const deadline = Date.now() + timeout; let value;
   while (Date.now() < deadline) { value = await read(); if (accept(value)) return value; await wait(interval); }
@@ -106,9 +106,9 @@ const total = (values, id) => values.filter(value => value.id === id).reduce((co
 async function policy(change) { const current = await state(); return tool('set-reflexes', { expectedRevision: current.policy.revision, ...change }); }
 async function readOnlyAssessment(block, args = {}) {
   await fixture(`setblock 2414 201 2422 ${block}`);
-  const before = await state(), authorityBefore = await command('data get entity ServerBot Inventory');
+  const before = await state(), authorityBefore = await command('data get entity Claude Inventory');
   const value = await tool('assess-tool', { x: 2414, y: 201, z: 2422, expectedBlock: `minecraft:${block}`, ...args });
-  const after = await state(), authorityAfter = await command('data get entity ServerBot Inventory');
+  const after = await state(), authorityAfter = await command('data get entity Claude Inventory');
   check(`只读评估 ${block} 未换手／改变库存`, before.selectedSlot === after.selectedSlot && authorityBefore === authorityAfter && JSON.stringify(before.inventory) === JSON.stringify(after.inventory));
   check(`评估 ${block} 全主背包36候选及时间口径`, value.candidates.length === 36 && value.candidates.every(candidate => ['estimated', 'unknown', 'native-base'].includes(candidate.estimate)) && value.notes.some(note => note.includes('基础')));
   return value;
@@ -116,9 +116,9 @@ async function readOnlyAssessment(block, args = {}) {
 async function makeHungry(target = 10) {
   const initial = await state();
   if (initial.food <= target) return initial;
-  await fixture('effect give ServerBot minecraft:hunger 3 255 true');
+  await fixture('effect give Claude minecraft:hunger 3 255 true');
   try { return await until(state, value => value.food <= target && value.health > 0, '饥饿夹具没有达到目标', 4500, 50); }
-  finally { await fixture('effect clear ServerBot minecraft:hunger'); }
+  finally { await fixture('effect clear Claude minecraft:hunger'); }
 }
 async function relay() {
   proxy = http.createServer(async (req, res) => {
@@ -139,9 +139,9 @@ try {
   const names = await alone(); assert(!names.includes('C2Tester'), '已有C2Tester，拒绝占用或清理他人测试玩家');
   await relay();
   const connectionFile = path.join(runtime, 'connection.json'); await fs.writeFile(connectionFile, JSON.stringify({ ...connection, endpoint: `http://127.0.0.1:${proxy.address().port}/v2` }));
-  const host = path.join(runtime, 'companion-ServerBot.json'); writeHeartbeat(host, 'survival-alpha-smoke'); heartbeat = setInterval(() => writeHeartbeat(host, 'survival-alpha-smoke'), 3000);
+  const host = path.join(runtime, 'companion-Claude.json'); writeHeartbeat(host, 'survival-alpha-smoke'); heartbeat = setInterval(() => writeHeartbeat(host, 'survival-alpha-smoke'), 3000);
   transport = new ObservedTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'survival-alpha-real-smoke', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools.map(value => value.name);
   check('新五项语义工具已在真实MCP注册', ['get-survival-state', 'assess-tool', 'prepare-item', 'eat-food', 'set-reflexes'].every(name => tools.includes(name)), { toolCount: tools.length });
@@ -154,8 +154,8 @@ try {
   assert(!existingChunks.some(([x, z]) => x >= 150 && x <= 152 && z >= 150 && z <= 152), '专用平台已有他人forceload ticket');
   await fixture('forceload add 2400 2400 2444 2444'); forced = true;
   await fixture('fill 2400 200 2400 2444 200 2444 stone'); await fixture('fill 2400 201 2400 2444 204 2444 air');
-  await fixture('clear ServerBot'); await fixture('clear C2Tester'); await fixture('tp ServerBot 2410.5 201 2422.5'); await fixture('tp C2Tester 2420.5 201 2428.5');
-  await until(() => command('data get entity ServerBot OnGround'), value => /1b\s*$/.test(value), '传送后未落地');
+  await fixture('clear Claude'); await fixture('clear C2Tester'); await fixture('tp Claude 2410.5 201 2422.5'); await fixture('tp C2Tester 2420.5 201 2428.5');
+  await until(() => command('data get entity Claude OnGround'), value => /1b\s*$/.test(value), '传送后未落地');
   await step('tool-qualification-speeds', async () => {
     for (const [slot, item] of [[0, 'wooden_pickaxe'], [1, 'stone_pickaxe'], [2, 'iron_pickaxe'], [3, 'golden_pickaxe'], [20, 'diamond_pickaxe'], [10, 'iron_axe'], [11, 'iron_shovel']]) await replace(slot, `minecraft:${item}`);
     const stone = await readOnlyAssessment('stone'), get = (value, slot) => value.candidates.find(candidate => candidate.slot === slot);
@@ -170,7 +170,7 @@ try {
     await replace(3, 'minecraft:golden_pickaxe[minecraft:damage=31]'); const protectedTool = await readOnlyAssessment('stone');
     check('近坏金镐速度仍快但默认保护其最后耐久', get(protectedTool, 3).remainingDurability === 1 && protectedTool.recommendedSlot === 20);
     const permitted = await readOnlyAssessment('stone', { minRemainingDurability: 0 }); check('明确改变耐久策略可选仍合格的金镐', permitted.recommendedSlot === 3);
-    await fixture('clear ServerBot'); const bare = await readOnlyAssessment('oak_log');
+    await fixture('clear Claude'); const bare = await readOnlyAssessment('oak_log');
     check('无斧可只读确认徒手采木，推荐已有空热栏', bare.candidates.find(candidate => candidate.slot === 0).eligible === true && bare.recommendedSlot >= 0 && bare.recommendedSlot <= 8 && bare.candidates[bare.recommendedSlot].id === 'minecraft:air');
     const discovered = await tool('discover-resources', { blockIds: ['minecraft:oak_log'], radius: 6 });
     check('旧资源热栏推荐字段仍限定0..8', discovered.candidates.some(candidate => candidate.id === 'minecraft:oak_log') && discovered.candidates.every(candidate => candidate.recommendedToolSlot === undefined || candidate.recommendedToolSlot <= 8));
@@ -188,8 +188,8 @@ try {
   });
   await step('inventory-tool-native-gather', async () => {
     await policy({ autoEat: false, armed: false, toolPolicy: 'fastest_valid' }); await tool('stop-action');
-    await fixture('clear ServerBot'); await fixture('tp ServerBot 2410.5 201 2422.5');
-    await until(() => command('data get entity ServerBot OnGround'), value => /1b\s*$/.test(value), '采集夹具传送后未落地');
+    await fixture('clear Claude'); await fixture('tp Claude 2410.5 201 2422.5');
+    await until(() => command('data get entity Claude OnGround'), value => /1b\s*$/.test(value), '采集夹具传送后未落地');
     await fixture('setblock 2413 201 2422 stone'); await replace(10, 'minecraft:diamond_pickaxe');
     const before = await inventory();
     check('真实采集前合格镐只在主背包10，热栏无镐', before.some(value => value.slot === 10 && value.id === 'minecraft:diamond_pickaxe') && before.filter(value => value.slot <= 8).every(value => value.id === 'minecraft:air'));
@@ -197,7 +197,7 @@ try {
     check('发现可达非脚下支撑石头夹具', discovered.candidates.some(value => value.position.x === 2413 && value.position.y === 201 && value.position.z === 2422), discovered.candidates);
     const floor = report.rpc.length;
     const operation = await terminal('gather-resources', { resourceRef: discovered.resourceRef, item: 'minecraft:cobblestone', count: 1, timeoutMs: 20000, maxSteps: 16 });
-    const after = await inventory(), authority = await command('data get entity ServerBot Inventory');
+    const after = await inventory(), authority = await command('data get entity Claude Inventory');
     check('主背包镐实际准备后采石，原生拾取收据确认圆石一个', operation.status === 'succeeded' && operation.result?.pickedUpCount === 1 && operation.result?.minedBlocks === 1 && total(after, 'minecraft:cobblestone') === 1, operation);
     const writes = report.rpc.slice(floor).filter(value => value.method === 'act' && value.ok);
     check('实际采集链含原生swap-inventory与dig-block', writes.some(value => value.action === 'swap-inventory') && writes.some(value => value.action === 'dig-block'), writes);
@@ -205,10 +205,10 @@ try {
   });
   if (!report.toolsOnly) {
     await step('manual-native-food', async () => {
-      await fixture('clear ServerBot'); await replace(11, 'minecraft:bread', 3); await policy({ autoEat: false, armed: false }); await makeHungry();
+      await fixture('clear Claude'); await replace(11, 'minecraft:bread', 3); await policy({ autoEat: false, armed: false }); await makeHungry();
       const before = await state(), op = await terminal('eat-food', { slot: 11, timeoutMs: 10000 }), after = await state();
       check('热栏外安全食物准备后原生Finish只消费一个', op.status === 'succeeded' && op.result?.consumedCount === 1 && op.result?.consumption === 'confirmed' && total(before.inventory, 'minecraft:bread') - total(after.inventory, 'minecraft:bread') === 1 && after.food > before.food, op);
-      check('独立服务端库存核对面包剩二', /minecraft:bread/.test(await command('data get entity ServerBot Inventory')) && total(after.inventory, 'minecraft:bread') === 2);
+      check('独立服务端库存核对面包剩二', /minecraft:bread/.test(await command('data get entity Claude Inventory')) && total(after.inventory, 'minecraft:bread') === 2);
     });
     await step('native-food-stop', async () => {
       await replace(0, 'minecraft:bread', 3); await policy({ autoEat: false, armed: false }); await makeHungry();
@@ -232,14 +232,14 @@ try {
       check('关闭自动进食后饥饿也不消耗下一份食物', JSON.stringify(offBefore) === JSON.stringify(offAfter));
     });
     await step('urgent-food-preempts-wait', async () => {
-      await policy({ autoEat: false, armed: false }); await fixture('clear ServerBot');
+      await policy({ autoEat: false, armed: false }); await fixture('clear Claude');
       await replace(10, 'minecraft:diamond_pickaxe'); const hungry = await makeHungry(6);
       check('抢占前无食物且达到紧急饥饿阈值', hungry.food <= 6 && hungry.foods.length === 0, { food: hungry.food, foods: hungry.foods });
       // 配置先于 wait；之后只注入食物，不再靠 configure 的停止来制造抢占结果。
       await policy({ autoEat: true, armed: true, urgentFood: 6 });
       const waiting = await tool('companion-mode', { action: 'wait' });
       check('紧急食物出现前wait已持有陪伴任务锁', waiting.state === 'waiting' && waiting.intent === 'wait', waiting);
-      const eventFile = path.join(runtime, 'events-ServerBot.jsonl'), eventFloor = (await lines(eventFile)).at(-1)?.seq ?? 0;
+      const eventFile = path.join(runtime, 'events-Claude.jsonl'), eventFloor = (await lines(eventFile)).at(-1)?.seq ?? 0;
       const floor = report.rpc.length; await replace(11, 'minecraft:bread', 1);
       const stopped = await until(() => tool('get-companion-mode'), value => value.state === 'stopped' && !value.intent, '紧急进食没有抢占旧wait', 10000);
       const meals = await until(() => lines(eventFile), rows => rows.some(row => {
@@ -270,10 +270,10 @@ finally {
     owner.row.stderrTail = redact(owner.rawTail);
   }
   if (forced) await fixture('forceload remove 2400 2400 2444 2444').catch(error => { report.result = 'failed'; process.exitCode = 1; report.cleanup.push({ action: 'remove-own-forceload', error: redact(error.message) }); });
-  await fixture('effect clear ServerBot minecraft:hunger').catch(error => report.cleanup.push({ action: 'clear-own-hunger-fixture', error: redact(error.message) }));
+  await fixture('effect clear Claude minecraft:hunger').catch(error => report.cleanup.push({ action: 'clear-own-hunger-fixture', error: redact(error.message) }));
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
   await fs.unlink(path.join(runtime, 'connection.json')).catch(() => {});
-  report.events = await lines(path.join(runtime, 'events-ServerBot.jsonl')); report.peerEvents = await lines(peerFile);
+  report.events = await lines(path.join(runtime, 'events-Claude.jsonl')); report.peerEvents = await lines(peerFile);
   report.finished = new Date().toISOString(); report.durationMs = Math.round(performance.now() - started);
   report.cleanup.push({ action: 'server-left-running', boundary: '仅关闭自身MCP/peer、撤本次forceload和饥饿夹具；调用者负责保存关服。' });
   await checkpoint(); await fs.writeFile(path.join(root, 'output/server-survival-alpha-latest.json'), JSON.stringify({ dir, ...safe(report) }, null, 2) + '\n');

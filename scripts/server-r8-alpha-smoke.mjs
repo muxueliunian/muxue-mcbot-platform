@@ -49,7 +49,7 @@ const { rcon, readServerProps } = await import('./rcon.mjs');
 const props = readServerProps(serverDir);
 assert.equal(props['server-port'], String(plan.ports.game)); assert.equal(props['rcon.port'], String(plan.ports.rcon));
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
 assert(typeof connection.worldId === 'string' && connection.worldId && typeof connection.token === 'string' && connection.token);
 const { Client } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
 const { StdioClientTransport } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
@@ -83,7 +83,7 @@ async function step(name, run) {
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function alone() {
   const names = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(name => name.trim()).filter(Boolean);
-  assert(names && names.every(name => name === 'ServerBot'), '其他玩家在线；拒绝夹具修改，本脚本不拥有其他测试玩家');
+  assert(names && names.every(name => name === 'Claude'), '其他玩家在线；拒绝夹具修改，本脚本不拥有其他测试玩家');
 }
 async function fixture(text) {
   await alone(); const reply = await command(text); report.calls.push({ ...stamp(), fixture: text, reply: redact(reply) });
@@ -118,11 +118,11 @@ async function discover() {
 const total = (inventory, id) => inventory.filter(stack => stack.id === id).reduce((sum, stack) => sum + stack.count, 0);
 async function prepare(item, count) {
   await tool('stop-action'); // 先确认没有旧活动，再修改此轮独立夹具。
-  await fixture('clear ServerBot');
+  await fixture('clear Claude');
   await fixture('setblock 6202 201 6200 minecraft:air');
   await fixture('setblock 6202 201 6200 minecraft:chest[facing=west]');
   await fixture(`item replace block 6202 201 6200 container.0 with ${item} ${count}`);
-  await fixture('tp ServerBot 6200.5 201 6200.5'); await wait(250);
+  await fixture('tp Claude 6200.5 201 6200.5'); await wait(250);
   const fresh = await tool('get-status', { details: true });
   assert(fresh.container === null && fresh.inventory.every(stack => stack.count === 0), '本轮初始库存或菜单不为空；拒绝沿用上一任务状态');
   return fresh;
@@ -165,7 +165,7 @@ try {
   await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
   const connectionFile = path.join(runtime, 'connection.json');
   await fs.writeFile(connectionFile, JSON.stringify({ ...connection, endpoint: `http://127.0.0.1:${proxy.address().port}/v2` }), { mode: 0o600 });
-  const hostFile = path.join(runtime, 'companion-ServerBot.json');
+  const hostFile = path.join(runtime, 'companion-Claude.json');
   const writeHost = () => {
     // Never truncate the file that RuntimeMonitor synchronously reads. No non-atomic fallback.
     const temporary = `${hostFile}.${process.pid}.tmp`, updatedAt = Date.now();
@@ -185,7 +185,7 @@ try {
     }
   }
   transport = new ObservedTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', connectionFile,
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID(), '--hosted'], cwd: root, stderr: 'pipe' });
   transport.stderr?.on('data', chunk => { stderrTail = (stderrTail + String(chunk)).slice(-16384); });
   client = new Client({ name: 'r8-alpha-fixture', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools.map(value => value.name);
@@ -197,7 +197,7 @@ try {
   await fixture('forceload add 6192 6192 6223 6223'); forced = true;
   await fixture('fill 6198 200 6198 6206 200 6204 minecraft:stone');
   await fixture('fill 6198 201 6198 6206 205 6204 minecraft:air');
-  await fixture('gamemode survival ServerBot'); await fixture('effect give ServerBot minecraft:instant_health 1 4 true');
+  await fixture('gamemode survival Claude'); await fixture('effect give Claude minecraft:instant_health 1 4 true');
 
   for (const sample of [{ id: 'minecraft:snowball', item: 'minecraft:snowball', count: 16 }, { id: 'minecraft:oak_log', item: 'minecraft:oak_log', count: 64 },
     { id: 'minecraft:oak_log', item: 'minecraft:oak_log[minecraft:max_stack_size=99]', count: 99 }]) {
@@ -209,7 +209,7 @@ try {
       const clicks = report.rpc.slice(floor).filter(row => row.method === 'act' && row.action === 'click-slot');
       check(`${sample.count}整栈实际仅两次普通原生左键`, op.status === 'succeeded' && clicks.length === 2 && clicks.every(row => row.button === 0 && row.upstreamOk), { clicks, result: op.result });
       check(`${sample.count}整栈数量、完整组件及有效上限保持`, op.result.withdrawnCount === sample.count && total(after.inventory, sample.id) === sample.count && carried?.maxStackSize === sample.count && after.container === null, { count: carried?.count, maxStackSize: carried?.maxStackSize });
-      assert.deepEqual(carried.components, source.components); check(`${sample.count}整栈独立源为空且服务器背包确认数量`, /:\s*\[\]\s*$/.test(await command(slotCommand)) && new RegExp(`count: ${sample.count}\\b`).test(await command('data get entity ServerBot Inventory')), { before, afterSource: await command(slotCommand) });
+      assert.deepEqual(carried.components, source.components); check(`${sample.count}整栈独立源为空且服务器背包确认数量`, /:\s*\[\]\s*$/.test(await command(slotCommand)) && new RegExp(`count: ${sample.count}\\b`).test(await command('data get entity Claude Inventory')), { before, afterSource: await command(slotCommand) });
     });
   }
   await step('partial-stack-conservation', async () => {
@@ -218,7 +218,7 @@ try {
     const status = await tool('get-status', { details: true }), inventory = status.inventory, blockItems = await command(slotCommand);
     const clicks = report.rpc.slice(floor).filter(row => row.action === 'click-slot');
     check('部分栈保留逐件右键及原槽归还', op.status === 'succeeded' && clicks.length === 5 && clicks.map(row => row.button).join(',') === '0,1,1,1,0', { clicks, result: op.result });
-    check('部分栈独立来源61与背包3守恒', total(inventory, 'minecraft:oak_log') === 3 && /count: 61\b/.test(blockItems) && /Slot: 0b/.test(blockItems) && status.container === null, { blockItems, serverInventory: await command('data get entity ServerBot Inventory') });
+    check('部分栈独立来源61与背包3守恒', total(inventory, 'minecraft:oak_log') === 3 && /count: 61\b/.test(blockItems) && /Slot: 0b/.test(blockItems) && status.container === null, { blockItems, serverInventory: await command('data get entity Claude Inventory') });
     assert.deepEqual(inventory.find(stack => stack.id === 'minecraft:oak_log').components, source.components);
   });
   await step('operation-budget', async () => {
@@ -242,7 +242,7 @@ try {
     check('总期限确实累计多个未超过单请求期限的观察', oldRows.filter(row => row.method === 'observe' && row.delayMs === 2800).length >= 20 && oldRows.every(row => !row.delayMs || row.delayMs < 4000), { delayedObservations: oldRows.filter(row => row.delayMs).length });
     const current = await tool('get-status', { details: true });
     check('部分取物只报告已确认下界且当前字段未冒充确定', op.result.withdrawnCount > 0 && op.result.withdrawnCount < 32 && op.result.heldCount === undefined && op.result.carriedCount === undefined && total(current.inventory, 'minecraft:oak_log') >= op.result.withdrawnCount,
-      { actualInventoryCount: total(current.inventory, 'minecraft:oak_log'), lastConfirmedHeldCount: op.result.lastConfirmedHeldCount, source: await command(slotCommand), serverInventory: await command('data get entity ServerBot Inventory') });
+      { actualInventoryCount: total(current.inventory, 'minecraft:oak_log'), lastConfirmedHeldCount: op.result.lastConfirmedHeldCount, source: await command(slotCommand), serverInventory: await command('data get entity Claude Inventory') });
     const latePending = oldRows.filter(row => row.method === 'observe' && row.deliveredElapsedMs === undefined);
     check('90秒终态时存在真实迟到观察请求', latePending.length > 0, { count: latePending.length });
     report.deadline = { configuredMs: 90000, actualMs: Math.round(elapsedMs), taskStartElapsedMs: Math.round(startElapsed), stopElapsedMs: stopRow.elapsedMs };
@@ -285,7 +285,7 @@ try {
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
   await fs.unlink(path.join(runtime, 'connection.json')).catch(() => {});
   try {
-    const text = await fs.readFile(path.join(runtime, 'events-ServerBot.jsonl'), 'utf8');
+    const text = await fs.readFile(path.join(runtime, 'events-Claude.jsonl'), 'utf8');
     report.runtimeEvents = safe(text.slice(0, text.lastIndexOf('\n') + 1).split(/\r?\n/).filter(Boolean).map(JSON.parse));
   } catch (error) { report.cleanup.push({ action: 'runtime-events-read', error: redact(error.message) }); }
   report.finished = new Date().toISOString(); report.durationMs = Math.round(performance.now() - began);

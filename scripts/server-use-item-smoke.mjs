@@ -25,7 +25,7 @@ const { rcon, readServerProps } = await import('./rcon.mjs');
 const props = readServerProps(serverDir);
 assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.username, 'ServerBot');
+assert.equal(connection.username, 'Claude');
 const { Client } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
 const { StdioClientTransport } = await import('../client-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
 
@@ -40,7 +40,7 @@ function check(name, passed, detail) { report.checks.push({ name, passed: !!pass
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
 async function fixture(text) {
   const list = (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(n => n.trim()).filter(Boolean) ?? [];
-  assert(list.every(name => name === 'ServerBot'), '有其他玩家在线，拒绝修改夹具');
+  assert(list.every(name => name === 'Claude'), '有其他玩家在线，拒绝修改夹具');
   const reply = await command(text); report.calls.push({ fixture: text, reply: redact(reply) });
   assert(!/not loaded|Unknown or incomplete|Incorrect argument|Malformed|No entity was found/i.test(reply), '夹具命令被拒绝：' + redact(reply)); return reply;
 }
@@ -65,7 +65,7 @@ try {
   check('服务端声明 use-item-on-block 和堆肥桶交互，没有登记对空交互时不声明 use-item', h.capabilities.includes('use-item-on-block') && !h.capabilities.includes('use-item') && JSON.stringify(h.interactions) === '["minecraft:composter/add"]', { interactions: h.interactions });
   check('保护夹具已启用', h.validationFixture?.enabled === true);
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-    '--username', 'ServerBot', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
+    '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });
   client = new Client({ name: 'use-item-fixture', version: '1' }); await client.connect(transport);
   const tools = (await client.listTools()).tools;
   const interact = tools.find(t => t.name === 'interact-block');
@@ -76,10 +76,10 @@ try {
   await fixture('forceload add 6392 6392 6415 6415'); forced.push('6392 6392 6415 6415');
   await fixture('fill 6396 200 6396 6412 200 6406 minecraft:stone');
   await fixture('fill 6396 201 6396 6412 204 6406 minecraft:air');
-  await fixture('gamemode survival ServerBot'); await fixture('clear ServerBot');
-  await fixture('tp ServerBot 6400.5 201 6400.5'); await wait(300);
-  await fixture('item replace entity ServerBot hotbar.0 with minecraft:wheat_seeds 20');
-  await fixture('item replace entity ServerBot hotbar.1 with minecraft:dirt 4');
+  await fixture('gamemode survival Claude'); await fixture('clear Claude');
+  await fixture('tp Claude 6400.5 201 6400.5'); await wait(300);
+  await fixture('item replace entity Claude hotbar.0 with minecraft:wheat_seeds 20');
+  await fixture('item replace entity Claude hotbar.1 with minecraft:dirt 4');
   await fixture('setblock 6402 201 6400 minecraft:composter[level=0]');
   await wait(300);
 
@@ -120,7 +120,7 @@ try {
   await fixture('forceload add 512 496 527 527'); forced.push('512 496 527 527');
   await fixture('fill 510 200 508 520 200 516 minecraft:stone'); await fixture('fill 510 201 508 520 204 516 minecraft:air');
   await fixture('setblock 516 199 512 minecraft:diamond_block'); await fixture('setblock 516 201 512 minecraft:composter[level=0]');
-  await fixture('tp ServerBot 514.5 201 512.5'); await wait(400);
+  await fixture('tp Claude 514.5 201 512.5'); await wait(400);
   const cancelledBefore = (await hello()).validationFixture.rightClickCancelled;
   const guarded = await tool('interact-block', { x: 516, y: 201, z: 512, interaction: 'minecraft:composter/add', item: 'minecraft:wheat_seeds' });
   const cancelledAfter = (await hello()).validationFixture.rightClickCancelled;

@@ -40,8 +40,8 @@ final class RespawnValidationFixture {
                     }))))))));
     }
     private static BodyPlayer body(CommandSourceStack source) {
-        var player=source.getServer().getPlayerList().getPlayerByName("ServerBot");
-        if(!(player instanceof BodyPlayer body)) throw error("INVALID_ARGUMENT","Validation requires the ServerBot BodyPlayer");
+        var player=source.getServer().getPlayerList().getPlayerByName("Claude");
+        if(!(player instanceof BodyPlayer body)) throw error("INVALID_ARGUMENT","Validation requires the Claude BodyPlayer");
         return body;
     }
     private static int status(CommandSourceStack source) {

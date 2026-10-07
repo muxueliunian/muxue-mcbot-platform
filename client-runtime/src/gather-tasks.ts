@@ -40,6 +40,8 @@ const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:voi
 // Modded leaves are named the same way (biomesoplenty:fir_leaves).
 const isLeaves = (id: string | undefined) => !!id && /^[a-z0-9_.-]+:[a-z0-9_/]*leaves$/.test(id);
 const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
+/** Each block takes several native steps (tool, dig, leaves, stepping, pillar up and back down, pickup): about eight per item asked for, 64 to 256. */
+const stepBudget = (request: { count?: number; stacks?: number }) => request.stacks !== undefined ? 256 : Math.min(256, Math.max(64, (request.count ?? 0) * 8));
 const samePosition = (a: Position, b: Position) => a.x === b.x && a.y === b.y && a.z === b.z;
 const nearest = (list: Candidate[], feet: Position) => [...list].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
 /** Log candidates touching one another (also diagonally: branches, 2x2 trunks) are one tree. */
@@ -190,7 +192,7 @@ export class GatherTasks {
     borrowed?.check();
     const id = randomUUID(), epoch = this.epoch;
     if (!borrowed) this.body.acquireTask(id);
-    const progress: Progress = { stage: 'starting', item: request.item, requestedCount: request.count, requestedStacks: request.stacks, targetCount: request.count, pickedUpCount: 0, overage: 0, minedBlocks: 0, steps: 0, maxSteps: request.maxSteps ?? 64, pickup: 'native-confirmed', quantity: 'newly-picked', totalNativePickedUpCount: 0, unexpectedPickedUpCount: 0, items: [] };
+    const progress: Progress = { stage: 'starting', item: request.item, requestedCount: request.count, requestedStacks: request.stacks, targetCount: request.count, pickedUpCount: 0, overage: 0, minedBlocks: 0, steps: 0, maxSteps: request.maxSteps ?? stepBudget(request), pickup: 'native-confirmed', quantity: 'newly-picked', totalNativePickedUpCount: 0, unexpectedPickedUpCount: 0, items: [] };
     let task: Active | undefined;
     try {
       // Reserve synchronously even while the initial read or chat acknowledgement is in flight.
@@ -930,7 +932,7 @@ export class GatherTasks {
       const code = error instanceof BodyError ? error.code : 'UNKNOWN';
       if (code === 'TARGET_REACHED') this.finish(task, 'succeeded', '实际原生拾取数量已达到明确目标');
       else {
-        if (!task.borrowed && task.epoch === this.epoch && (unknownCodes.has(code) || code === 'STEP_BUDGET')) {
+        if (!task.borrowed && task.epoch === this.epoch && unknownCodes.has(code)) {
           task.stopPending = true;
           const mealStop = this.survival?.cancel();
           try {

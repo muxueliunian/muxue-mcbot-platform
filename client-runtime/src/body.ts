@@ -78,6 +78,8 @@ export interface BodyHello {
   /** Mod container adapters the server has installed (e.g. ironfurnaces:iron_furnace); informational. */
   adapters?: string[];
 }
+/** What modify-item does to the referenced item; see the MCP tool for the fields each kind takes. */
+export type ModifyAction = { kind: 'enchant' | 'anvil' | 'grind' | 'smith' | 'loom' | 'cartography'; option?: number; with?: string; rename?: string; template?: string; addition?: string; dye?: string; pattern?: string; patternItem?: string };
 export interface ActionArguments {
   'send-chat': { message: string };
   'look-at': Position;
@@ -108,6 +110,9 @@ export interface ActionArguments {
   'craft-item': { item: string; count?: number; timeoutMs?: number };
   'smelt-item': { input?: string; count?: number; fuel?: string; wait?: boolean; furnace?: Position; timeoutMs?: number };
   'travel-to': { x: number; y?: number; z: number; tolerance?: number; timeoutMs?: number };
+  'workstation-options': { item?: string; potion?: string; count?: number; subjects?: string };
+  'produce-item': { item: string; count?: number; potion?: string; station?: Position; timeoutMs?: number };
+  'modify-item': { subject: string; action: ModifyAction; preview?: boolean; maxLevels?: number; expect?: string; station?: Position; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';

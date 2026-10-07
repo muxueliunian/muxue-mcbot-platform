@@ -16,5 +16,21 @@ public enum Template {
      * slot and a {@link Port#RESULT}. The recipe for an input comes from {@link RecipeSource#forInput}; the body may
      * wait beside it and take results as they come, or leave and collect later.
      */
-    PROCESSOR
+    PROCESSOR,
+    /**
+     * One input, the result chosen with a menu button among {@link WorkstationAdapter#options}, taken from
+     * {@link Port#RESULT} (stonecutter). Taking it commits.
+     */
+    OPTION_PICKER,
+    /**
+     * Machines that change {@link Port#SUBJECT} items where they stand once an {@link Port#INGREDIENT} and fuel are in
+     * (brewing stand). Recipes come from {@link RecipeSource#transform}; the body waits beside it for each stage.
+     */
+    IN_PLACE,
+    /**
+     * Work on one chosen item ({@link Port#SUBJECT}) with optional {@link Port#CATALYST} inputs, an optional option
+     * button and a level cost ({@link WorkstationAdapter#levelCost}): enchanting table, anvil, grindstone, smithing
+     * table, loom, cartography table. Previewed first; only an explicitly referenced item is ever put in.
+     */
+    MODIFIER
 }

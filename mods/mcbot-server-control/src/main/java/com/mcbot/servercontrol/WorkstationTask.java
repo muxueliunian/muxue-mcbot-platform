@@ -27,7 +27,6 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * Without a crafting grid nearby a 3x3 recipe may place a crafting table from the inventory.
  */
 final class WorkstationTask {
-    static final int SEARCH=16,VERTICAL=4;
     private record Station(BlockPos pos,WorkstationAdapter adapter) {}
     private final ControlSession.Operation operation;
     private final BodyPlayer player;
@@ -277,19 +276,7 @@ final class WorkstationTask {
     }
 
     // ---------- walking and opening ----------
-    private List<BlockPos> nearby(java.util.function.Predicate<BlockState> wantedBlock) {
-        List<BlockPos> found=new ArrayList<>();BlockPos origin=player.blockPosition();
-        for(int x=-SEARCH;x<=SEARCH;x++)for(int z=-SEARCH;z<=SEARCH;z++){
-            if(x*x+z*z>SEARCH*SEARCH)continue;
-            for(int y=-VERTICAL;y<=VERTICAL;y++){
-                BlockPos pos=origin.offset(x,y,z);if(player.serverLevel().isOutsideBuildHeight(pos))continue;
-                var chunk=player.serverLevel().getChunkSource().getChunkNow(pos.getX()>>4,pos.getZ()>>4);if(chunk==null)continue;
-                if(wantedBlock.test(chunk.getBlockState(pos)))found.add(pos.immutable());
-            }
-        }
-        found.sort(Comparator.comparingDouble(p->Vec3.atCenterOf(p).distanceToSqr(player.position())));
-        return found.subList(0,Math.min(found.size(),6));
-    }
+    private List<BlockPos> nearby(java.util.function.Predicate<BlockState> wantedBlock){return NativeWorkstation.nearby(player,wantedBlock,6);}
     private void next() {
         station=stations.poll();navigation=null;
         if(station==null){

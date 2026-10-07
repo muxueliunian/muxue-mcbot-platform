@@ -97,5 +97,112 @@ final class VanillaWorkstations {
     static final WorkstationAdapter SMOKER=new Cooker("minecraft:smoker",Blocks.SMOKER,MenuType.SMOKER,RecipeType.SMOKING);
     static final WorkstationAdapter BLAST_FURNACE=new Cooker("minecraft:blast_furnace",Blocks.BLAST_FURNACE,MenuType.BLAST_FURNACE,RecipeType.BLASTING);
 
-    static final List<WorkstationAdapter> ALL=List.of(CRAFTING_TABLE,FURNACE,SMOKER,BLAST_FURNACE);
+    // ---------- B and C: stonecutter, brewing stand, gear and banner stations ----------
+    /** The first `machine` menu slots are the station's own (not the player's inventory) and the player's 36 follow. */
+    static boolean machineSlots(AbstractContainerMenu menu,int machine) {
+        if(menu.slots.size()!=machine+36)return false;
+        for(int i=0;i<machine;i++)if(menu.getSlot(i).container instanceof net.minecraft.world.entity.player.Inventory)return false;
+        for(int i=machine;i<machine+36;i++)if(!(menu.getSlot(i).container instanceof net.minecraft.world.entity.player.Inventory))return false;
+        return true;
+    }
+    /** A vanilla station identified by block, menu class and menu type, with a fixed layout over `machine` own slots. */
+    private abstract static class Fixed implements WorkstationAdapter {
+        private final String id;private final Template template;private final java.util.function.Predicate<BlockState> block;
+        private final Class<? extends AbstractContainerMenu> menuClass;private final MenuType<?> type;private final int machine;private final StationLayout layout;
+        Fixed(String id,Template template,java.util.function.Predicate<BlockState> block,Class<? extends AbstractContainerMenu> menuClass,MenuType<?> type,int machine,StationLayout layout) {
+            this.id=id;this.template=template;this.block=block;this.menuClass=menuClass;this.type=type;this.machine=machine;this.layout=layout;
+        }
+        public String id(){return id;}
+        public boolean installed(){return true;}
+        public Template template(){return template;}
+        public boolean block(BlockState state){return block.test(state);}
+        public boolean menu(AbstractContainerMenu menu){return menuClass.isInstance(menu)&&menu.getType()==type;}
+        public StationLayout layout(AbstractContainerMenu menu){return machineSlots(menu,machine)?layout:null;}
+        public RecipeSource recipes(BlockState state){return new RecipeSource(){};}
+    }
+    private static StationLayout ports(Object... pairs) {
+        Map<Port,List<Integer>> map=new EnumMap<>(Port.class);
+        for(int i=0;i<pairs.length;i+=2){List<Integer> slots=new ArrayList<>();for(int s:(int[])pairs[i+1])slots.add(s);map.put((Port)pairs[i],slots);}
+        return new StationLayout(map,0,0);
+    }
+
+    static final RecipeSource STONECUTTING=new RecipeSource() {
+        @Override public List<StationRecipe> producing(ServerPlayer player,Item wanted) {
+            List<StationRecipe> recipes=new ArrayList<>();
+            for(RecipeHolder<StonecutterRecipe> holder:player.getServer().getRecipeManager().getAllRecipesFor(RecipeType.STONECUTTING)) {
+                ItemStack result=holder.value().getResultItem(player.registryAccess());
+                if(result.isEmpty()||!result.is(wanted)||holder.value().getIngredients().isEmpty())continue;
+                recipes.add(StationRecipe.processing(holder.id(),result,holder.value().getIngredients().getFirst(),0,0));
+            }
+            // Most results per input first.
+            recipes.sort(Comparator.comparingInt((StationRecipe r)->-r.result().getCount()).thenComparing(r->r.id().toString()));
+            return recipes;
+        }
+    };
+    static final WorkstationAdapter STONECUTTER=new Fixed("minecraft:stonecutter",Template.OPTION_PICKER,s->s.is(Blocks.STONECUTTER),StonecutterMenu.class,MenuType.STONECUTTER,2,
+            ports(Port.INGREDIENT,new int[]{0},Port.RESULT,new int[]{1})) {
+        @Override public RecipeSource recipes(BlockState state){return STONECUTTING;}
+        @Override public List<StationOption> options(ServerPlayer player,AbstractContainerMenu menu) {
+            List<StationOption> options=new ArrayList<>();var recipes=((StonecutterMenu)menu).getRecipes();
+            for(int i=0;i<recipes.size();i++)options.add(new StationOption(i,recipes.get(i).id().toString(),recipes.get(i).value().getResultItem(player.registryAccess()),0,""));
+            return options;
+        }
+    };
+
+    /** Brewing as the server's own PotionBrewing rules (data packs and mods extend them); one stage = one reagent. */
+    static final RecipeSource BREWING=new RecipeSource() {
+        @Override public boolean isIngredient(ServerPlayer player,ItemStack ingredient){return player.serverLevel().potionBrewing().isIngredient(ingredient);}
+        @Override public Optional<ItemStack> transform(ServerPlayer player,ItemStack subject,ItemStack ingredient) {
+            var brewing=player.serverLevel().potionBrewing();
+            if(subject.isEmpty()||!brewing.hasMix(subject,ingredient))return Optional.empty();
+            ItemStack result=brewing.mix(ingredient,subject.copy());
+            return ItemStack.isSameItemSameComponents(result,subject)?Optional.empty():Optional.of(result);
+        }
+    };
+    static final WorkstationAdapter BREWING_STAND=new Fixed("minecraft:brewing_stand",Template.IN_PLACE,s->s.is(Blocks.BREWING_STAND),BrewingStandMenu.class,MenuType.BREWING_STAND,5,
+            ports(Port.SUBJECT,new int[]{0,1,2},Port.INGREDIENT,new int[]{3},Port.FUEL,new int[]{4})) {
+        @Override public RecipeSource recipes(BlockState state){return BREWING;}
+        @Override public int burnTicks(BlockState state,ItemStack fuel){return fuel.is(Items.BLAZE_POWDER)?20:0;}
+        @Override public int fuelLeft(AbstractContainerMenu menu){return ((BrewingStandMenu)menu).getFuel();}
+        @Override public boolean working(AbstractContainerMenu menu){return ((BrewingStandMenu)menu).getBrewingTicks()>0;}
+    };
+
+    static final WorkstationAdapter ENCHANTING_TABLE=new Fixed("minecraft:enchanting_table",Template.MODIFIER,s->s.is(Blocks.ENCHANTING_TABLE),EnchantmentMenu.class,MenuType.ENCHANTMENT,2,
+            ports(Port.SUBJECT,new int[]{0},Port.CATALYST,new int[]{1})) {
+        /** The three offers as the player sees them: level requirement and the one enchantment the game reveals. */
+        @Override public List<StationOption> options(ServerPlayer player,AbstractContainerMenu menu) {
+            EnchantmentMenu table=(EnchantmentMenu)menu;List<StationOption> options=new ArrayList<>();
+            var ids=player.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT).asHolderIdMap();
+            for(int i=0;i<3;i++) {
+                if(table.costs[i]<=0)continue;
+                String hint="";
+                if(table.enchantClue[i]>=0){var holder=ids.byId(table.enchantClue[i]);hint=(holder==null?"?":holder.unwrapKey().map(k->k.location().toString()).orElse("?"))+" "+table.levelClue[i]+" (and maybe more)";}
+                options.add(new StationOption(i,"slot"+(i+1),ItemStack.EMPTY,table.costs[i],hint));
+            }
+            return options;
+        }
+    };
+    static final WorkstationAdapter ANVIL=new Fixed("minecraft:anvil",Template.MODIFIER,s->s.is(net.minecraft.tags.BlockTags.ANVIL),AnvilMenu.class,MenuType.ANVIL,3,
+            ports(Port.SUBJECT,new int[]{0},Port.CATALYST,new int[]{1},Port.RESULT,new int[]{2})) {
+        @Override public int levelCost(AbstractContainerMenu menu){return ((AnvilMenu)menu).getCost();}
+    };
+    static final WorkstationAdapter GRINDSTONE=new Fixed("minecraft:grindstone",Template.MODIFIER,s->s.is(Blocks.GRINDSTONE),GrindstoneMenu.class,MenuType.GRINDSTONE,3,
+            ports(Port.SUBJECT,new int[]{0},Port.CATALYST,new int[]{1},Port.RESULT,new int[]{2})) {};
+    /** Template 0, base 1 (the item worked on), addition 2, result 3. */
+    static final WorkstationAdapter SMITHING_TABLE=new Fixed("minecraft:smithing_table",Template.MODIFIER,s->s.is(Blocks.SMITHING_TABLE),SmithingMenu.class,MenuType.SMITHING,4,
+            ports(Port.CATALYST,new int[]{0,2},Port.SUBJECT,new int[]{1},Port.RESULT,new int[]{3})) {};
+    /** Banner 0, dye 1, pattern item 2, result 3; the pattern is a button among the selectable ones. */
+    static final WorkstationAdapter LOOM=new Fixed("minecraft:loom",Template.MODIFIER,s->s.is(Blocks.LOOM),LoomMenu.class,MenuType.LOOM,4,
+            ports(Port.SUBJECT,new int[]{0},Port.CATALYST,new int[]{1,2},Port.RESULT,new int[]{3})) {
+        @Override public List<StationOption> options(ServerPlayer player,AbstractContainerMenu menu) {
+            List<StationOption> options=new ArrayList<>();var patterns=((LoomMenu)menu).getSelectablePatterns();
+            for(int i=0;i<patterns.size();i++)options.add(new StationOption(i,patterns.get(i).unwrapKey().map(k->k.location().toString()).orElse("?"),ItemStack.EMPTY,0,""));
+            return options;
+        }
+    };
+    static final WorkstationAdapter CARTOGRAPHY_TABLE=new Fixed("minecraft:cartography_table",Template.MODIFIER,s->s.is(Blocks.CARTOGRAPHY_TABLE),CartographyTableMenu.class,MenuType.CARTOGRAPHY_TABLE,3,
+            ports(Port.SUBJECT,new int[]{0},Port.CATALYST,new int[]{1},Port.RESULT,new int[]{2})) {};
+
+    static final List<WorkstationAdapter> ALL=List.of(CRAFTING_TABLE,FURNACE,SMOKER,BLAST_FURNACE,STONECUTTER,BREWING_STAND,
+        ENCHANTING_TABLE,ANVIL,GRINDSTONE,SMITHING_TABLE,LOOM,CARTOGRAPHY_TABLE);
 }

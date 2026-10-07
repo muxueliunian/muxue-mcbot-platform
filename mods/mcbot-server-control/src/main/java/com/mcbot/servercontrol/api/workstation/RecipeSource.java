@@ -17,4 +17,10 @@ public interface RecipeSource {
 
     /** The recipe the station would run for this input (processors). */
     default Optional<StationRecipe> forInput(ServerPlayer player, ItemStack input) { return Optional.empty(); }
+
+    /** Whether this item can be the {@link Port#INGREDIENT} of an in-place stage (brewing reagents). */
+    default boolean isIngredient(ServerPlayer player, ItemStack ingredient) { return false; }
+
+    /** What one in-place stage turns {@code subject} into with {@code ingredient} (brewing), or empty when it does nothing. */
+    default Optional<ItemStack> transform(ServerPlayer player, ItemStack subject, ItemStack ingredient) { return Optional.empty(); }
 }

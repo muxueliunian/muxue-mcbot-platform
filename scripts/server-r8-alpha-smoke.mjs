@@ -170,7 +170,12 @@ try {
     // Never truncate the file that RuntimeMonitor synchronously reads. No non-atomic fallback.
     const temporary = `${hostFile}.${process.pid}.tmp`, updatedAt = Date.now();
     try {
-      writeFileSync(temporary, JSON.stringify({ pid: process.pid, updatedAt })); renameSync(temporary, hostFile);
+      writeFileSync(temporary, JSON.stringify({ pid: process.pid, updatedAt }));
+      // Windows refuses a rename over a file another process is reading (EPERM/EBUSY); retry the same atomic rename briefly.
+      for (let attempt = 0; ; attempt++) {
+        try { renameSync(temporary, hostFile); break; }
+        catch (error) { if (attempt >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); }
+      }
       report.heartbeatWrites.push({ ...stamp(), updatedAt, atomicReplace: true });
     } finally { try { unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
   };

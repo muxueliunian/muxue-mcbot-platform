@@ -1,5 +1,7 @@
 package com.mcbot.servercontrol.api.workstation;
 
+import java.util.List;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
@@ -42,6 +44,15 @@ public interface WorkstationAdapter {
     /** Burn ticks of a fuel stack for this station; 0 when it is not fuel here. Only for stations with a {@link Port#FUEL}. */
     default int burnTicks(BlockState state, ItemStack fuel) { return 0; }
 
-    /** Whether the opened machine is working right now (a lit furnace). Processors only. */
+    /** Whether the opened machine is working right now (a lit furnace, a brewing stand mid-brew). */
     default boolean working(AbstractContainerMenu menu) { return false; }
+
+    /** Fuel already inside the machine in its own measure (brewing stand: brews left); 0 when unknown or none. */
+    default int fuelLeft(AbstractContainerMenu menu) { return 0; }
+
+    /** The choices the opened menu offers for its current inputs, in button order; empty when it has none. */
+    default List<StationOption> options(ServerPlayer player, AbstractContainerMenu menu) { return List.of(); }
+
+    /** Experience levels taking the current result would cost (anvil); 0 when free. */
+    default int levelCost(AbstractContainerMenu menu) { return 0; }
 }

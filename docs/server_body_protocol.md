@@ -100,6 +100,16 @@ NBT 类型为 end／byte／short／int／long／float／double／byte_array／st
 | travel-to | `{x,y?,z,tolerance?,timeoutMs?}`（第 8f 步，也算 8k 的一部分）；最远 2000 格，默认 300 秒、最多 900 秒，tolerance 1–8（默认 2）。分段走：每段最多 28 格，目标点取那一列地表（`MOTION_BLOCKING_NO_LEAVES`）上能站的位置，用和 move-to-position 同一个原版寻路；只在已加载区块里规划，Bot 是真玩家，走到哪区块加载到哪。一段找不到路（NO_PATH／卡住）就左右偏 35°、70° 或缩短再试，连续 10 段没进展才失败；受伤照样停。到达要同时满足：距离在 tolerance 内、高度差 3 格内（给了 y 时）、身体和目标之间没有实心方块（不在墙的另一边）、身体不站在门框里。result `{position,remaining,travelled,legs,failures,lastFailure?}` |
 | drop-item | 同 select-slot，另携 `{count}`；仅当前选中槽，count 1–64 且不超过当前数量，通过原版逐个 DROP_ITEM 执行。result 的 requestedCount／removedCount／droppedCount 分别记录请求、库存减少、实际新掉落实体；不把丢物事件取消后的库存减少称为成功交付 |
 
+通用工作站 B、C（2026-10-07 第 8l 步，[设计](workstation_design.md)）：
+
+| 动作 | 参数和语义 |
+| --- | --- |
+| workstation-options | `{item?,potion?,count?,subjects?}`；不动任何东西，瞬时完成。result：`stations`（16 格内认得的工作站：id、模板、位置、距离）；给了 item 时 `ways`（用哪个工具、哪个工作站、配方、缺什么）；给了 subjects（物品 id 或 `*`）时列出背包主栏里这种物品的每一叠，带 `ref`（随机的 `item-xxxxxxxx`，绑定那一格和那一叠的完整内容，15 分钟内有效，内容或位置变了就作废）；`levels` 经验等级 |
+| produce-item | `{item,count?,potion?,station?,timeoutMs?}`。切石机：count 1–64 个产物，原料只取普通栈，按配方的按钮选结果，shift 取出（游戏会一直切到原料用完），剩下的拿回；可能多出不到一份。酿造台：item 是药水／喷溅／滞留药水，potion 指定药水，count 1–3 瓶；按服务器自己的酿造规则从背包里的瓶子和材料规划最多 4 段，缺什么列在 `missing` 并附 `stages`；燃料不够时放 1 个烈焰粉；放瓶、每段放 1 个材料、站在旁边等每瓶都变成这一段的结果再放下一段（约 20 秒一段），最后取出。result `{item,requestedCount,made,recipe?,stages?,stagesDone?,station,fuelAdded?,inventoryChange,levels?}`；错误码 NO_RECIPE（提示该用 craft-item／smelt-item）、MISSING_MATERIALS、NO_STONECUTTER、NO_BREWING_STAND、NO_FUEL、RECIPE_REFUSED、BREW_FAILED |
+| modify-item | `{subject,action:{kind,...},preview?,maxLevels?,expect?,station?,timeoutMs?}`；subject 是 workstation-options 给的 ref。kind：`enchant`（option 1–3）、`anvil`（with 材料 id 或另一个 ref，rename ≤50 字）、`grind`（with 另一个 ref 可选）、`smith`（template、addition 物品 id）、`loom`（dye、patternItem 可选、pattern）、`cartography`（with）。preview：放进去读游戏显示的结果、花费、附魔三个选项（只有游戏给玩家看的那一条提示）或织布机图案，然后全部拿回，ref 指向拿回后的那一格。正式做：要花的等级大于 maxLevels（默认 0）报 OVER_LIMIT，等级不够 NOT_ENOUGH_LEVELS，给了 expect 而结果变了 PREVIEW_CHANGED，这些都把东西拿回、什么都不改；附魔按选项按钮提交，其余从结果格 shift 取出提交，之后旧 ref 作废。result `{kind,station,subject,result,options?,levelCost?,levelsSpent?,preview?,inventoryChange,levels?}` |
+
+`inventoryChange` 在这几个动作里按“物品 id＋重要组件”计数，例如 `minecraft:potion[potion=minecraft:swiftness]`、`minecraft:iron_sword[enchantments=minecraft:sharpness 1]`，原地变化（酿造、附魔、修理）也看得出来。Bot 正在用的工作站界面（酿造台等）可以照常观察，只读，界面自己的格子标为 unknown；`click-slot` 不能点这类界面。
+
 走门（2026-10-07 第 8f 步）：所有走路（move-to-position、跟随、走近、拾取、睡觉、合成烧炼、travel-to）共用的原版寻路现在允许穿过手能打开的门（木门这类，`BlockSetType.canOpenByHand`；铁门不行，栅栏门还没做）。路线下两个节点里有关着的门、离眼睛 3.5 格内时，先停下用原生右键（`handleUseItemOn`，门自己的交互优先，手里的东西不会被用掉）把门打开再走；身体离开门框、路线不再经过它之后，把自己开的门关上，走到终点时也会关；别人开着的门不动。回执 navigation 里有 `doorsOpened`／`doorsClosed`。
 
 drop-item携expectedMaxStackSize时，每次原生DROP_ITEM前均再核验；数量上限不因实际栈大于64而扩大。Node的give-item可以把一个真实足量栈的最多256个目标分成每批最多64个丢出；容器取物仍要求一个足量源栈和空快捷栏，不跨栈凑数，目标不能超过实际源／目标栈有效上限。

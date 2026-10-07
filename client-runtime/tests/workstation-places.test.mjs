@@ -12,7 +12,7 @@ import { PlaceBook } from '../dist/places.js';
 import { mockServerControl, serverCapabilities } from './mock-server-control.mjs';
 import { observation } from './mock-control.mjs';
 
-const extra = ['craft-item', 'smelt-item', 'travel-to'];
+const extra = ['craft-item', 'smelt-item', 'travel-to', 'workstation-options', 'produce-item', 'modify-item'];
 async function setup(t, capabilities = extra) {
   const mock = await mockServerControl(); t.after(() => mock.close());
   const hello = mock.handlers.hello;
@@ -48,6 +48,23 @@ test('craft-item and smelt-item forward only their own arguments; malformed ones
   await assert.rejects(body.act('smelt-item', { input: 'minecraft:raw_iron', count: 65 }), { code: 'INVALID_ARGUMENT' });
   await assert.rejects(body.act('travel-to', { x: 1, z: 2, extra: true }), { code: 'INVALID_ARGUMENT' });
   assert.equal(acts().length, 2);
+});
+
+test('workstation-options, produce-item and modify-item forward their own arguments; malformed ones never reach the server', async t => {
+  const { body, acts } = await setup(t);
+  const c = await client(t, body);
+  const names = (await c.listTools()).tools.map(tool => tool.name);
+  for (const name of ['workstation-options', 'produce-item', 'modify-item']) assert.ok(names.includes(name), name);
+  await call(c, 'workstation-options', { item: 'minecraft:stone_slab', subjects: '*' });
+  await call(c, 'produce-item', { item: 'minecraft:potion', potion: 'minecraft:swiftness', count: 2 });
+  await call(c, 'modify-item', { subject: 'item-abcd2345', action: { kind: 'enchant', option: 3 }, maxLevels: 3 });
+  assert.deepEqual(acts().map(act => act.name), ['workstation-options', 'produce-item', 'modify-item']);
+  assert.deepEqual(acts()[2].args, { subject: 'item-abcd2345', action: { kind: 'enchant', option: 3 }, maxLevels: 3 });
+  await assert.rejects(body.act('modify-item', { subject: 'sword', action: { kind: 'enchant' } }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('modify-item', { subject: 'item-abcd2345', action: { kind: 'melt' } }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('modify-item', { subject: 'item-abcd2345', action: { kind: 'anvil' }, maxLevels: 40 }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('produce-item', { item: 'minecraft:stone_slab', count: 65 }), { code: 'INVALID_ARGUMENT' });
+  assert.equal(acts().length, 3);
 });
 
 test('places are remembered per world in the runtime directory and go-to-place walks there with travel-to', async t => {

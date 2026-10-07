@@ -188,7 +188,8 @@ final class SurvivalActions {
         AbstractContainerMenu menu=player.containerMenu;
         if(menu==player.inventoryMenu) { knownMenu=null;knownMenuState=null;guardedToken=null;guardedTarget=null;guardedMenu=null;return JsonNull.INSTANCE; }
         verifyGuardedMenu();
-        if(!standard(menu)) throw error("UNSUPPORTED","Only ordinary storage/furnace menus are supported");
+        // A workstation the body itself is using (brewing stand, anvil...) is observed read-only: its own slots show as unknown.
+        if(!standard(menu)&&!ModAdapters.workstationMenu(menu)) throw error("UNSUPPORTED","Only ordinary storage/furnace menus are supported");
         menu.broadcastChanges();
         if(menu!=knownMenu) { knownMenu=menu;knownMenuState=null;menuGeneration++;revision=0; }
         ContainerAdapter adapter=ModAdapters.menu(menu);
@@ -465,6 +466,7 @@ final class SurvivalActions {
     }
     private void click(ControlSession.Operation operation) {
         JsonObject args=operation.args;AbstractContainerMenu menu=menu(args);int slot=integer(args,"slot"),button=args.has("button")?integer(args,"button"):0;
+        if(!standard(menu)) throw error("UNSUPPORTED","Workstation menus are driven by craft-item, smelt-item, produce-item and modify-item, not click-slot");
         if(slot<0||slot>=menu.slots.size()||(button!=0&&button!=1)) throw error("INVALID_ARGUMENT","Invalid slot or button");
         Slot clicked=menu.getSlot(slot);
         if(!slotClickAllowed(clicked.isActive(),clicked.mayPickup(player),clicked.getItem().isEmpty())) throw error("UNSUPPORTED","Inactive slot or protected nonempty slot cannot be clicked by this adapter");

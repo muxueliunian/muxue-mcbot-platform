@@ -197,6 +197,36 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
       return operationResult(args.wait ? operation : await settle(operation, 40000));
     });
   }
+  if (serverObserved && body.hello.capabilities.includes('workstation-options')) {
+    register('workstation-options', 'Look before making or changing things; touches nothing. Lists the workstations within 16 blocks. item: how it is made (which tool and station, recipe, what is missing for count). subjects: an item ID (or "*") to get a ref for each such stack in the inventory; modify-item needs that ref (refs stay valid 15 minutes while the stack is unchanged). Also reports your experience levels. Enchanting offers and anvil costs need the opened station: use modify-item with preview:true.', {
+      item: registryId.optional(), potion: registryId.optional().describe('With item minecraft:potion / splash_potion / lingering_potion: which potion, e.g. minecraft:swiftness'),
+      count: z.number().int().min(1).max(64).optional(), subjects: z.union([registryId, z.literal('*')]).optional(),
+    }, async args => operationResult(await body.act('workstation-options', args)));
+  }
+  if (serverObserved && body.hello.capabilities.includes('produce-item')) {
+    register('produce-item', 'Make an item at a stonecutter or a brewing stand within 16 blocks (crafting is craft-item, furnaces are smelt-item). Stonecutter: count items of the result (rounded up to whole inputs), input from plain stacks. Brewing: item minecraft:potion (or splash_potion / lingering_potion) with potion, count 1-3 bottles; it plans the stages from bottles you hold (water bottles or potions on the way) with reagents you hold, adds blaze powder if the stand needs fuel, waits about 20 s per stage beside the stand and takes the bottles out (running; the result arrives as a task event; stop-action ends it, bottles may stay in the stand). MISSING_MATERIALS lists the stages and what is missing; tell the player instead of guessing.', {
+      item: registryId, count: z.number().int().min(1).max(64).optional(), potion: registryId.optional(),
+      station: z.object(blockXyz).optional(), say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(1000).max(600000).optional(),
+    }, async ({ say, ...args }) => {
+      idleBody(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await settle(await body.act('produce-item', args), 15000));
+    });
+  }
+  if (serverObserved && body.hello.capabilities.includes('modify-item')) {
+    register('modify-item', 'Work on one chosen item (subject: a ref from workstation-options subjects) at a station within 16 blocks. kind enchant (enchanting table; option 1-3 from the preview; spends that many levels and lapis), anvil (with: a material ID such as minecraft:iron_ingot, or another item ref to combine, e.g. an enchanted book; rename: new name; costs levels), grind (grindstone: removes enchantments except curses; with: another item ref to merge), smith (template and addition item IDs, e.g. minecraft:netherite_upgrade_smithing_template + minecraft:netherite_ingot), loom (dye ID, optional patternItem, pattern from the preview), cartography (with: minecraft:paper / map / glass_pane). Always call with preview:true first: it shows the result, the level cost and the enchanting offers (only the hint the game shows) and takes everything back. Tell the player what it costs and do it only when they agree; then call again without preview, with maxLevels at least the levels it spends (default 0) and expect = the preview result item to stop if it changed. OVER_LIMIT, NOT_ENOUGH_LEVELS, PREVIEW_CHANGED and STALE_SUBJECT change nothing.', {
+      subject: z.string().regex(/^item-[a-z0-9]{8}$/),
+      action: z.object({
+        kind: z.enum(['enchant', 'anvil', 'grind', 'smith', 'loom', 'cartography']), option: z.number().int().min(1).max(3).optional(),
+        with: z.string().min(1).max(128).optional(), rename: z.string().min(1).max(50).optional(), template: registryId.optional(), addition: registryId.optional(),
+        dye: registryId.optional(), pattern: z.string().min(1).max(128).optional(), patternItem: registryId.optional(),
+      }).strict(),
+      preview: z.boolean().optional(), maxLevels: z.number().int().min(0).max(39).optional(), expect: z.string().min(1).max(512).optional(),
+      station: z.object(blockXyz).optional(), say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(1000).max(120000).optional(),
+    }, async ({ say, ...args }) => {
+      idleBody(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await settle(await body.act('modify-item', args), 40000));
+    });
+  }
   if (serverObserved && body.hello.capabilities.includes('travel-to')) {
     const places = options.places ?? new PlaceBook();
     const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {

@@ -100,6 +100,16 @@ final class ModAdapters {
         return null;
     }
 
+    /** Whether an open menu is a verified workstation menu (built-in or add-on); such menus are observed read-only. */
+    static boolean workstationMenu(AbstractContainerMenu menu) {
+        if(menu instanceof net.minecraft.world.inventory.InventoryMenu)return false;
+        List<WorkstationAdapter> all=new ArrayList<>(VanillaWorkstations.ALL);all.addAll(addonWorkstations);
+        for(WorkstationAdapter adapter:all) {
+            try { if(adapter.menu(menu)&&adapter.layout(menu)!=null) return true; } catch(RuntimeException | LinkageError broken) { /* not a match */ }
+        }
+        return false;
+    }
+
     static List<PickupSink> installedSinks(List<PickupSink> sinks) {
         List<PickupSink> result=new ArrayList<>();
         for(PickupSink sink:sinks) if(safeId(sink::id)!=null&&installed(sink::installed)) result.add(sink);

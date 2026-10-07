@@ -34,6 +34,17 @@ final class WorkstationCoreTest {
         var eggs=List.of(new MaterialAllocator.Source<>(0,"egg","egg",16,16),new MaterialAllocator.Source<>(1,"egg","egg",16,16));
         check(MaterialAllocator.allocate(List.of(is("egg")),eggs,20)==null&&MaterialAllocator.feasible(List.of(is("egg")),eggs,20)==16,"a cell never holds more than the item's stack size");
         check(MaterialAllocator.allocate(List.of(is("stick")),inv,0)==null,"zero crafts is never a plan");
+        // Global choice: the any-planks cell must leave the only oak to the oak-only cell.
+        var one=List.of(src(0,"oak_planks",1),src(1,"birch_planks",1));
+        var global=MaterialAllocator.allocate(List.of(is("oak_planks","birch_planks"),is("oak_planks")),one,1);
+        check(global!=null&&global.get(0).equals(Map.of(1,1))&&global.get(1).equals(Map.of(0,1)),"most constrained cell picks first: "+global);
+        var three=List.of(src(0,"oak_planks",2),src(1,"birch_planks",1));
+        check(MaterialAllocator.allocate(List.of(is("oak_planks","birch_planks"),is("oak_planks","birch_planks"),is("oak_planks")),three,1)!=null,"backtracks to fit 2 oak + 1 birch over three cells");
+        check(MaterialAllocator.allocate(List.of(is("oak_planks"),is("oak_planks"),is("oak_planks")),three,1)==null,"three oak cells with two oak fail");
+
+        // Item references: unknown or someone else's never resolve.
+        SubjectRefs refs=new SubjectRefs(()->0L);UUID me=UUID.randomUUID();
+        checks++;try{refs.resolve(me,"item-nothere",slot->null);throw new AssertionError("unknown ref resolved");}catch(Protocol.Error e){if(!e.code.equals("STALE_SUBJECT"))throw e;}
 
         // Layouts: each slot in one port, grids complete.
         StationLayout table=StationLayout.grid(0,1,3,3);

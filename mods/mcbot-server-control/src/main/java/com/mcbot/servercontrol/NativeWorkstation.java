@@ -85,6 +85,29 @@ final class NativeWorkstation {
         click(player,menu,slot,0,ClickType.QUICK_MOVE);
         return menu.getSlot(slot).getItem().isEmpty();
     }
+    /** Press a menu button like a player (stonecutter recipe, loom pattern, enchanting slot); the menu decides what it means. */
+    static void button(ServerPlayer player,AbstractContainerMenu menu,int id) {
+        player.connection.handleContainerButtonClick(new ServerboundContainerButtonClickPacket(menu.containerId,id));
+    }
+    /** Type a name into an open anvil like a player. */
+    static void rename(ServerPlayer player,String name) {
+        player.connection.handleRenameItem(new ServerboundRenameItemPacket(name));
+    }
+    static final int SEARCH=16,VERTICAL=4;
+    /** Loaded blocks within 16 blocks (4 up and down) that pass the test, nearest first, at most `limit`. */
+    static List<BlockPos> nearby(ServerPlayer player,java.util.function.Predicate<BlockState> wanted,int limit) {
+        List<BlockPos> found=new ArrayList<>();BlockPos origin=player.blockPosition();
+        for(int x=-SEARCH;x<=SEARCH;x++)for(int z=-SEARCH;z<=SEARCH;z++){
+            if(x*x+z*z>SEARCH*SEARCH)continue;
+            for(int y=-VERTICAL;y<=VERTICAL;y++){
+                BlockPos pos=origin.offset(x,y,z);if(player.serverLevel().isOutsideBuildHeight(pos))continue;
+                var chunk=player.serverLevel().getChunkSource().getChunkNow(pos.getX()>>4,pos.getZ()>>4);if(chunk==null)continue;
+                if(wanted.test(chunk.getBlockState(pos)))found.add(pos.immutable());
+            }
+        }
+        found.sort(Comparator.comparingDouble(p->Vec3.atCenterOf(p).distanceToSqr(player.position())));
+        return found.subList(0,Math.min(found.size(),limit));
+    }
     static void closeMenu(ServerPlayer player) {
         if(player.containerMenu!=player.inventoryMenu)player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));
     }

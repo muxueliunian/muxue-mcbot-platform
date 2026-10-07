@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -54,6 +54,8 @@ final class ServerController implements ControlSession.Game {
     private StationJob job;
     private final SubjectRefs subjectRefs=new SubjectRefs();
     private TravelTask travel;
+    private FarmTask farm;
+    private BreedTask breed;
     private BlockPos sleepBed;
     private ServerPlayer followedPlayer;
     private net.minecraft.world.entity.LivingEntity retreatTarget;
@@ -71,6 +73,7 @@ final class ServerController implements ControlSession.Game {
     private long chatSequence;
     private ServerChatEvent outgoingChatEvent;
     private final Consumer<LivingEntityUseItemEvent.Finish> foodFinishListener=this::receiveFoodFinish;
+    private final Consumer<net.neoforged.neoforge.event.level.BlockEvent.FarmlandTrampleEvent> trampleGuard=this::guardFarmland;
     ServerController(MinecraftServer server,ServerConfig config) {
         this.server=server; this.config=config;
         session=new ControlSession(this,()->System.nanoTime()/1_000_000,config.worldId(),config.username());
@@ -82,7 +85,10 @@ final class ServerController implements ControlSession.Game {
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,attackGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,incomingDamageGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,sweepGuard);
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,trampleGuard);
     }
+    /** The body never tramples farmland: a companion walking the player's field must not turn it back to dirt. */
+    private void guardFarmland(net.neoforged.neoforge.event.level.BlockEvent.FarmlandTrampleEvent event){if(player!=null&&event.getEntity()==player)event.setCanceled(true);}
     JsonObject call(String method,JsonObject params) {
         reconcile();
         if(Set.of("claim","respawn","act").contains(method))HostingRules.requireRunnable(host());
@@ -328,6 +334,24 @@ final class ServerController implements ControlSession.Game {
             return;
         }
         if(operation.name.equals("travel-to")){requireWalkable();travel=new TravelTask(operation,player,session);active=operation;return;}
+        if(operation.name.equals("tend-crops")||operation.name.equals("breed-animals")) {
+            Vec3 center=player.position();
+            if(args.has("player")){ServerPlayer near=findPlayer(string(args,"player"));if(near==null)throw error("PLAYER_NOT_VISIBLE","Named player is not within 32 blocks in this dimension");center=near.position();}
+            else if(args.has("center"))center=point(object(args,"center"));
+            boolean survey=args.has("survey")&&bool(args,"survey");
+            if(operation.name.equals("tend-crops")) {
+                FarmTask task=new FarmTask(operation,player,session,center);
+                if(survey){operation.finish("succeeded","Field survey",task.survey());return;}
+                requireWalkable();task.start();
+                if(operation.status.equals("running")){farm=task;active=operation;}
+            } else {
+                BreedTask task=new BreedTask(operation,player,session,center);
+                if(survey){operation.finish("succeeded","Animal survey",task.survey());return;}
+                requireWalkable();task.start();
+                if(operation.status.equals("running")){breed=task;active=operation;}
+            }
+            return;
+        }
         long timeout=(long)bounded(args,"timeoutMs",operation.name.equals("follow-player")?60_000:15_000,500,120_000);
         if(operation.name.equals("move-to-position")) {
             Vec3 target=point(args); if(target.distanceTo(player.position())>32) throw error("INVALID_ARGUMENT","Movement limited to 32 blocks");
@@ -374,6 +398,13 @@ final class ServerController implements ControlSession.Game {
             try{job.tick();}
             catch(Protocol.Error e){StationJob failed=job;failed.stop();JsonObject result=failed.detail();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
             catch(RuntimeException e){job.stop();finish("failed","Station task failed: "+e.getClass().getSimpleName());return;}
+            if(active!=null&&!active.status.equals("running"))stop();
+            return;
+        }
+        if(farm!=null||breed!=null){
+            try{if(farm!=null)farm.tick();else breed.tick();}
+            catch(Protocol.Error e){JsonObject result=farm!=null?farm.progress():breed.progress();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
+            catch(RuntimeException e){finish("failed","Farm task failed: "+e.getClass().getSimpleName());return;}
             if(active!=null&&!active.status.equals("running"))stop();
             return;
         }
@@ -520,7 +551,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;pillar=null;if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { active=null;pillar=null;if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     void remove() {
         session.revokeCurrent("Server body removed");
@@ -534,7 +565,7 @@ final class ServerController implements ControlSession.Game {
         if(oldSink!=null) oldSink.closeSink();
         wasConnected=false; lastDimension=null;
     }
-    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);}}
+    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);NeoForge.EVENT_BUS.unregister(trampleGuard);}}
     private void look(Vec3 target) {
         Vec3 delta=target.subtract(player.getEyePosition());
         float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));

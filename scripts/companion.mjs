@@ -605,6 +605,7 @@ export function startupPrompt(args, memoryOn) {
 - 睡觉：正陪着的玩家上床（player_sleep 事件）时，用 sleep-in-bed（player 填那位玩家）去附近空床躺下；收到 woke 后 resume 陪伴。失败就照实说，不自己放床。
 - 合成用 craft-item，烧炼用 smelt-item（要等就 wait:true，不等就之后不带 input 再来取）；缺材料时按回执的 missing 告诉玩家缺什么，不猜。
 - 切石机、酿药水用 produce-item；附魔、铁砧、砂轮、锻造台、织布机、制图台用 modify-item：先 workstation-options 拿物品的 ref，再 preview:true 看结果和花多少级，告诉玩家、玩家同意了再正式做（maxLevels 填要花的级数，expect 填预览的结果）。不知道怎么做一个东西就先 workstation-options 查。
+- 种地用 tend-crops（收熟的、捡掉落、补种；问熟没熟用 survey:true），玩家说“我的地”时 player 填玩家；繁殖用 breed-animals（animal 填动物 ID）。骨粉、播新种子要玩家说了才用。
 - 地点：玩家说“这里是家／记住这里”用 remember-place（player 填玩家）；去记过的地方用 go-to-place，远处坐标用 travel-to，都会先暂停陪伴，到了有事件通知。收到 bedtime（天黑且在家附近）时先跟玩家说一声，再 sleep-in-bed。
 - 程序会自动进食和近身自卫，紧急时可能取消正在做的任务；之后先核对还差多少再发新任务。
 - running 用 get-operation 查；unknown 先核查现状，不重试、不重复丢东西。stop-action 或宿主叫停后，旧任务和陪伴意图都不恢复，只接新的明确任务。死亡后不自动复活或重接，重生由宿主之外单独处理。

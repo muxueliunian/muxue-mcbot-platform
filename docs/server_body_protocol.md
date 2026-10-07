@@ -110,6 +110,15 @@ NBT 类型为 end／byte／short／int／long／float／double／byte_array／st
 
 `inventoryChange` 在这几个动作里按“物品 id＋重要组件”计数，例如 `minecraft:potion[potion=minecraft:swiftness]`、`minecraft:iron_sword[enchantments=minecraft:sharpness 1]`，原地变化（酿造、附魔、修理）也看得出来。Bot 正在用的工作站界面（酿造台等）可以照常观察，只读，界面自己的格子标为 unknown；`click-slot` 不能点这类界面。
 
+种地和养动物（2026-10-07 第 8g 步）：
+
+| 动作 | 参数和语义 |
+| --- | --- |
+| tend-crops | `{survey?,player?／center?,radius?,crops?,replant?,plant?,boneMeal?,timeoutMs?}`；范围以玩家、给定点或 Bot 自己为中心，水平 radius 1–16（默认 8）、上下 3 格，只看已加载区块，中心离 Bot 32 格内。认的作物：普通作物（`CropBlock` 或 `#minecraft:crops`，带 age 属性，模组的也算，按 age 到顶算熟）、地狱疣、可可、甜浆果（右键摘，不拆）、有结果瓜茎指着的西瓜和南瓜（摆着的不算）、甘蔗（只砍最底下一节上面那节，底下留着再长）；瓜茎、火把花、瓶子草从不碰。crops 可以写方块 id、作物物品 id（`minecraft:carrot` 找胡萝卜）或 `#标签`。survey:true 只数：每种作物 `{ripe,growing}`、空耕地数、最近一棵熟的位置，瞬时完成。否则：熟的逐个走到够得着的地方（选一个能站、看得见目标的落脚点，掉落在浆果丛或水里也一样）用原生挖掘收掉（瞬间破坏的直接收，西瓜南瓜和可可按挖掘进度，有斧子就用斧子），捡起新掉落（掉在够不着的地方会过一会儿再试，最多 3 次），replant（默认 true）时用作物自己的种子（`getCloneItemStack`，必须是种这种作物的方块物品）在原地补种；plant 给一个种子 id 时把范围里所有空耕地都种上；boneMeal 0–64 是最多能用的骨粉数，用在没熟的作物上。每个动作之间隔一刻，所有方块改动走原生数据包，保护区和其他模组照常生效。默认 180 秒、最多 600 秒。result：`harvested`（每种方块收了几棵）、`replanted`、`planted`、`boneMealUsed`、`notPlanted`（没种上的原因和数量）、`ripeUnreachable`、`dropsLeft`、`skippedWhy`（最多 8 条：跳过了什么、在哪、为什么）、`inventoryFull`、`inventoryChange`。什么都没得做时成功并带 `nothingToDo` 和 survey；有熟的却一棵都没收成报 UNREACHABLE |
+| breed-animals | `{animal,survey?,player?／center?,radius?,food?,pairs?,timeoutMs?}`；animal 是实体 id。只找这种 `Animal`、长大了、不在 5 分钟冷却、没在恋爱中的（可驯服动物和马类不处理），一次只喂成对的，pairs 1–8（默认 4）。食物用动物自己的 `isFood` 判断（给了 food 就只用它），背包里要至少 2 个。走到实体交互距离内、看得见，用原生交互包右键喂；喂完等最多 8 秒数新出生的幼崽。survey:true 只数：`total/ready/babies/inLove/cooldown` 和手里能喂的食物。失败码：NO_ANIMALS、NOT_READY（能繁殖的不到两头）、NO_FOOD、UNSUPPORTED（只有可驯服动物或马）。result：`fed`、`babies`、`food`、`unpaired`、`couldNotFeed`、`inventoryChange` |
+
+Bot 不会踩坏耕地：ServerBody 取消 Bot 自己触发的 `FarmlandTrampleEvent`（任何动作里都是），别的生物和玩家照旧。
+
 走门（2026-10-07 第 8f 步）：所有走路（move-to-position、跟随、走近、拾取、睡觉、合成烧炼、travel-to）共用的原版寻路现在允许穿过手能打开的门（木门这类，`BlockSetType.canOpenByHand`；铁门不行，栅栏门还没做）。路线下两个节点里有关着的门、离眼睛 3.5 格内时，先停下用原生右键（`handleUseItemOn`，门自己的交互优先，手里的东西不会被用掉）把门打开再走；身体离开门框、路线不再经过它之后，把自己开的门关上，走到终点时也会关；别人开着的门不动。回执 navigation 里有 `doorsOpened`／`doorsClosed`。
 
 drop-item携expectedMaxStackSize时，每次原生DROP_ITEM前均再核验；数量上限不因实际栈大于64而扩大。Node的give-item可以把一个真实足量栈的最多256个目标分成每批最多64个丢出；容器取物仍要求一个足量源栈和空快捷栏，不跨栈凑数，目标不能超过实际源／目标栈有效上限。

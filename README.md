@@ -23,15 +23,18 @@
 - 跟随、等待、跟随时捡指定物品，可以边做边聊天，随时叫停
 - 单格挖放、标准容器、走近取物再交还
 - 有限采集：原木、矿石、石料，按方块标签认，模组的树、矿、石头也算；整棵树会垫高砍完
-- 背包整理、工具选择、自动进食、有限高差寻路、近距自卫
+- 背包整理、工具选择、自动进食、原版寻路（能跳一格空隙、开关木门）、近距自卫、跟着玩家睡觉
+- 合成和烧炼；切石机、酿造台；附魔台、铁砧、砂轮、锻造台、织布机、制图台（先预览、问过玩家再做）
+- 记住地点、回家，最远 2000 格分段走
+- 种地：收熟的作物、捡掉落、原地补种，可以播种和用骨粉（模组作物按 `#minecraft:crops` 认）；喂动物繁殖
 - 手持物品右键方块（`interact-block`）和对空使用（`use-item`），按登记的交互放行，内置的只有原版堆肥桶
 - 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）
 
 Agent：Claude Code、Codex、DeepSeek Harness（dsh，可直接用桌面版自带的；2026-10-06 隔离服真实模型实测通过）。
 
-还没有：持续陪挖（程序矩阵已通过，待真实模型和用户验收）、原生 API、建筑、多版本。详见[交付计划](docs/delivery_plan.md)。
+还没有：主动保护玩家、建筑、模组机器通用适配、原生 API、多版本。详见[交付计划](docs/delivery_plan.md)。
 
-用 `start-server-play.ps1` 启动。四十来个 MCP 工具不代表所有 Mod 或服务器都能用。托管时可以另开一个终端运行 `node scripts/webui.mjs --open`，在本机网页里看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。
+用 `start-server-play.ps1` 启动。五十多个 MCP 工具不代表所有 Mod 或服务器都能用。托管时可以另开一个终端运行 `node scripts/webui.mjs --open`，在本机网页里看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。
 
 ## 目录
 

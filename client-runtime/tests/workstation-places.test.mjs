@@ -12,7 +12,7 @@ import { PlaceBook } from '../dist/places.js';
 import { mockServerControl, serverCapabilities } from './mock-server-control.mjs';
 import { observation } from './mock-control.mjs';
 
-const extra = ['craft-item', 'smelt-item', 'travel-to', 'workstation-options', 'produce-item', 'modify-item'];
+const extra = ['craft-item', 'smelt-item', 'travel-to', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals'];
 async function setup(t, capabilities = extra) {
   const mock = await mockServerControl(); t.after(() => mock.close());
   const hello = mock.handlers.hello;
@@ -67,6 +67,27 @@ test('workstation-options, produce-item and modify-item forward their own argume
   assert.equal(acts().length, 3);
 });
 
+test('tend-crops and breed-animals forward their own arguments; survey touches nothing else; malformed ones never reach the server', async t => {
+  const { body, acts } = await setup(t);
+  const c = await client(t, body);
+  const names = (await c.listTools()).tools.map(tool => tool.name);
+  for (const name of ['tend-crops', 'breed-animals']) assert.ok(names.includes(name), name);
+  await call(c, 'tend-crops', { survey: true, player: 'muxue' });
+  await call(c, 'tend-crops', { radius: 10, crops: ['minecraft:wheat', '#minecraft:crops'], boneMeal: 4, say: '我去收麦子' });
+  await call(c, 'breed-animals', { animal: 'minecraft:cow', pairs: 2 });
+  assert.deepEqual(acts().map(act => [act.name, act.args]), [
+    ['tend-crops', { survey: true, player: 'muxue' }],
+    ['send-chat', { message: '我去收麦子' }],
+    ['tend-crops', { radius: 10, crops: ['minecraft:wheat', '#minecraft:crops'], boneMeal: 4 }],
+    ['breed-animals', { animal: 'minecraft:cow', pairs: 2 }],
+  ]);
+  await assert.rejects(body.act('tend-crops', { radius: 17 }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('tend-crops', { player: 'muxue', center: { x: 0, y: 64, z: 0 } }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('tend-crops', { boneMeal: 65 }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('breed-animals', { pairs: 2 }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('breed-animals', { animal: 'minecraft:cow', pairs: 9 }), { code: 'INVALID_ARGUMENT' });
+  assert.equal(acts().length, 4);
+});
 test('places are remembered per world in the runtime directory and go-to-place walks there with travel-to', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'places-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { body, acts } = await setup(t);

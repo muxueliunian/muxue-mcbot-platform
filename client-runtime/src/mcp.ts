@@ -227,6 +227,33 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
       return operationResult(await settle(await body.act('modify-item', args), 40000));
     });
   }
+  const pauseCompanion = async () => { if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' }); };
+  const area = {
+    player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional().describe('Around this player (the one who said "my field", "these cows")'),
+    center: z.object({ x: coordinate, y: coordinate, z: coordinate }).optional().describe('Around this point instead; default is around yourself'),
+    radius: z.number().int().min(1).max(16).optional(),
+  };
+  if (serverObserved && body.hello.capabilities.includes('tend-crops')) {
+    register('tend-crops', 'Farm a field like a player: walk it, harvest every ripe crop in the area (wheat, carrots, potatoes, beetroot, nether wart, cocoa, modded crops tagged #minecraft:crops; sweet berries are picked; melons and pumpkins only where a stem grew them; sugar cane above its bottom block), pick up the drops and plant the same crop again with its seed (replant, default true). Unripe crops, stems and decorations are left alone; farmland is never trampled. plant: a seed item ID to also sow every empty farmland in the area. boneMeal: how many bone meal it may spend on unripe crops (default 0). crops limits it to some kinds (block or item IDs, or #tags). survey:true only reports ripe/growing counts and empty farmland, touching nothing; use it to answer "is it ripe?". Pauses companion mode first (resume it after). running: the result (harvested per crop, replanted, inventoryChange, notPlanted reasons) arrives as a task event; stop-action ends it.', {
+      survey: z.boolean().optional(), ...area, crops: z.array(z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_./-]+$/)).min(1).max(8).optional(),
+      replant: z.boolean().optional(), plant: registryId.optional(), boneMeal: z.number().int().min(0).max(64).optional(),
+      say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(5000).max(600000).optional(),
+    }, async ({ say, ...args }) => {
+      if (args.survey) return operationResult(await body.act('tend-crops', args));
+      idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await settle(await body.act('tend-crops', args), 15000));
+    });
+  }
+  if (serverObserved && body.hello.capabilities.includes('breed-animals')) {
+    register('breed-animals', 'Breed animals of one kind like a player: feed pairs of grown animals that can breed now (not babies, not on the 5-minute cooldown) their breeding food from the inventory (wheat for cows and sheep, seeds for chickens, carrots for pigs...; the animal decides, modded animals too), then wait a few seconds for the babies. Only whole pairs; pairs defaults to 4 (1-8). Tamable animals and horses are not handled. survey:true only counts ready/babies/cooldown and which food you hold. NOT_READY and NO_FOOD say why. Pauses companion mode first. running: the result arrives as a task event.', {
+      animal: registryId.describe('Entity type, e.g. minecraft:cow'), survey: z.boolean().optional(), ...area, food: registryId.optional(), pairs: z.number().int().min(1).max(8).optional(),
+      say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(5000).max(300000).optional(),
+    }, async ({ say, ...args }) => {
+      if (args.survey) return operationResult(await body.act('breed-animals', args));
+      idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await settle(await body.act('breed-animals', args), 15000));
+    });
+  }
   if (serverObserved && body.hello.capabilities.includes('travel-to')) {
     const places = options.places ?? new PlaceBook();
     const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {

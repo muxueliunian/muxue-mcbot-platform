@@ -16,7 +16,7 @@ type Borrowed = BorrowedPickup | BorrowedMining;
 const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'kind' in owner && owner.kind === 'mining';
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
-type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; stuckHigh?: number };
+type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number };
 type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
@@ -346,7 +346,7 @@ export class GatherTasks {
         const cell = await this.cell(task, at);
         if (!isLeaves(cell?.id)) continue;
         task.progress.stage = 'shaking-leaves';
-        try { await this.step(task, 'dig-block', { ...at, expectedBlock: cell!.id!, expectedProperties: cell!.properties ?? {}, timeoutMs: 10000 }, true); }
+        try { await this.digLeaf(task, at, cell!); }
         catch (error) { if (error instanceof BodyError && reachRefusals.has(error.code)) continue; throw error; }
         task.progress.leavesShaken = (task.progress.leavesShaken ?? 0) + 1; broke = true;
       }
@@ -469,8 +469,25 @@ export class GatherTasks {
     if (openCells.has(cell.id ?? '')) return true;
     if (!isLeaves(cell.id)) return false;
     task.progress.stage = 'clearing-leaves';
-    await this.step(task, 'dig-block', { ...above, expectedBlock: cell.id!, expectedProperties: cell.properties ?? {}, timeoutMs: 10000 }, true);
+    await this.digLeaf(task, above, cell);
     return true;
+  }
+  /**
+   * Break one leaf block. Natural leaves decay on their own once the trunk is gone, so one may vanish while it
+   * is being broken (the body reports STALE_BLOCK): if the cell is no longer leaves, it is out of the way all the same.
+   */
+  private async digLeaf(task: Active, at: Position, cell: { id?: string; properties?: Record<string, unknown> }): Promise<void> {
+    // Cutting the trunk also changes the leaves' distance property: a leaf still there is retried with its new state.
+    for (let attempt = 1; ; attempt++) {
+      try { await this.step(task, 'dig-block', { ...at, expectedBlock: cell.id!, expectedProperties: cell.properties ?? {}, timeoutMs: 10000 }, true); return; }
+      catch (error) {
+        if (!(error instanceof BodyError && error.code === 'STALE_BLOCK')) throw error;
+        const now = await this.cell(task, at);
+        if (!now || !isLeaves(now.id)) { task.progress.leavesDecayed = (task.progress.leavesDecayed ?? 0) + 1; return; }
+        if (attempt >= 3) throw error;
+        cell = now;
+      }
+    }
   }
   /** Select the recommended hotbar tool for digging a pillar block back out; the bare hand also works. */
   private async pillarTool(task: Active, position: Position, block: string): Promise<void> {

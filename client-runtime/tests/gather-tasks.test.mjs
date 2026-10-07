@@ -116,6 +116,39 @@ test('modded resources gather by the drops the server reports, with their least 
   assert.equal(dug.status, 'succeeded', dug.summary); assert.equal(dug.result.minedBlocks, 1, 'three per block covers the goal after one block');
   await assert.rejects(slate.tasks.start('gather-resources', { resourceRef: await slate.ref(), item: 'minecraft:dirt', count: 1 }), error => error.code === 'UNSUPPORTED' && error.message.includes('example:slate_cobble'));
 });
+test('a drop stuck on leaves: a leaf that decays or changes while being broken does not fail the gather', async () => {
+  for (const decays of [true, false]) {
+    const f = fixture({ blocks: 1, blockId: 'minecraft:oak_log', dropItem: 'minecraft:oak_log' });
+    const leaf = { x: 1, y: 66, z: 1 };
+    let cell = { id: 'minecraft:oak_leaves', properties: { distance: '1', persistent: 'false', waterlogged: 'false' } }, refused = false;
+    const observe = f.body.observe;
+    f.body.observe = async position => {
+      const state = await observe();
+      if (position) state.block = { state: 'loaded', position, ...(position.x === leaf.x && position.y === leaf.y && position.z === leaf.z && cell ? cell : { id: 'minecraft:air', properties: {} }) };
+      return state;
+    };
+    const act = f.body.act;
+    f.body.act = async (name, args, token) => {
+      if (name === 'dig-block' && !args.targetToken) {
+        f.calls.push({ name: 'dig-leaf', args: clone(args) });
+        const fail = !refused; refused = true;
+        if (fail) { if (decays) cell = undefined; else cell = { ...cell, properties: { ...cell.properties, distance: '7' } }; }
+        else cell = undefined;
+        if (!cell) for (const item of f.state.groundItems) item.position.y = 64;
+        return { operationId: randomUUID(), sessionId: 'session', controlGeneration: f.state.controlGeneration, name, status: fail ? 'failed' : 'succeeded', summary: fail ? 'Block ID or properties changed' : name, result: fail ? { code: 'STALE_BLOCK' } : {} };
+      }
+      const op = await act(name, args, token);
+      // The chopped log lands on the leaf above the trunk.
+      if (name === 'dig-block' && args.targetToken) f.state.groundItems.at(-1).position = { x: 1.5, y: 67, z: 1.5 };
+      return op;
+    };
+    const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:oak_log', count: 1 }));
+    assert.equal(result.status, 'succeeded', result.summary);
+    const leafDigs = f.calls.filter(call => call.name === 'dig-leaf');
+    if (decays) { assert.equal(leafDigs.length, 1); assert.equal(result.result.leavesDecayed, 1); }
+    else { assert.equal(leafDigs.length, 2); assert.equal(leafDigs[1].args.expectedProperties.distance, '7', 'retried with the new leaf state'); }
+  }
+});
 test('a reachable-looking block refused for line of sight is left for an approach, not retried in place', async () => {
   const f = fixture({ blocks: 2 });
   let refused = false;

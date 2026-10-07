@@ -115,19 +115,22 @@ final class ToolAssessment {
             nativeEligible=!state.requiresCorrectToolForDrops()||stack.isCorrectToolForDrops(state);
             boolean vanilla=state.getBlock().getClass().getPackageName().startsWith("net.minecraft.")&&stack.getItem().getClass().getPackageName().startsWith("net.minecraft.")&&
                 BuiltInRegistries.BLOCK.getKey(state.getBlock()).getNamespace().equals("minecraft")&&BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft");
-            eligible=vanilla?nativeEligible:null;
+            // Modded blocks and tools declare harvest tiers through the same tags the native check reads (8a: modded
+            // resources). A mod's player HarvestCheck hook is still not evaluated; the dig and pickup receipts stay authoritative.
+            eligible=nativeEligible;
+            if(!vanilla)value.addProperty("modHooks","unassessed");
             speed=stack.getDestroySpeed(state);
             if(!Float.isFinite(speed)||speed<=0){speed=Float.NaN;reason="BASE_SPEED_UNKNOWN";}
             if(stack.isDamageableItem())remaining=Math.max(0,stack.getMaxDamage()-stack.getDamageValue());
             var enchantments=stack.getOrDefault(DataComponents.ENCHANTMENTS,ItemEnchantments.EMPTY);
-            dropKnown=vanilla;
+            // What the block drops comes from its loot table (ResourceCatalog.drops); only modded enchantments stay unknown.
+            dropKnown=true;
             for(var enchantment:enchantments.entrySet()) {
                 if(enchantment.getKey().is(Enchantments.SILK_TOUCH))silk=enchantment.getIntValue();
                 else if(enchantment.getKey().is(Enchantments.FORTUNE))fortune=enchantment.getIntValue();
                 if(enchantment.getKey().unwrapKey().isEmpty()||!enchantment.getKey().unwrapKey().orElseThrow().location().getNamespace().equals("minecraft"))dropKnown=false;
             }
-            if(!vanilla)reason="PLAYER_OR_MOD_HOOKS_UNASSESSED";
-            else if(!nativeEligible)reason="INCORRECT_TOOL_FOR_DROPS";
+            if(!nativeEligible)reason="INCORRECT_TOOL_FOR_DROPS";
             if(state.isAir()||!Float.isFinite(hardness)||hardness<0){eligible=false;reason="NOT_DIGGABLE";}
         } catch(RuntimeException failure) {eligible=null;dropKnown=false;reason="NATIVE_ASSESSMENT_UNKNOWN";}
         Integer ticks=estimatedTicks(hardness,speed,eligible,state.isAir());

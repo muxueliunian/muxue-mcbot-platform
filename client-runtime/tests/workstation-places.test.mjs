@@ -88,6 +88,24 @@ test('tend-crops and breed-animals forward their own arguments; survey touches n
   await assert.rejects(body.act('breed-animals', { animal: 'minecraft:cow', pairs: 9 }), { code: 'INVALID_ARGUMENT' });
   assert.equal(acts().length, 4);
 });
+test('use-bucket and till forward their arguments; place-block fills a left-out stack guard from the slot', async t => {
+  const { body, acts } = await setup(t, [...extra, 'use-bucket', 'place-block']);
+  const c = await client(t, body);
+  const place = { x: 0, y: 63, z: 0, face: 'up', expectedItem: 'example:custom_block', expectedBlock: 'minecraft:grass_block', expectedProperties: { snowy: 'false' } };
+  await call(c, 'use-bucket', { x: 1, y: 63, z: 2, action: 'pour', say: '倒水' });
+  await call(c, 'tend-crops', { player: 'muxue', till: 9, plant: 'minecraft:wheat_seeds' });
+  await call(c, 'place-block', { ...place, slot: 0 });
+  assert.equal((await call(c, 'place-block', { ...place, slot: 1 })).code, 'STALE_ITEM', 'nothing of that item in the slot');
+  assert.deepEqual(acts().map(act => [act.name, act.args]), [
+    ['send-chat', { message: '倒水' }],
+    ['use-bucket', { x: 1, y: 63, z: 2, action: 'pour' }],
+    ['tend-crops', { player: 'muxue', till: 9, plant: 'minecraft:wheat_seeds' }],
+    ['place-block', { ...place, slot: 0, expectedCount: 2, expectedComponents: {} }],
+  ]);
+  await assert.rejects(body.act('use-bucket', { x: 1, y: 63, z: 2, action: 'drink' }), { code: 'INVALID_ARGUMENT' });
+  await assert.rejects(body.act('tend-crops', { till: 65 }), { code: 'INVALID_ARGUMENT' });
+  assert.equal(acts().length, 4);
+});
 test('places are remembered per world in the runtime directory and go-to-place walks there with travel-to', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'places-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { body, acts } = await setup(t);

@@ -113,7 +113,8 @@ export interface ActionArguments {
   'workstation-options': { item?: string; potion?: string; count?: number; subjects?: string };
   'produce-item': { item: string; count?: number; potion?: string; station?: Position; timeoutMs?: number };
   'modify-item': { subject: string; action: ModifyAction; preview?: boolean; maxLevels?: number; expect?: string; station?: Position; timeoutMs?: number };
-  'tend-crops': { survey?: boolean; player?: string; center?: Position; radius?: number; crops?: string[]; replant?: boolean; plant?: string; boneMeal?: number; timeoutMs?: number };
+  'tend-crops': { survey?: boolean; player?: string; center?: Position; radius?: number; crops?: string[]; replant?: boolean; plant?: string; boneMeal?: number; till?: number; timeoutMs?: number };
+  'use-bucket': Position & { action: 'pour' | 'scoop' };
   'breed-animals': { animal: string; survey?: boolean; player?: string; center?: Position; radius?: number; food?: string; pairs?: number; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;

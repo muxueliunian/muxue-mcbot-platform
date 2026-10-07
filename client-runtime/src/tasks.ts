@@ -4,12 +4,12 @@ import { BodyError, type Body, type Observation, type Operation, type ActionName
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
 type Target = { context: Context; expires: number; block: NearbyBlocks['candidates'][number] };
-type Request = { containerRef?: string; item?: string; count?: number; stacks?: number; player?: string; say?: string };
+type Request = { containerRef?: string; item?: string; count?: number; stacks?: number; player?: string; slot?: number; say?: string };
 type TaskName = 'container-list' | 'container-withdraw' | 'give-item' | 'fetch-and-give';
 type StopHandle = { epoch: number; taskId?: string };
 type Limit = { deadline: number; expired: Promise<never>; timer: ReturnType<typeof setTimeout> };
 type TaskOwner = { id: string; epoch: number; cancelled: boolean; limit: Limit };
-type Progress = { requestedCount: number; maxStackSize?: number; withdrawnCount: number; heldCount?: number; droppedCount: number; carriedCount?: number; lastConfirmedHeldCount?: number; lastConfirmedCarriedCount?: number; counts?: string; pickup: 'unconfirmed'; player?: string; item?: string; items?: unknown[]; stage: string; code?: string; cleanup?: string; containerProtection?: 'instance-bound' | 'state-only' };
+type Progress = { requestedCount: number; maxStackSize?: number; withdrawnCount: number; heldCount?: number; droppedCount: number; slot?: number; carriedCount?: number; lastConfirmedHeldCount?: number; lastConfirmedCarriedCount?: number; counts?: string; pickup: 'unconfirmed'; player?: string; item?: string; items?: unknown[]; stage: string; code?: string; cleanup?: string; containerProtection?: 'instance-bound' | 'state-only' };
 /** A bounded task runner. Authoritative snapshots and target tokens stay inside the task boundary. */
 export class ContainerTasks {
   private readonly targets = new Map<string, Target>();
@@ -135,7 +135,7 @@ export class ContainerTasks {
   private variants(stacks: ItemStack[], item: string): ItemStack[] {
     const found = stacks.filter(stack => stack.id === item && stack.count > 0);
     if (found.some(stack => stack.components === undefined)) throw new BodyError('INCOMPLETE_GUARD', '物品缺少完整组件，不能执行任务');
-    if (found.some(stack => !isDeepStrictEqual(stack.components, found[0]?.components))) throw new BodyError('AMBIGUOUS_ITEM', '同ID物品存在不同组件变体，请明确具体物品');
+    if (found.some(stack => !isDeepStrictEqual(stack.components, found[0]?.components))) throw new BodyError('AMBIGUOUS_ITEM', '同ID物品存在不同组件变体（比如附魔的和没附魔的），请明确具体物品；give-item 可以用 slot 指定背包哪一格');
     if (found.some(stack => stack.maxStackSize !== found[0]?.maxStackSize)) throw new BodyError('MAX_STACK_CHANGED', '同一物品变体的有效堆叠上限不一致，未继续任务');
     return found;
   }
@@ -224,8 +224,10 @@ export class ContainerTasks {
           if (!origin) throw new BodyError('INSUFFICIENT_ITEMS', '容器没有单个足量的目标栈；首版不跨栈取物');
           if (origin.maxStackSize !== undefined && count > origin.maxStackSize) throw new BodyError('UNSUPPORTED', '目标数量超过实际物品一栈上限；当前容器任务尚不跨栈转移，未截断数量');
           if (origin.count !== count && !/^minecraft:(generic_9x[1-6]|generic_3x3|hopper|shulker_box)$/.test(menu.type)) throw new BodyError('UNSUPPORTED', '此菜单未验证余量归还语义，首版只支持整栈取出');
-          const destination = menu.slots.find(stack => stack.source === 'player' && stack.active !== false && stack.playerSlot !== undefined && stack.playerSlot >= 0 && stack.playerSlot <= 8 && this.empty(stack));
-          if (!destination) throw new BodyError('INVENTORY_FULL', '需要一个空快捷栏槽位，未取物');
+          // An empty hotbar slot first; container-withdraw falls back to the main inventory (fetch-and-give drops from the hotbar).
+          const free = (from: number, to: number) => menu!.slots.find(stack => stack.source === 'player' && stack.active !== false && stack.playerSlot !== undefined && stack.playerSlot >= from && stack.playerSlot <= to && this.empty(stack));
+          const destination = free(0, 8) ?? (name === 'container-withdraw' ? free(9, 35) : undefined);
+          if (!destination) throw new BodyError('INVENTORY_FULL', name === 'container-withdraw' ? '背包没有空格，未取物' : '需要一个空快捷栏槽位，未取物');
           acquiredSlot = destination.playerSlot;
           acquiredComponents = origin.components;
           acquiredMaxStackSize = origin.maxStackSize; progress.maxStackSize = origin.maxStackSize;
@@ -243,7 +245,7 @@ export class ContainerTasks {
             const sourceAfter = menu.slots.find(stack => stack.slot === origin.slot);
             if (!this.empty(menu.carried) || !actual || actual.source !== 'player' || actual.active === false || actual.playerSlot !== acquiredSlot || actual.id !== origin.id || actual.count !== count
               || !isDeepStrictEqual(actual.components, origin.components) || actual.maxStackSize !== origin.maxStackSize || !isDeepStrictEqual(sourceAfter, emptied)) throw new BodyError('UNKNOWN', '整栈放入后的实际数量、组件、来源或鼠标持物异常；未继续');
-            progress.withdrawnCount = count; progress.heldCount = count;
+            progress.withdrawnCount = count; progress.heldCount = count; progress.slot = acquiredSlot;
           } else for (let transferred = 0; transferred < count; transferred++) {
             const dest = menu.slots.find(stack => stack.slot === destination.slot)!;
             menu = await this.click(epoch, id, context, menu, dest, 1);
@@ -251,7 +253,7 @@ export class ContainerTasks {
             const actual = menu.slots.find(stack => stack.slot === destination.slot);
             if (!actual || actual.source !== 'player' || actual.active === false || actual.playerSlot !== acquiredSlot || actual.id !== origin.id || actual.count !== transferred + 1 || !isDeepStrictEqual(actual.components, origin.components) || actual.maxStackSize !== origin.maxStackSize
               || menu.carried.count !== origin.count - transferred - 1 || (menu.carried.count > 0 && (menu.carried.id !== origin.id || !isDeepStrictEqual(menu.carried.components, origin.components) || menu.carried.maxStackSize !== origin.maxStackSize))) throw new BodyError('UNKNOWN', '放入快捷栏后的实际数量、组件或有效堆叠上限异常；未继续');
-            progress.withdrawnCount = transferred + 1; progress.heldCount = transferred + 1;
+            progress.withdrawnCount = transferred + 1; progress.heldCount = transferred + 1; progress.slot = acquiredSlot;
           }
           if (!this.empty(menu.carried)) {
             const rest = menu.slots.find(stack => stack.slot === origin.slot)!;
@@ -283,7 +285,20 @@ export class ContainerTasks {
         if (!recipient || recipient.name === state.username) throw new BodyError('PLAYER_NOT_VISIBLE', '接收者未在附近可见玩家中');
         if (Math.hypot(recipient.position.x - state.position.x, recipient.position.y - state.position.y, recipient.position.z - state.position.z) > 2) throw new BodyError('OUT_OF_REACH', '接收者须在2格内；首版不自动移动或绕障');
         const point = await this.recipient(epoch, context, request.player!, state);
-        const candidates = acquiredSlot === undefined ? this.variants(state.inventory, request.item!) : state.inventory.filter(item => item.slot === acquiredSlot && item.id === request.item && isDeepStrictEqual(item.components, acquiredComponents) && item.maxStackSize === acquiredMaxStackSize);
+        if (acquiredSlot === undefined && request.slot !== undefined && request.slot > 8) {
+          // The chosen stack is in the main inventory: swap it whole into an empty hotbar slot first.
+          const source = state.inventory.find(item => item.slot === request.slot);
+          if (!source || source.id !== request.item || source.count === 0) throw new BodyError('ITEM_CHANGED', `背包第 ${request.slot} 格不是 ${request.item}`);
+          const hotbar = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(slot => state.inventory.find(item => item.slot === slot) ?? { slot, id: 'minecraft:air', count: 0, components: {} }).find(item => this.empty(item));
+          if (!hotbar) throw new BodyError('INVENTORY_FULL', '快捷栏没有空格，先用 prepare-item 把它拿到快捷栏');
+          const value = (item: ItemStack) => ({ id: item.id, count: item.count, components: item.components!, ...(item.maxStackSize !== undefined ? { maxStackSize: item.maxStackSize } : {}) });
+          this.success(await this.step(epoch, id, context, 'swap-inventory', { sourceSlot: source.slot, hotbarSlot: hotbar.slot, expectedSource: value(source), expectedTarget: value(hotbar as ItemStack) }), epoch);
+          state = await this.observe(epoch, context); request = { ...request, slot: hotbar.slot };
+        }
+        // slot picks one stack when the same item comes in variants (an enchanted pickaxe and a plain one).
+        const candidates = acquiredSlot !== undefined ? state.inventory.filter(item => item.slot === acquiredSlot && item.id === request.item && isDeepStrictEqual(item.components, acquiredComponents) && item.maxStackSize === acquiredMaxStackSize)
+          : request.slot !== undefined ? state.inventory.filter(item => item.slot === request.slot && item.id === request.item && item.count > 0) : this.variants(state.inventory, request.item!);
+        if (acquiredSlot === undefined && request.slot !== undefined && !candidates.length) throw new BodyError('ITEM_CHANGED', `快捷栏第 ${request.slot} 格不是 ${request.item}`);
         if (count === undefined) { count = this.quantity(request, candidates[0]); progress.requestedCount = count; }
         const stack = acquiredSlot === undefined ? candidates.find(item => item.slot <= 8 && item.count >= count!) : candidates.find(item => item.count === count!);
         if (!stack) throw new BodyError('INSUFFICIENT_ITEMS', '快捷栏没有足量的单栈目标物品');
@@ -315,7 +330,8 @@ export class ContainerTasks {
         }
       }
       progress.stage = 'done';
-      return this.record(id, context, name, 'succeeded', progress.droppedCount ? '物品已丢出，指定玩家拾取尚未确认' : name === 'container-list' ? '容器内容已读取并关箱' : '物品已取出并持有', progress);
+      return this.record(id, context, name, 'succeeded', progress.droppedCount ? '物品已丢出，指定玩家拾取尚未确认' : name === 'container-list' ? '容器内容已读取并关箱'
+        : progress.slot !== undefined && progress.slot > 8 ? `物品已取出，快捷栏满了，放在背包第 ${progress.slot} 格；要拿在手上用先 prepare-item` : '物品已取出并持有', progress);
     } catch (error) {
       let failure = error;
       const codeOf = (value: unknown) => value instanceof BodyError ? value.code : 'UNKNOWN';

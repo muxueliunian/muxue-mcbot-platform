@@ -7,6 +7,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.tags.ItemTags;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
@@ -24,7 +25,8 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * (NativeWorkstation). Stations are found and driven through their {@link WorkstationAdapter} (vanilla ones are
  * built in, see VanillaWorkstations): the adapter says which block and menu it is and which slot is which port.
  * smelt-item with wait keeps the machine open, standing beside it, until the input is done, then takes the output.
- * Without a crafting grid nearby a 3x3 recipe may place a crafting table from the inventory.
+ * Without a crafting grid nearby a 3x3 recipe may place a crafting table from the inventory, making one from planks
+ * (or a log) in the own 2x2 grid first when there is none.
  */
 final class WorkstationTask {
     private record Station(BlockPos pos,WorkstationAdapter adapter) {}
@@ -102,8 +104,9 @@ final class WorkstationTask {
         if(stations.isEmpty())for(StationRecipe plan:plans)if(feasible(plan,inventory,1)>0)feasibleSomewhere=true;
         if(!feasibleSomewhere){stations.clear();throw missingError(all.isEmpty()?plans:all);}
         if(stations.isEmpty()) {
+            madeTable=makeTable();
             BlockPos placed=placeTable();
-            if(placed==null)throw error("NO_CRAFTING_TABLE","This recipe needs a crafting table (3x3); none within 16 blocks and none in the inventory to place");
+            if(placed==null)throw error("NO_CRAFTING_TABLE","This recipe needs a crafting table (3x3); none within 16 blocks, none in the inventory and no planks or logs to make one");
             stations.add(new Station(placed,VanillaWorkstations.CRAFTING_TABLE));
         }
         next();
@@ -134,6 +137,7 @@ final class WorkstationTask {
         JsonObject result=obj("item",id(wanted),"requestedCount",count,"crafts",done,"made",done*perCraft,"recipe",used,"inventoryChange",delta(before,counts(inventory)));
         if(table!=null)result.add("table",pos(table));
         if(placedTable!=null)result.add("placedTable",pos(placedTable));
+        if(madeTable)result.addProperty("madeTable",true);
         if(done<crafts){
             JsonArray short_=missing(first,inventory,crafts-done);
             result.add("missing",short_);
@@ -143,17 +147,34 @@ final class WorkstationTask {
         operation.finish("succeeded","Crafted "+done*perCraft+" "+id(wanted),result);
     }
     private BlockPos placedTable;
-    /** Put a crafting table from the inventory down next to the body, like a player would, and remember where. */
+    private boolean madeTable;
+    /** No table to put down: make one in the own 2x2 grid (planks from a log first when needed), as a player would. */
+    private boolean makeTable() {
+        Inventory inventory=player.getInventory();
+        for(int i=0;i<36;i++)if(plain(inventory.getItem(i))&&inventory.getItem(i).is(Items.CRAFTING_TABLE))return false;
+        if(gridCraft(Items.CRAFTING_TABLE))return true;
+        for(var planks:BuiltInRegistries.ITEM.getTagOrEmpty(ItemTags.PLANKS))if(gridCraft(planks.value()))break;
+        return gridCraft(Items.CRAFTING_TABLE);
+    }
+    private boolean gridCraft(Item item) {
+        WorkstationAdapter own=VanillaWorkstations.INVENTORY;StationLayout grid=own.layout(player.inventoryMenu);
+        if(grid==null)return false;
+        for(StationRecipe plan:safely(()->own.recipes(null).producing(player,item),List.<StationRecipe>of()))
+            if(plan.fits(grid.gridWidth(),grid.gridHeight())&&feasible(plan,player.getInventory(),1)>0&&craft(player,player.inventoryMenu,grid,plan,1)>0)return true;
+        return false;
+    }
+    /** Put a crafting table from the inventory down near the body, like a player would, and remember where. */
     private BlockPos placeTable() {
         Inventory inventory=player.getInventory();int slot=-1;
         for(int i=0;i<36;i++)if(plain(inventory.getItem(i))&&inventory.getItem(i).is(Items.CRAFTING_TABLE)){slot=i;break;}
         if(slot<0)return null;
         BlockPos feet=player.blockPosition();BlockPos target=null;
+        // Nearest first; a step up or down is fine, and grass or a flower in the way gives way like for a player.
         outer:
-        for(int r=1;r<=2;r++)for(int dx=-r;dx<=r;dx++)for(int dz=-r;dz<=r;dz++){
+        for(int r=1;r<=3;r++)for(int dy:new int[]{0,1,-1})for(int dx=-r;dx<=r;dx++)for(int dz=-r;dz<=r;dz++){
             if(Math.max(Math.abs(dx),Math.abs(dz))!=r)continue;
-            BlockPos at=feet.offset(dx,0,dz);
-            if(!player.serverLevel().getBlockState(at).isAir()||!player.serverLevel().getBlockState(at.below()).isFaceSturdy(player.serverLevel(),at.below(),Direction.UP))continue;
+            BlockPos at=feet.offset(dx,dy,dz);BlockState there=player.serverLevel().getBlockState(at);
+            if(!(there.isAir()||there.canBeReplaced()&&there.getFluidState().isEmpty())||!player.serverLevel().getBlockState(at.below()).isFaceSturdy(player.serverLevel(),at.below(),Direction.UP))continue;
             if(new AABB(at).intersects(player.getBoundingBox()))continue;
             if(player.getEyePosition().distanceTo(Vec3.atCenterOf(at))>player.blockInteractionRange()-0.5)continue;
             target=at;break outer;

@@ -26,7 +26,7 @@
 - 背包整理、工具选择、自动进食、原版寻路（能跳一格空隙、开关木门）、近距自卫、跟着玩家睡觉
 - 合成和烧炼；切石机、酿造台；附魔台、铁砧、砂轮、锻造台、织布机、制图台（先预览、问过玩家再做）
 - 记住地点、回家，最远 2000 格分段走
-- 种地：收熟的作物、捡掉落、原地补种，可以播种和用骨粉（模组作物按 `#minecraft:crops` 认）；喂动物繁殖
+- 种地：收熟的作物、捡掉落、原地补种，可以播种和用骨粉（模组作物按 `#minecraft:crops` 认）；用水桶倒水舀水、用锄头在水边开新地；喂动物繁殖
 - 手持物品右键方块（`interact-block`）和对空使用（`use-item`），按登记的交互放行，内置的只有原版堆肥桶
 - 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）
 

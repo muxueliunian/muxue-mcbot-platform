@@ -266,6 +266,33 @@ test('component ambiguity, unknown slot source and full hotbar reject before any
   }
 });
 
+test('container-withdraw with a full hotbar lands in the main inventory instead of failing or dropping anything', async () => {
+  const f = fixture({ full: true, configureMenu: menu => { menu.slots.push(empty(4, { source: 'player', playerSlot: 9 })); } });
+  const op = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:oak_log', count: 10 });
+  assert.equal(op.status, 'succeeded'); assert.equal(op.result.slot, 9); assert.match(op.summary, /prepare-item/);
+  assert.equal(f.calls.some(call => call.name === 'drop-item'), false);
+  // fetch-and-give still needs a hotbar slot, since it drops from the hand.
+  const g = fixture({ full: true, configureMenu: menu => { menu.slots.push(empty(4, { source: 'player', playerSlot: 9 })); } });
+  assert.equal((await g.tasks.run('fetch-and-give', { containerRef: await g.ref(), item: 'minecraft:oak_log', count: 3, player: 'Alex' })).result.code, 'INVENTORY_FULL');
+});
+
+test('give-item slot picks one of two variants, swapping a main-inventory stack into the hotbar first', async () => {
+  const enchanted = { 'minecraft:enchantments': { levels: { 'minecraft:efficiency': 1 } } };
+  const f = fixture();
+  f.state.inventory = [empty(0), { slot: 1, id: 'minecraft:iron_pickaxe', count: 1, components: {} }, { slot: 12, id: 'minecraft:iron_pickaxe', count: 1, components: enchanted }];
+  f.body.beforeAct = (name, args) => {
+    if (name !== 'swap-inventory') return;
+    const source = f.state.inventory.find(item => item.slot === args.sourceSlot), target = f.state.inventory.find(item => item.slot === args.hotbarSlot);
+    source.slot = args.hotbarSlot; if (target) target.slot = args.sourceSlot;
+  };
+  assert.equal((await f.tasks.run('give-item', { item: 'minecraft:iron_pickaxe', count: 1, player: 'Alex' })).result.code, 'AMBIGUOUS_ITEM');
+  const op = await f.tasks.run('give-item', { item: 'minecraft:iron_pickaxe', count: 1, player: 'Alex', slot: 12 });
+  assert.equal(op.status, 'succeeded');
+  const drop = f.calls.find(call => call.name === 'drop-item');
+  assert.equal(drop.args.slot, 0); assert.deepEqual(drop.args.expectedComponents, enchanted);
+  assert.deepEqual(f.calls.find(call => call.name === 'swap-inventory').args.sourceSlot, 12);
+});
+
 test('own diamonds are never withdrawn from player slots as container contents', async () => {
   const f = fixture(), op = await f.tasks.run('container-withdraw', { containerRef: await f.ref(), item: 'minecraft:diamond', count: 3 });
   assert.equal(op.result.code, 'INSUFFICIENT_ITEMS'); assert.equal(f.calls.some(call => call.name === 'click-slot'), false);

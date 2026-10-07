@@ -89,7 +89,8 @@ test('B actual stdio publishes 21 capability-gated tools and requires server-onl
   assert.ok(!tools.some(tool => ['respawn', 'memory-context'].includes(tool.name)));
   for (const [name, guards] of [
     ['dig-block', ['expectedProperties']], ['open-container', ['expectedProperties']],
-    ['place-block', ['expectedProperties', 'expectedCount', 'expectedComponents']],
+    // place-block fills a left-out stack guard from the slot as observed just before sending; the body still gets full guards.
+    ['place-block', ['expectedProperties']],
     ['click-slot', ['expectedRevision', 'expectedComponents', 'expectedCarriedComponents']],
     ['close-container', ['expectedRevision']], ['select-slot', ['expectedComponents']], ['drop-item', ['count', 'expectedComponents']],
   ]) for (const guard of guards) assert.ok(tools.find(tool => tool.name === name).inputSchema.required.includes(guard), `${name}.${guard}`);

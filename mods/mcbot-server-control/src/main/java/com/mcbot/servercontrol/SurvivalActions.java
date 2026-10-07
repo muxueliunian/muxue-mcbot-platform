@@ -33,7 +33,7 @@ import static com.mcbot.servercontrol.Protocol.*;
 /** Ordinary player packet entry points, with authoritative preconditions and no client prediction. */
 final class SurvivalActions {
     private static final Map<ServerPlayer,NativeDefenseUse> NATIVE_ATTACKS=new IdentityHashMap<>();
-    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","defend-entity");
+    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","defend-entity","use-bucket");
     private final ServerPlayer player;
     private final ControlSession session;
     private final TargetTokens targets;
@@ -240,6 +240,7 @@ final class SurvivalActions {
                 case "defend-entity" -> defend(operation);
                 case "use-item-on-block" -> useOnBlock(operation);
                 case "use-item" -> useItem(operation);
+                case "use-bucket" -> bucket(operation);
                 default -> throw error("UNSUPPORTED","Unknown survival action");
             }
             },()->abort(operation));
@@ -339,18 +340,24 @@ final class SurvivalActions {
         worldAction();JsonObject args=operation.args;BlockPos support=block(args);expectedBlock(args,support);
         Direction face=Direction.byName(string(args,"face"));if(face==null) throw error("INVALID_ARGUMENT","Invalid block face");
         BlockPos target=support.relative(face);
-        if(!player.serverLevel().hasChunkAt(target)||!player.serverLevel().getBlockState(target).isAir()) throw error("TARGET_OCCUPIED","Target must be loaded air");
+        if(!player.serverLevel().hasChunkAt(target)) throw error("TARGET_OCCUPIED","Target must be loaded air");
+        BlockState previous=player.serverLevel().getBlockState(target);
+        // Grass, ferns, snow layers and the like give way to a placed block, as for a player; fluids do not here.
+        boolean replacing=!previous.isAir();
+        if(replacing&&!(previous.canBeReplaced()&&previous.getFluidState().isEmpty())) throw error("TARGET_OCCUPIED","Target must be loaded air or a replaceable plant");
         if(player.serverLevel().getBlockState(support).getMenuProvider(player.serverLevel(),support)!=null) throw error("UNSUPPORTED","Placement against menu blocks is not supported");
         int slot=hotbar(args);ItemStack stack=player.getInventory().getItem(slot);expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
-        if(!(stack.getItem() instanceof BlockItem item)) throw error("UNSUPPORTED","Only ordinary block items can be placed");
+        if(!(stack.getItem() instanceof BlockItem item)) throw error("UNSUPPORTED",stack.getItem() instanceof BucketItem?"Buckets are poured with use-bucket":"Only ordinary block items can be placed");
         if(item.getBlock() instanceof DoorBlock||item.getBlock() instanceof BedBlock||item.getBlock() instanceof DoublePlantBlock) throw error("UNSUPPORTED","Multi-block placement requires a separate action contract");
-        BlockHitResult hit=hit(support,face);int before=stack.getCount();nativeEffects.sent();select(slot);look(hit.getLocation());guard(operation);
+        // A plant in the way is clicked itself (the game then replaces it); its outline would block a ray to the support.
+        BlockHitResult hit=replacing&&!previous.getShape(player.serverLevel(),target).isEmpty()?hit(target,null):hit(support,face);
+        int before=stack.getCount();nativeEffects.sent();select(slot);look(hit.getLocation());guard(operation);
         nativeEffects.sent();player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence));
         ItemStack after=player.getInventory().getItem(slot);BlockState actual=player.serverLevel().getBlockState(target);
         JsonObject result=obj("block",blockSnapshot(target),"inventory",inventory(),"consumedCount",before-after.getCount());
         boolean remainingMatches=after.isEmpty()?before==1:itemId(after).equals(string(args,"expectedItem"))&&components(after).equals(object(args,"expectedComponents"));
         if(actual.is(item.getBlock())&&after.getCount()==before-1&&remainingMatches) operation.finish("succeeded","Native placement and item consumption confirmed",result);
-        else if(actual.isAir()&&after.getCount()==before&&itemId(after).equals(string(args,"expectedItem"))&&components(after).equals(object(args,"expectedComponents"))) operation.finish("failed","FORBIDDEN: Native placement refused without block or inventory change",obj("code","FORBIDDEN","block",blockSnapshot(target),"inventory",inventory()));
+        else if(actual.equals(previous)&&after.getCount()==before&&itemId(after).equals(string(args,"expectedItem"))&&components(after).equals(object(args,"expectedComponents"))) operation.finish("failed","FORBIDDEN: Native placement refused without block or inventory change",obj("code","FORBIDDEN","block",blockSnapshot(target),"inventory",inventory()));
         else operation.finish("unknown","Placement produced a different authoritative state; do not replay",result);
     }
     private JsonObject interactionSnapshot(BlockPos position,ItemInteraction interaction,boolean afterNativeCall) {
@@ -423,6 +430,101 @@ final class SurvivalActions {
         } finally { if(emptyHand) select(previous); }
         finishInteraction(operation,interaction,before,slot,position,null);
     }
+    /**
+     * use-bucket: pour a water bucket into one spot, or fill an empty bucket from a water or lava source, with the
+     * ordinary use-item packet. A bucket acts on whatever the player looks at, so the body first turns until the game's
+     * own ray hits the intended face (a neighbour's face for pouring, the source itself for filling); nothing is sent
+     * when no such view exists within reach. Lava is never poured.
+     */
+    /** Points on one face of a box to try aiming at: its centre, then four points towards its edges. */
+    static List<Vec3> facePoints(AABB box,Direction face) {
+        Vec3 c=aimPoint(box,face);List<Vec3> points=new ArrayList<>(List.of(c));
+        double u=0.3*(face.getAxis()==Direction.Axis.X?box.getZsize():box.getXsize()),v=0.3*(face.getAxis()==Direction.Axis.Y?box.getZsize():box.getYsize());
+        for(int[] s:new int[][]{{1,0},{-1,0},{0,1},{0,-1}}) {
+            double du=s[0]*u,dv=s[1]*v;
+            points.add(switch(face.getAxis()) {
+                case X -> c.add(0,dv,du); case Y -> c.add(du,0,dv); case Z -> c.add(du,dv,0);
+            });
+        }
+        return points;
+    }
+    private void bucket(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;BlockPos target=block(args);
+        String mode=string(args,"action");
+        if(!mode.equals("pour")&&!mode.equals("scoop")) throw error("INVALID_ARGUMENT","action must be pour or scoop");
+        boolean pour=mode.equals("pour");
+        var level=player.serverLevel();
+        if(!level.hasChunkAt(target)) throw error("UNLOADED","Target chunk is not loaded");
+        if(!level.getWorldBorder().isWithinBounds(target)) throw error("FORBIDDEN","Target outside world border");
+        if(!player.inventoryMenu.getCarried().isEmpty()) throw error("BUSY","Bucket use requires an empty own inventory cursor");
+        BlockState state=level.getBlockState(target);var fluid=state.getFluidState();
+        // Where to look: the point to aim at, and the block (and face) the game's ray must hit there.
+        record Aim(Vec3 point,BlockPos hits,Direction face) {}
+        List<Aim> aims=new ArrayList<>();
+        ClipContext.Fluid fluidMode;
+        if(pour) {
+            if(level.dimensionType().ultraWarm()) throw error("UNSUPPORTED","Water boils away in this dimension");
+            if(fluid.isSource()) throw error("TARGET_OCCUPIED","There is already a fluid source there");
+            if(state.getBlock() instanceof LiquidBlockContainer box&&box.canPlaceLiquid(player,level,target,state,net.minecraft.world.level.material.Fluids.WATER)) {
+                var shape=state.getShape(level,target);
+                for(Vec3 point:facePoints(shape.isEmpty()?new AABB(target):shape.bounds().move(target),Direction.UP)) aims.add(new Aim(point,target,null));
+            } else if(state.isAir()||state.canBeReplaced(net.minecraft.world.level.material.Fluids.WATER)) {
+                // Click a neighbour's face that borders the spot, as a player pours into a hole by aiming at its floor or side.
+                for(Direction side:new Direction[]{Direction.DOWN,Direction.NORTH,Direction.SOUTH,Direction.EAST,Direction.WEST,Direction.UP}) {
+                    BlockPos support=target.relative(side);
+                    if(!level.hasChunkAt(support)) continue;
+                    BlockState supportState=level.getBlockState(support);var shape=supportState.getShape(level,support);
+                    // A waterloggable neighbour would take the water itself.
+                    if(shape.isEmpty()||supportState.getBlock() instanceof LiquidBlockContainer) continue;
+                    for(Vec3 point:facePoints(shape.bounds().move(support),side.getOpposite())) aims.add(new Aim(point,support,side.getOpposite()));
+                }
+            } else throw error("TARGET_OCCUPIED","Water can go only into air, a plant or a waterloggable block");
+            fluidMode=ClipContext.Fluid.NONE;
+        } else {
+            if(!fluid.isSource()||!(fluid.is(net.minecraft.tags.FluidTags.WATER)||fluid.is(net.minecraft.tags.FluidTags.LAVA))||!(state.getBlock() instanceof BucketPickup))
+                throw error("NOT_A_SOURCE","No water or lava source block there");
+            // The water surface seen from above: a ray to the middle of the block would graze the bank first.
+            for(Vec3 point:facePoints(fluid.getShape(level,target).bounds().move(target),Direction.UP)) aims.add(new Aim(point,target,null));
+            fluidMode=ClipContext.Fluid.SOURCE_ONLY;
+        }
+        Item use=pour?Items.WATER_BUCKET:Items.BUCKET;
+        var inventory=player.getInventory();
+        int slot=-1;
+        for(int i=0;i<36&&slot<0;i++) if(inventory.getItem(i).is(use)) slot=i;
+        if(slot<0) throw error("MISSING_ITEM",pour?"No water bucket in the inventory":"No empty bucket in the inventory");
+        // Find a view in which the game's own ray hits the intended face before anything is sent.
+        float yaw=player.getYRot(),pitch=player.getXRot();Aim chosen=null;
+        for(Aim aim:aims) {
+            look(aim.point());
+            Vec3 eye=player.getEyePosition();
+            BlockHitResult ray=level.clip(new ClipContext(eye,eye.add(player.getViewVector(1.0F).scale(player.blockInteractionRange())),ClipContext.Block.OUTLINE,fluidMode,player));
+            if(ray.getType()==HitResult.Type.BLOCK&&ray.getBlockPos().equals(aim.hits())&&(aim.face()==null||ray.getDirection()==aim.face())) { chosen=aim;break; }
+        }
+        if(chosen==null) { player.setYRot(yaw);player.setYHeadRot(yaw);player.setXRot(pitch);throw error("NO_LINE_OF_SIGHT","No view of that spot within reach; stand closer, with a clear line to it"); }
+        if(slot>8) {
+            int hotbar=-1;for(int i=0;i<9;i++) if(inventory.getItem(i).isEmpty()) {hotbar=i;break;}
+            if(hotbar<0) hotbar=inventory.selected;
+            nativeEffects.sent();
+            NativeWorkstation.click(player,player.inventoryMenu,NativeWorkstation.menuSlot(player.inventoryMenu,inventory,slot),hotbar,ClickType.SWAP);
+            if(!inventory.getItem(hotbar).is(use)) throw error("UNKNOWN","Could not move the bucket into the hotbar");
+            slot=hotbar;
+        }
+        Item filled=pour?null:fluid.is(net.minecraft.tags.FluidTags.LAVA)?Items.LAVA_BUCKET:Items.WATER_BUCKET;
+        int waterBefore=NativeWorkstation.total(inventory,Items.WATER_BUCKET),emptyBefore=NativeWorkstation.total(inventory,Items.BUCKET),filledBefore=filled==null?0:NativeWorkstation.total(inventory,filled);
+        JsonObject blockBefore=blockSnapshot(target);
+        nativeEffects.sent();select(slot);guard(operation);
+        nativeEffects.sent();player.connection.handleUseItem(new ServerboundUseItemPacket(InteractionHand.MAIN_HAND,++sequence,player.getYRot(),player.getXRot()));
+        JsonObject result=obj("action",mode,"block",blockSnapshot(target),"buckets",obj("water_bucket",NativeWorkstation.total(inventory,Items.WATER_BUCKET),"bucket",NativeWorkstation.total(inventory,Items.BUCKET)));
+        if(filled==Items.LAVA_BUCKET) result.getAsJsonObject("buckets").addProperty("lava_bucket",NativeWorkstation.total(inventory,Items.LAVA_BUCKET));
+        int emptyNow=NativeWorkstation.total(inventory,Items.BUCKET);
+        boolean done=pour
+            ?level.getFluidState(target).isSource()&&level.getFluidState(target).is(net.minecraft.tags.FluidTags.WATER)&&NativeWorkstation.total(inventory,Items.WATER_BUCKET)==waterBefore-1&&emptyNow==emptyBefore+1
+            :NativeWorkstation.total(inventory,filled)==filledBefore+1&&emptyNow==emptyBefore-1;
+        if(done) operation.finish("succeeded",pour?"Poured the water":"Filled a bucket with "+(filled==Items.LAVA_BUCKET?"lava":"water"),result);
+        else if(blockSnapshot(target).equals(blockBefore)&&NativeWorkstation.total(inventory,Items.WATER_BUCKET)==waterBefore&&emptyNow==emptyBefore) {
+            result.addProperty("code","FORBIDDEN");operation.finish("failed","FORBIDDEN: the game refused the bucket (protected area?)",result);
+        } else operation.finish("unknown","The bucket did something else; look before trying again",result);
+    }
     private void useItem(ControlSession.Operation operation) {
         worldAction();JsonObject args=operation.args;
         ItemInteraction interaction=ItemInteractions.require(string(args,"interaction"),ItemInteractions.ITEM);
@@ -448,20 +550,33 @@ final class SurvivalActions {
         if(!NearbyBlocks.ordinaryContainer(state)) throw error("UNSUPPORTED","Only supported storage/furnace blocks may be opened");
         if(state.getMenuProvider(player.serverLevel(),position)==null&&ModAdapters.provider(player,position,state)==null) throw error("UNSUPPORTED","Block exposes no supported native menu provider");
         int empty=-1;for(int i=0;i<9;i++) if(player.getInventory().getItem(i).isEmpty()) {empty=i;break;}
-        if(empty<0) throw error("EMPTY_HAND_REQUIRED","An empty hotbar slot is needed to avoid item-use fallback");
+        int room=-1;if(empty<0) for(int i=9;i<36;i++) if(player.getInventory().getItem(i).isEmpty()) {room=i;break;}
+        if(empty<0&&room<0) throw error("EMPTY_HAND_REQUIRED","An empty hotbar slot is needed to avoid item-use fallback, and the inventory is full");
         BlockHitResult hit=hit(position,null);int previous=player.getInventory().selected;look(hit.getLocation());guard(operation);
         if(token!=null) targets.require(player,token);
+        JsonObject moved=null;
+        if(empty<0) {
+            // Full hotbar: move one stack (not the selected one) into the main inventory to free a hand, as a player would.
+            int free=previous==8?7:8;ItemStack stack=player.getInventory().getItem(free).copy();
+            if(!player.inventoryMenu.getCarried().isEmpty()) throw error("BUSY","The cursor holds an item");
+            nativeEffects.sent();
+            NativeWorkstation.click(player,player.inventoryMenu,NativeWorkstation.menuSlot(player.inventoryMenu,player.getInventory(),room),free,ClickType.SWAP);
+            if(!player.getInventory().getItem(free).isEmpty()||!ItemStack.matches(player.getInventory().getItem(room),stack)) throw error("UNKNOWN","Could not move a hotbar stack aside to free a hand");
+            empty=free;moved=obj("item",itemId(stack),"count",stack.getCount(),"fromSlot",free,"toSlot",room);
+        }
         nativeEffects.sent();select(empty);
         try { player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence)); }
         finally { select(previous); }
-        if(player.containerMenu==player.inventoryMenu) operation.finish("failed","FORBIDDEN: Native menu interaction refused",obj("code","FORBIDDEN"));
-        else if(!standard(player.containerMenu)) { player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));operation.finish("failed","UNSUPPORTED: Native menu requires an adapter",obj("code","UNSUPPORTED")); }
+        final JsonObject aside=moved;
+        java.util.function.UnaryOperator<JsonObject> note=result->{if(aside!=null)result.add("movedAside",aside);return result;};
+        if(player.containerMenu==player.inventoryMenu) operation.finish("failed","FORBIDDEN: Native menu interaction refused",note.apply(obj("code","FORBIDDEN")));
+        else if(!standard(player.containerMenu)) { player.connection.handleContainerClose(new ServerboundContainerClosePacket(player.containerMenu.containerId));operation.finish("failed","UNSUPPORTED: Native menu requires an adapter",note.apply(obj("code","UNSUPPORTED"))); }
         else {
             if(token!=null) {
                 targets.require(player,token);targets.requireMenu(player,target,player.containerMenu);
                 guardedToken=token;guardedTarget=target;guardedMenu=player.containerMenu;
             }
-            operation.finish("succeeded","Native container opened",obj("container",container()));
+            operation.finish("succeeded","Native container opened",note.apply(obj("container",container())));
         }
     }
     private void click(ControlSession.Operation operation) {

@@ -12,6 +12,7 @@ import net.minecraft.network.protocol.game.*;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.InteractionHand;
@@ -36,13 +37,17 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * protection and mods see a player. Crops are recognised by kind: ordinary crops (CropBlock or #minecraft:crops with
  * an age property, modded ones too), nether wart, cocoa, sweet berries (picked, not broken), melons and pumpkins
  * grown from an attached stem (decorative ones are left alone) and sugar cane above its bottom block. Stems,
- * torchflowers and pitcher plants are never broken. survey:true only counts and touches nothing.
+ * torchflowers and pitcher plants are never broken. till:N turns the N moist dirt or grass blocks nearest the centre
+ * (water within 4 blocks) into farmland with a hoe, sown in the same pass when plant is given. survey:true only counts
+ * and touches nothing.
  */
 final class FarmTask {
     enum Kind { CROP, WART, COCOA, BERRY, GOURD, CANE }
     record Crop(BlockPos pos,Kind kind,BlockState state) {}
     /** Put `seed` on `soil`'s `face` so that `pos` becomes `block` (replanting a harvested crop or planting empty farmland). */
     record Plant(BlockPos pos,Item seed,BlockPos soil,Direction face,Block block,boolean replant) {}
+    /** Dirt or grass to turn into farmland with a hoe. */
+    record Till(BlockPos pos) {}
     static final int MAX_RADIUS=16,VERTICAL=3,WALK_MS=10_000;
     private final ControlSession.Operation operation;
     private final BodyPlayer player;
@@ -60,9 +65,11 @@ final class FarmTask {
     private final List<Crop> ripe=new ArrayList<>();
     private final List<Plant> plants=new ArrayList<>();
     private final List<BlockPos> growing=new ArrayList<>();
+    private final List<Till> tills=new ArrayList<>();
     private final Set<BlockPos> unreachable=new HashSet<>();
     private final Map<String,Integer> harvested=new TreeMap<>(),notPlanted=new TreeMap<>();
-    private int replanted,planted,boneMealUsed,sequence,cooldown;
+    private final int till;
+    private int replanted,planted,boneMealUsed,tilled,sequence,cooldown;
     private boolean inventoryFull;
     private long lastHarvest;
     // walking
@@ -82,12 +89,15 @@ final class FarmTask {
         replant=!args.has("replant")||bool(args,"replant");
         plantItem=args.has("plant")?item(string(args,"plant")):null;
         boneMeal=(int)integer(args,"boneMeal",0,0,64);
+        till=(int)integer(args,"till",0,0,64);
         filter=filter(args);
         deadline=now()+(long)bounded(args,"timeoutMs",180_000,5_000,600_000);
         before=ItemDescriptions.counts(player.getInventory());previousSlot=player.getInventory().selected;
         if(center.distanceTo(player.position())>32)throw error("OUT_OF_REACH","The field must be within 32 blocks");
         if(plantItem!=null&&!(plantItem instanceof BlockItem))throw error("INVALID_ARGUMENT",id(plantItem)+" cannot be planted");
+        if(till>0&&!args.has("survey")&&!hasHoe())throw error("NO_HOE","Tilling needs a hoe in the inventory");
     }
+    private boolean hasHoe(){for(int i=0;i<36;i++)if(player.getInventory().getItem(i).is(ItemTags.HOES))return true;return false;}
     private static double integer(JsonObject args,String key,int fallback,int min,int max) {
         double value=bounded(args,key,fallback,min,max);
         if(value!=Math.rint(value))throw error("INVALID_ARGUMENT",key+" must be an integer");
@@ -158,6 +168,13 @@ final class FarmTask {
         ItemStack clone=StationJob.safely(()->state.getBlock().getCloneItemStack(level,pos,state),ItemStack.EMPTY);
         return !clone.isEmpty()&&clone.getItem() instanceof BlockItem item&&item.getBlock()==state.getBlock()?clone.getItem():null;
     }
+    /** Dirt or grass a hoe turns into farmland that stays moist: air above, water within 4 blocks at its level or one up (vanilla hydration). */
+    static boolean tillable(ServerLevel level,BlockPos pos) {
+        BlockState state=level.getBlockState(pos);
+        if(!state.is(Blocks.DIRT)&&!state.is(Blocks.GRASS_BLOCK)||!level.getBlockState(pos.above()).isAir())return false;
+        for(BlockPos near:BlockPos.betweenClosed(pos.offset(-4,0,-4),pos.offset(4,1,4)))if(level.getFluidState(near).is(FluidTags.WATER))return true;
+        return false;
+    }
 
     private List<BlockPos> area() {
         List<BlockPos> found=new ArrayList<>();BlockPos origin=BlockPos.containing(center);
@@ -173,10 +190,11 @@ final class FarmTask {
     }
     /** survey: what is in the field, nothing touched. */
     JsonObject survey() {
-        Map<String,int[]> counts=new TreeMap<>();int emptyFarmland=0;BlockPos nearest=null;
+        Map<String,int[]> counts=new TreeMap<>();int emptyFarmland=0,tillable=0;BlockPos nearest=null;
         for(BlockPos pos:area()) {
             BlockState state=level().getBlockState(pos);
             if(state.getBlock() instanceof FarmBlock&&level().getBlockState(pos.above()).isAir()){emptyFarmland++;continue;}
+            if(tillable(level(),pos)){tillable++;continue;}
             Kind kind=kind(state);if(kind==null||!filter.test(state))continue;
             boolean ready=ripe(level(),pos,state,kind);
             // Melons, pumpkins and cane only count where there is something to take.
@@ -187,7 +205,7 @@ final class FarmTask {
         }
         JsonObject crops=new JsonObject();
         counts.forEach((key,c)->crops.add(key,obj("ripe",c[0],"growing",c[1])));
-        JsonObject result=obj("center",obj("x",center.x,"y",center.y,"z",center.z),"radius",radius,"crops",crops,"emptyFarmland",emptyFarmland);
+        JsonObject result=obj("center",obj("x",center.x,"y",center.y,"z",center.z),"radius",radius,"crops",crops,"emptyFarmland",emptyFarmland,"tillable",tillable);
         if(nearest!=null)result.add("nearestRipe",pos(nearest));
         return result;
     }
@@ -202,9 +220,18 @@ final class FarmTask {
             if(ripe(level(),pos,state,kind))ripe.add(new Crop(pos,kind,state));
             else if(kind==Kind.CROP)growing.add(pos);
         }
+        if(till>0) {
+            // The nearest moist dirt and grass to the centre, as many as asked.
+            List<BlockPos> soil=new ArrayList<>();for(BlockPos pos:area())if(tillable(level(),pos))soil.add(pos);
+            // Rings around the centre block (as area() is laid out), not around a corner of it.
+            BlockPos origin=BlockPos.containing(center);
+            soil.sort(Comparator.comparingDouble(p->{double dx=p.getX()-origin.getX(),dz=p.getZ()-origin.getZ(),dy=p.getY()-origin.getY();return dx*dx+dz*dz+dy*dy*0.01;}));
+            for(BlockPos pos:soil.subList(0,Math.min(till,soil.size())))tills.add(new Till(pos));
+        }
         for(ItemEntity item:level().getEntitiesOfClass(ItemEntity.class,field()))preexisting.add(item.getUUID());
-        if(ripe.isEmpty()&&plants.isEmpty()&&(boneMeal==0||growing.isEmpty())) {
+        if(ripe.isEmpty()&&plants.isEmpty()&&tills.isEmpty()&&(boneMeal==0||growing.isEmpty())) {
             JsonObject result=survey();result.addProperty("nothingToDo",true);
+            if(till>0){result.addProperty("code","NO_TILLABLE");operation.finish("failed","NO_TILLABLE: no dirt or grass here with air above and water within 4 blocks; pour water first",withChange(result));return;}
             operation.finish("succeeded","Nothing ripe to harvest here",withChange(result));
         }
     }
@@ -241,8 +268,8 @@ final class FarmTask {
         if(hit.getType()!=HitResult.Type.BLOCK||!hit.getBlockPos().equals(pos)||face!=null&&hit.getDirection()!=face)return null;
         return eye.distanceTo(hit.getLocation())<=player.blockInteractionRange()-0.25?hit:null;
     }
-    private BlockPos targetOf(Object work){return work instanceof Crop c?c.pos():work instanceof Plant p?p.soil():(BlockPos)work;}
-    private Direction faceOf(Object work){return work instanceof Plant p?p.face():null;}
+    private BlockPos targetOf(Object work){return work instanceof Crop c?c.pos():work instanceof Plant p?p.soil():work instanceof Till t?t.pos():(BlockPos)work;}
+    private Direction faceOf(Object work){return work instanceof Plant p?p.face():work instanceof Till?Direction.UP:null;}
 
     // ---------- the loop ----------
     void tick() {
@@ -264,6 +291,7 @@ final class FarmTask {
         stopWalking();player.stopInput();
         if(work instanceof Crop crop)harvest(crop,hit);
         else if(work instanceof Plant plant)plant(plant,hit);
+        else if(work instanceof Till soil)till(soil,hit);
         else boneMeal((BlockPos)work,hit);
         cooldown=1;
     }
@@ -271,8 +299,10 @@ final class FarmTask {
     private Object choose() {
         ripe.removeIf(c->!level().getBlockState(c.pos()).equals(c.state()));
         plants.removeIf(p->!level().getBlockState(p.pos()).isAir()||!(level().getBlockState(p.soil()).getBlock() instanceof FarmBlock)&&!p.replant());
+        tills.removeIf(t->!tillable(level(),t.pos()));
         List<Object> work=new ArrayList<>();
         for(Crop c:ripe)if(!unreachable.contains(c.pos()))work.add(c);
+        if(!tills.isEmpty()&&hasHoe())for(Till t:tills)if(!unreachable.contains(t.pos()))work.add(t);
         for(Plant p:plants)if(!unreachable.contains(p.soil())&&has(p.seed()))work.add(p);
         Vec3 feet=player.position();
         Object best=null;double bestDistance=Double.MAX_VALUE;
@@ -363,7 +393,7 @@ final class FarmTask {
             skippedDrops.add(item.getUUID());
         } else unreachable.add(targetOf(work));
         if(skippedWhy.size()<8){Vec3 at=work instanceof ItemEntity item?item.position():Vec3.atCenterOf(targetOf(work));
-            skippedWhy.add(obj("what",work instanceof ItemEntity item?"drop "+id(item.getItem()):work instanceof Plant?"plant":work instanceof Crop?"harvest":"bone meal","at",obj("x",Math.round(at.x*10)/10.0,"y",Math.round(at.y*10)/10.0,"z",Math.round(at.z*10)/10.0),"why",why));}
+            skippedWhy.add(obj("what",work instanceof ItemEntity item?"drop "+id(item.getItem()):work instanceof Plant?"plant":work instanceof Crop?"harvest":work instanceof Till?"till":"bone meal","at",obj("x",Math.round(at.x*10)/10.0,"y",Math.round(at.y*10)/10.0,"z",Math.round(at.z*10)/10.0),"why",why));}
         stopWalking();
     }
     private void stopWalking(){if(navigation!=null)navigation.stop();navigation=null;walkingTo=null;}
@@ -430,6 +460,18 @@ final class FarmTask {
         if(level().getBlockState(plant.pos()).is(plant.block())){if(plant.replant())replanted++;else planted++;if(boneMeal>0&&kind(level().getBlockState(plant.pos()))==Kind.CROP)growing.add(plant.pos());}
         else notPlanted.merge("refused by the game",1,Integer::sum);
     }
+    private int tillRefused;
+    private void till(Till soil,BlockHitResult hit) {
+        tills.remove(soil);
+        if(!hold(s->s.is(ItemTags.HOES))){tillRefused++;return;}
+        look(player,hit.getLocation());
+        player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence));
+        BlockPos pos=soil.pos();
+        if(!(level().getBlockState(pos).getBlock() instanceof FarmBlock)){tillRefused++;refused(pos,"till","the game refused");return;}
+        tilled++;
+        // New farmland is sown in the same pass when a seed was given.
+        if(plantItem instanceof BlockItem b)plants.add(new Plant(pos.above(),plantItem,pos,Direction.UP,b.getBlock(),false));
+    }
     private void boneMeal(BlockPos pos,BlockHitResult hit) {
         if(!hold(s->s.is(Items.BONE_MEAL))){boneMeal=0;return;}
         int held=total(player.getInventory(),Items.BONE_MEAL);
@@ -449,6 +491,7 @@ final class FarmTask {
     JsonObject progress() {
         JsonObject result=obj("center",obj("x",center.x,"y",center.y,"z",center.z),"radius",radius,"harvested",harvested,"replanted",replanted);
         if(planted>0||plantItem!=null)result.addProperty("planted",planted);
+        if(till>0){result.addProperty("tilled",tilled);if(tills.size()+tillRefused>0)result.addProperty("notTilled",tills.size()+tillRefused);}
         if(boneMealUsed>0)result.addProperty("boneMealUsed",boneMealUsed);
         Map<String,Integer> waiting=new TreeMap<>(notPlanted);
         for(Plant p:plants)waiting.merge(has(p.seed())?"unreachable":"no "+id(p.seed())+" left",1,Integer::sum);
@@ -465,9 +508,9 @@ final class FarmTask {
         stop();
         JsonObject result=progress();
         int total=harvested.values().stream().mapToInt(Integer::intValue).sum();
-        boolean nothing=total==0&&replanted==0&&planted==0&&boneMealUsed==0;
-        if(nothing){result.addProperty("code",early!=null?"TIMEOUT":"UNREACHABLE");operation.finish("failed",(early!=null?"TIMEOUT: ":"UNREACHABLE: ")+(early!=null?early:"could not reach any ripe crop"),result);return;}
-        operation.finish("succeeded",(early!=null?early+"; ":"")+"Harvested "+total+", replanted "+replanted+(planted>0?", planted "+planted:"")+(boneMealUsed>0?", bone meal "+boneMealUsed:""),result);
+        boolean nothing=total==0&&replanted==0&&planted==0&&boneMealUsed==0&&tilled==0;
+        if(nothing){result.addProperty("code",early!=null?"TIMEOUT":"UNREACHABLE");operation.finish("failed",(early!=null?"TIMEOUT: ":"UNREACHABLE: ")+(early!=null?early:"could not reach any of the work"),result);return;}
+        operation.finish("succeeded",(early!=null?early+"; ":"")+"Harvested "+total+", replanted "+replanted+(tilled>0?", tilled "+tilled:"")+(planted>0?", planted "+planted:"")+(boneMealUsed>0?", bone meal "+boneMealUsed:""),result);
     }
     void stop() {
         if(digging!=null){abortDig(digging,digFace);digging=null;}

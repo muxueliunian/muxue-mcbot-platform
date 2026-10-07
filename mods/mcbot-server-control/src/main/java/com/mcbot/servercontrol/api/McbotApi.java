@@ -2,7 +2,8 @@ package com.mcbot.servercontrol.api;
 
 import java.util.*;
 import java.util.regex.Pattern;
-import net.neoforged.fml.ModList;
+import com.mcbot.servercontrol.api.workstation.WorkstationAdapter;
+import com.mcbot.servercontrol.platform.LoaderPlatform;
 
 /**
  * Entry point for add-on mods that teach MCBOT about another mod's blocks, menus and right-click interactions.
@@ -19,6 +20,7 @@ public final class McbotApi {
     private static final List<ContainerAdapter> CONTAINERS = new ArrayList<>();
     private static final List<ItemInteraction> INTERACTIONS = new ArrayList<>();
     private static final List<PickupSink> PICKUP_SINKS = new ArrayList<>();
+    private static final List<WorkstationAdapter> WORKSTATIONS = new ArrayList<>();
     private static final Set<String> IDS = new HashSet<>();
     private static boolean frozen;
 
@@ -44,6 +46,14 @@ public final class McbotApi {
         IDS.add(id);
     }
 
+    /** A workstation (crafting grid, machine) for craft-item, smelt-item and later workstation tools; see {@link WorkstationAdapter}. */
+    public static synchronized void registerWorkstation(WorkstationAdapter adapter) {
+        String id = checkId(Objects.requireNonNull(adapter, "adapter").id());
+        Objects.requireNonNull(adapter.template(), "template");
+        WORKSTATIONS.add(adapter);
+        IDS.add(id);
+    }
+
     private static String checkId(String id) {
         if (frozen) throw new IllegalStateException("MCBOT adapter registry is frozen; register from the mod constructor or common setup");
         if (id == null || !ID.matcher(id).matches()) throw new IllegalArgumentException("Adapter id must look like namespace:path, got " + id);
@@ -51,15 +61,26 @@ public final class McbotApi {
         return id;
     }
 
-    /** Installed version of a mod, or "" when it is absent. */
+    /** Pinned loader versions by loader name; a loader not listed here is not supported. */
+    private static final Map<String, String> LOADERS = Map.of("neoforge", NEOFORGE);
+
+    /** Installed version of a mod, or "" when it is absent (or the loader is not up yet). */
     public static String modVersion(String modId) {
-        ModList list = ModList.get();
-        return list == null ? "" : list.getModContainerById(modId).map(c -> c.getModInfo().getVersion().toString()).orElse("");
+        LoaderPlatform platform = LoaderPlatform.installedOrNull();
+        return platform == null ? "" : platform.modVersion(modId);
+    }
+
+    /** True when the game and the running loader are the pinned platform versions. */
+    public static boolean platformMatches() {
+        LoaderPlatform platform = LoaderPlatform.installedOrNull();
+        if (platform == null || !MINECRAFT.equals(platform.modVersion("minecraft"))) return false;
+        String pinned = LOADERS.get(platform.loader());
+        return pinned != null && pinned.equals(platform.modVersion(platform.loaderModId()));
     }
 
     /** True only when the mod has exactly this version and the game and loader are the pinned platform versions. */
     public static boolean versionsMatch(String modId, String version) {
-        return version.equals(modVersion(modId)) && MINECRAFT.equals(modVersion("minecraft")) && NEOFORGE.equals(modVersion("neoforge"));
+        return version.equals(modVersion(modId)) && platformMatches();
     }
 
     /** Thrown from {@link ItemInteraction#precondition}; the code reaches the agent (INTERACTION_NOT_READY or UNSUPPORTED). */
@@ -73,8 +94,8 @@ public final class McbotApi {
     /** Snapshot of what add-ons registered. Internal: called by MCBOT when a server starts. */
     public static synchronized Registered freeze() {
         frozen = true;
-        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS));
+        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS));
     }
 
-    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks) {}
+    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations) {}
 }

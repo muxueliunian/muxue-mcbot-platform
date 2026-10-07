@@ -40,5 +40,17 @@ tasks.register('controlTest', JavaExec) {
     mainClass = 'com.mcbot.servercontrol.ControlSessionTest'
     jvmArgs '-ea'
 }
-tasks.named('check') { dependsOn 'controlTest' }
+// Only these loader files may use NeoForge classes; everything else stays vanilla-only so a Fabric build can share it
+// (docs/workstation_design.md, "加载器和版本").
+def loaderFiles = ['McbotServerControl.java', 'NeoForgePlatform.java', 'ServerController.java', 'SurvivalActions.java',
+                   'ValidationProtection.java', 'RespawnValidationFixture.java', 'IronFurnaceAdapter.java']
+tasks.register('loaderNeutralCheck') {
+    def sources = fileTree('src/main/java') { include '**/*.java' }
+    inputs.files sources
+    doLast {
+        def bad = sources.files.findAll { !loaderFiles.contains(it.name) && it.getText('UTF-8').contains('net.neoforged') }.collect { it.name }.sort()
+        if (bad) throw new GradleException("NeoForge classes outside the loader files: ${bad}")
+    }
+}
+tasks.named('check') { dependsOn 'controlTest', 'loaderNeutralCheck' }
 tasks.named('test') { enabled = false }

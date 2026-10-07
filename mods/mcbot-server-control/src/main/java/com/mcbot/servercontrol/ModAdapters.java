@@ -5,6 +5,9 @@ import com.mcbot.servercontrol.api.ContainerAdapter;
 import com.mcbot.servercontrol.api.ItemInteraction;
 import com.mcbot.servercontrol.api.McbotApi;
 import com.mcbot.servercontrol.api.PickupSink;
+import com.mcbot.servercontrol.api.workstation.Template;
+import com.mcbot.servercontrol.api.workstation.WorkstationAdapter;
+import net.minecraft.core.registries.BuiltInRegistries;
 import java.nio.file.Path;
 import java.util.*;
 import net.minecraft.core.BlockPos;
@@ -30,6 +33,7 @@ final class ModAdapters {
     private static final List<ItemInteraction> BUILTIN_INTERACTIONS=List.of(ItemInteractions.COMPOSTER);
     // Before a server starts only the built-ins are known; installed containers are resolved lazily then.
     private static volatile Loaded loaded=null;
+    private static volatile List<WorkstationAdapter> addonWorkstations=List.of();
 
     /** Freezes add-on registration and loads JSON interactions from {@code <config>/interactions}. */
     static synchronized Loaded load(Path configDirectory) {
@@ -37,7 +41,9 @@ final class ModAdapters {
         List<String> problems=new ArrayList<>();
         List<ItemInteraction> fromJson=JsonInteractions.loadDirectory(configDirectory.resolve("interactions"),problems);
         Loaded combined=combine(BUILTIN_CONTAINERS,registered.containers(),BUILTIN_INTERACTIONS,fromJson,registered.interactions(),problems);
-        loaded=new Loaded(combined.containers(),combined.interactions(),combined.problems(),installedSinks(registered.pickupSinks()));
+        Set<String> ids=new HashSet<>();for(var a:combined.containers())ids.add(safeId(a::id));for(var i:combined.interactions())ids.add(safeId(i::id));
+        addonWorkstations=workstations(registered.workstations(),ids,problems);
+        loaded=new Loaded(combined.containers(),combined.interactions(),List.copyOf(problems),installedSinks(registered.pickupSinks()));
         return loaded;
     }
 
@@ -67,6 +73,31 @@ final class ModAdapters {
     }
     private static boolean installed(java.util.function.BooleanSupplier check) {
         try { return check.getAsBoolean(); } catch(RuntimeException | LinkageError broken) { return false; }
+    }
+
+    /** Add-on workstations that are installed, with unique ids not taken by a built-in or another adapter. */
+    static List<WorkstationAdapter> workstations(List<WorkstationAdapter> addons,Set<String> taken,List<String> problems) {
+        Set<String> seen=new HashSet<>(taken);for(WorkstationAdapter a:VanillaWorkstations.ALL)seen.add(a.id());seen.add(VanillaWorkstations.INVENTORY.id());
+        List<WorkstationAdapter> result=new ArrayList<>();
+        for(WorkstationAdapter adapter:addons) {
+            String id=safeId(adapter::id);
+            if(id==null) { problems.add("workstation adapter with a broken id() skipped");continue; }
+            if(!seen.add(id)) { problems.add("duplicate adapter id "+id+" skipped");continue; }
+            if(installed(adapter::installed)) result.add(adapter);
+        }
+        return List.copyOf(result);
+    }
+    static List<String> workstationIds() {List<String> ids=new ArrayList<>();for(var a:VanillaWorkstations.ALL)ids.add(a.id());for(var a:addonWorkstations)ids.add(safeId(a::id));return ids;}
+    /**
+     * The workstation adapter for a block state and template, or null. Vanilla blocks only ever match the built-in
+     * adapters; add-ons are asked about other blocks only. An adapter that throws does not match.
+     */
+    static WorkstationAdapter workstation(BlockState state,Template template) {
+        boolean vanilla=BuiltInRegistries.BLOCK.getKey(state.getBlock()).getNamespace().equals("minecraft");
+        for(WorkstationAdapter adapter:vanilla?VanillaWorkstations.ALL:addonWorkstations) {
+            try { if(adapter.template()==template&&adapter.block(state)) return adapter; } catch(RuntimeException | LinkageError broken) { /* not a match */ }
+        }
+        return null;
     }
 
     static List<PickupSink> installedSinks(List<PickupSink> sinks) {

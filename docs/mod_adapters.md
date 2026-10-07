@@ -84,6 +84,8 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
   `kind` 为 `item` 时是对空使用物品，比如打开背包，AI 用 `use-item` 调用。手上物品会被 Mod 改写的（比如背包第一次打开时写上存储 ID），在 `Expected` 的 `heldComponents` 里列出允许变化的组件名，再在 `consistent` 里核对具体的值。
 - `PickupSink`：有些 Mod 会在原版拾取之前把掉落物直接收进玩家身上的存储，并取消原版拾取（比如背包的拾取升级），这时没有原版的拾取事件。MCBOT 在拾取前后各调用一次 `stored`，读出这类存储里每种物品的数量。只有"被吃掉的那种物品在某一个存储里正好多了吃掉的数量，其他都没变"时，才把这次拾取记下来，回执里用 `storedIn` 写明去处。对不上就记为 `PICKUP_UNKNOWN`，并在拾取收据里留一个缺口。用 `McbotApi.registerPickupSink` 登记。
 
+- `WorkstationAdapter`（`api.workstation` 包，10-07 新增，[设计](workstation_design.md)）：工作站。适配者只说明是哪个方块和界面、哪个格子是什么端口（原料、燃料、成品等）、配方从哪来、用哪种执行模板（`GRID_CRAFTER` 合成网格、`PROCESSOR` 放料→等→取的机器）；走过去、开界面、点格子、等待和核对都由核心做。登记后 `craft-item`、`smelt-item` 会自动用上。原版方块只由内置适配处理，附属模组不能接管。用 `McbotApi.registerWorkstation` 登记。这个包只用原版和 JDK 类型，以后的 Fabric 版也用同一套接口。
+
 在附属模组的构造函数里登记：
 
 ```java

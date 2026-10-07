@@ -131,7 +131,7 @@ final class JsonInteractions {
             public String id() {return rule.id();}
             public String kind() {return BLOCK;}
             public boolean installed() {
-                if(rule.requires().isEmpty()) return McbotApi.MINECRAFT.equals(McbotApi.modVersion("minecraft"))&&McbotApi.NEOFORGE.equals(McbotApi.modVersion("neoforge"));
+                if(rule.requires().isEmpty()) return McbotApi.platformMatches();
                 return rule.requires().entrySet().stream().allMatch(e->McbotApi.versionsMatch(e.getKey(),e.getValue()));
             }
             public boolean block(BlockState state) {return rule.matchesBlock(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());}

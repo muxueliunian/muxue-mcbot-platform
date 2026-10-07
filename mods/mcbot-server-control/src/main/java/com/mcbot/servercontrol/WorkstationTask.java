@@ -1,6 +1,7 @@
 package com.mcbot.servercontrol;
 
 import com.google.gson.*;
+import com.mcbot.servercontrol.api.workstation.*;
 import java.util.*;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -11,7 +12,6 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.*;
 import net.minecraft.world.item.*;
-import net.minecraft.world.item.crafting.*;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.*;
@@ -19,27 +19,30 @@ import static com.mcbot.servercontrol.Protocol.*;
 import static com.mcbot.servercontrol.NativeWorkstation.*;
 
 /**
- * craft-item and smelt-item: one operation that walks to the workstation when needed (crafting table within 16
- * blocks; furnace, smoker or blast furnace that can cook the input), opens it like a player and does the slot work
- * in the same tick (NativeWorkstation). smelt-item with wait keeps the furnace open, standing beside it, until the
- * input is cooked, then takes the output. Without a table nearby a 3x3 recipe may place one from the inventory.
+ * craft-item and smelt-item: one operation that walks to the workstation when needed (a crafting grid within 16
+ * blocks; a processor that can cook the input), opens it like a player and does the slot work in the same tick
+ * (NativeWorkstation). Stations are found and driven through their {@link WorkstationAdapter} (vanilla ones are
+ * built in, see VanillaWorkstations): the adapter says which block and menu it is and which slot is which port.
+ * smelt-item with wait keeps the machine open, standing beside it, until the input is done, then takes the output.
+ * Without a crafting grid nearby a 3x3 recipe may place a crafting table from the inventory.
  */
 final class WorkstationTask {
     static final int SEARCH=16,VERTICAL=4;
+    private record Station(BlockPos pos,WorkstationAdapter adapter) {}
     private final ControlSession.Operation operation;
     private final BodyPlayer player;
     private final ControlSession session;
     private final boolean crafting;
-    private final Deque<BlockPos> stations=new ArrayDeque<>();
+    private final Deque<Station> stations=new ArrayDeque<>();
     private final JsonArray skipped=new JsonArray();
     private final Map<String,Integer> before;
     private NativeNavigation navigation;
-    private BlockPos station;
+    private Station station;
     private long deadline;
     // crafting
     private Item wanted;
     private int count;
-    private List<Plan> plans;
+    private List<StationRecipe> plans;
     // smelting
     private Item input,fuel;
     private boolean wait,collectOnly;
@@ -47,6 +50,7 @@ final class WorkstationTask {
     private JsonObject loaded;
     private long waitUntil;
     private AbstractContainerMenu furnace;
+    private StationLayout furnaceLayout;
     private Item output;
 
     private WorkstationTask(ControlSession.Operation operation,BodyPlayer player,ControlSession session) {
@@ -70,41 +74,60 @@ final class WorkstationTask {
         return (int)value;
     }
     private static long now(){return System.nanoTime()/1_000_000;}
+    private BlockState state(BlockPos pos){return player.serverLevel().getBlockState(pos);}
+    /** The adapter for a block, with its own checks failing closed. */
+    private static <T> T safely(java.util.function.Supplier<T> call,T fallback) {
+        try { return call.get(); } catch(RuntimeException | LinkageError broken) { return fallback; }
+    }
 
     // ---------- craft ----------
+    private List<StationRecipe> recipesAt(WorkstationAdapter adapter,BlockState state) {
+        return safely(()->adapter.recipes(state).producing(player,wanted),List.of());
+    }
     private void beginCraft() {
         JsonObject args=operation.args;wanted=item(string(args,"item"));count=integer(args,"count",1,1,256);
         deadline=now()+(long)bounded(args,"timeoutMs",30_000,1000,120_000);
-        plans=NativeWorkstation.plans(player,wanted);
-        if(plans.isEmpty())throw error("NO_RECIPE","No ordinary crafting recipe makes "+id(wanted));
+        WorkstationAdapter own=VanillaWorkstations.INVENTORY;
+        plans=recipesAt(own,null);
         Inventory inventory=player.getInventory();
         // The body's own 2x2 grid first, when a small recipe can be laid out now.
-        for(Plan plan:plans)if(plan.fits(2)&&feasible(plan,inventory,1)>0){craftIn(player.inventoryMenu,2,plan,null);return;}
-        Plan table=null;for(Plan plan:plans)if(feasible(plan,inventory,1)>0){table=plan;break;}
-        if(table==null)throw missingError();
-        for(BlockPos pos:nearby(state->state.is(Blocks.CRAFTING_TABLE)))stations.add(pos);
+        StationLayout grid=own.layout(player.inventoryMenu);
+        if(grid!=null)for(StationRecipe plan:plans)if(plan.fits(grid.gridWidth(),grid.gridHeight())&&feasible(plan,inventory,1)>0){craftIn(player.inventoryMenu,grid,plans,null);return;}
+        for(BlockPos pos:nearby(state->ModAdapters.workstation(state,Template.GRID_CRAFTER)!=null)) {
+            WorkstationAdapter adapter=ModAdapters.workstation(state(pos),Template.GRID_CRAFTER);
+            if(adapter!=null)stations.add(new Station(pos,adapter));
+        }
+        // Some nearby grid (or the vanilla recipes for a table we could place) must be able to make it now.
+        boolean feasibleSomewhere=false;List<StationRecipe> all=new ArrayList<>(plans);
+        for(Station s:stations)for(StationRecipe plan:recipesAt(s.adapter(),state(s.pos()))){all.add(plan);if(feasible(plan,inventory,1)>0)feasibleSomewhere=true;}
+        if(stations.isEmpty())for(StationRecipe plan:plans)if(feasible(plan,inventory,1)>0)feasibleSomewhere=true;
+        if(!feasibleSomewhere){stations.clear();throw missingError(all.isEmpty()?plans:all);}
         if(stations.isEmpty()) {
             BlockPos placed=placeTable();
             if(placed==null)throw error("NO_CRAFTING_TABLE","This recipe needs a crafting table (3x3); none within 16 blocks and none in the inventory to place");
-            stations.add(placed);
+            stations.add(new Station(placed,VanillaWorkstations.CRAFTING_TABLE));
         }
         next();
     }
-    private Protocol.Error missingError() {
-        Plan best=null;JsonArray shortest=null;int crafts=(count+plans.getFirst().result().getCount()-1)/plans.getFirst().result().getCount();
-        for(Plan plan:plans){JsonArray m=missing(plan,player.getInventory(),crafts);if(shortest==null||m.size()<shortest.size()){best=plan;shortest=m;}}
-        failureDetail=obj("recipe",best.id().toString(),"needsTable",!best.fits(2),"missing",shortest);
+    private Protocol.Error missingError(List<StationRecipe> recipes) {
+        if(recipes.isEmpty())return error("NO_RECIPE","No ordinary crafting recipe makes "+id(wanted));
+        StationRecipe best=null;JsonArray shortest=null;
+        for(StationRecipe plan:recipes){int crafts=(count+plan.result().getCount()-1)/plan.result().getCount();JsonArray m=missing(plan,player.getInventory(),crafts);if(shortest==null||m.size()<shortest.size()){best=plan;shortest=m;}}
+        failureDetail=obj("recipe",best.id().toString(),"needsTable",!best.fits(2,2),"missing",shortest);
         return error("MISSING_MATERIALS","Not enough materials for "+id(wanted)+": "+shortest);
     }
     JsonObject failureDetail;
-    private void craftIn(AbstractContainerMenu menu,int grid,Plan first,BlockPos table) {
-        Inventory inventory=player.getInventory();int perCraft=first.result().getCount();int crafts=(count+perCraft-1)/perCraft,done=0;
+    private void craftIn(AbstractContainerMenu menu,StationLayout layout,List<StationRecipe> recipes,BlockPos table) {
+        Inventory inventory=player.getInventory();StationRecipe first=null;
+        for(StationRecipe plan:recipes)if(plan.fits(layout.gridWidth(),layout.gridHeight())&&feasible(plan,inventory,1)>0){first=plan;break;}
+        if(first==null){if(menu!=player.inventoryMenu)closeMenu(player);throw missingError(recipes);}
+        int perCraft=first.result().getCount();int crafts=(count+perCraft-1)/perCraft,done=0;
         String used=null;
         try {
-            for(Plan plan:plans) {
+            for(StationRecipe plan:recipes) {
                 if(done>=crafts)break;
-                if(!plan.fits(grid)||feasible(plan,inventory,1)==0)continue;
-                int made=craft(player,menu,grid,plan,crafts-done);
+                if(!plan.fits(layout.gridWidth(),layout.gridHeight())||feasible(plan,inventory,1)==0)continue;
+                int made=craft(player,menu,layout,plan,crafts-done);
                 if(made>0)used=plan.id().toString();
                 done+=made;
             }
@@ -113,7 +136,7 @@ final class WorkstationTask {
         if(table!=null)result.add("table",pos(table));
         if(placedTable!=null)result.add("placedTable",pos(placedTable));
         if(done<crafts){
-            Plan plan=first;JsonArray short_=missing(plan,inventory,crafts-done);
+            JsonArray short_=missing(first,inventory,crafts-done);
             result.add("missing",short_);
             if(done==0){result.addProperty("code",short_.isEmpty()?"INVENTORY_FULL":"MISSING_MATERIALS");operation.finish("failed",(short_.isEmpty()?"INVENTORY_FULL":"MISSING_MATERIALS")+": crafted nothing",result);return;}
             operation.finish("succeeded","Crafted "+done*perCraft+" of "+count+"; the rest is short of materials",result);return;
@@ -156,6 +179,9 @@ final class WorkstationTask {
     }
 
     // ---------- smelt ----------
+    private Optional<StationRecipe> recipeFor(WorkstationAdapter adapter,BlockState state,Item item) {
+        return safely(()->adapter.recipes(state).forInput(player,new ItemStack(item)),Optional.empty());
+    }
     private void beginSmelt() {
         JsonObject args=operation.args;
         collectOnly=!args.has("input");
@@ -169,79 +195,85 @@ final class WorkstationTask {
         }
         if(args.has("furnace")) {
             JsonObject at=object(args,"furnace");BlockPos pos=new BlockPos((int)number(at,"x"),(int)number(at,"y"),(int)number(at,"z"));
-            if(!player.serverLevel().hasChunkAt(pos)||cookingType(player.serverLevel().getBlockState(pos))==null)throw error("NOT_A_FURNACE","No furnace, smoker or blast furnace there");
-            stations.add(pos);
-        } else for(BlockPos pos:nearby(state->{var type=cookingType(state);return type!=null&&(collectOnly||cooking(player,type,new ItemStack(input)).isPresent());}))stations.add(pos);
+            WorkstationAdapter adapter=player.serverLevel().hasChunkAt(pos)?ModAdapters.workstation(state(pos),Template.PROCESSOR):null;
+            if(adapter==null)throw error("NOT_A_FURNACE","No furnace, smoker or blast furnace there");
+            stations.add(new Station(pos,adapter));
+        } else for(BlockPos pos:nearby(state->{var adapter=ModAdapters.workstation(state,Template.PROCESSOR);return adapter!=null&&(collectOnly||recipeFor(adapter,state,input).isPresent());}))
+            stations.add(new Station(pos,ModAdapters.workstation(state(pos),Template.PROCESSOR)));
         if(stations.isEmpty())throw error("NO_FURNACE",collectOnly?"No furnace within 16 blocks":"No furnace, smoker or blast furnace within 16 blocks can cook "+id(input));
         next();
     }
-    private void smeltAt(BlockPos pos) {
-        AbstractContainerMenu menu=player.containerMenu;
-        if(!(menu instanceof AbstractFurnaceMenu))throw error("UNKNOWN","Opened something that is not a furnace");
+    private void smeltAt(Station at) {
+        AbstractContainerMenu menu=player.containerMenu;BlockPos pos=at.pos();WorkstationAdapter adapter=at.adapter();BlockState block=state(pos);
+        StationLayout layout=safely(()->adapter.menu(menu)?adapter.layout(menu):null,null);
+        int inputSlot=layout==null?-1:layout.slot(Port.INGREDIENT),fuelSlotIndex=layout==null?-1:layout.slot(Port.FUEL),outputSlot=layout==null?-1:layout.slot(Port.RESULT);
+        if(inputSlot<0||outputSlot<0){closeMenu(player);skipped.add(obj("furnace",pos(pos),"reason","menu not recognised"));next();return;}
         Inventory inventory=player.getInventory();
-        RecipeType<? extends AbstractCookingRecipe> type=cookingType(player.serverLevel().getBlockState(pos));
-        ItemStack inSlot=menu.getSlot(0).getItem();
+        ItemStack inSlot=menu.getSlot(inputSlot).getItem();
         if(!collectOnly&&!inSlot.isEmpty()&&!inSlot.is(input)) { closeMenu(player);skipped.add(obj("furnace",pos(pos),"reason","busy with "+id(inSlot)));next();return; }
-        ItemStack outSlot=menu.getSlot(2).getItem();
+        ItemStack outSlot=menu.getSlot(outputSlot).getItem();
         output=outSlot.isEmpty()?null:outSlot.getItem();
-        int taken=takeOutput(menu);
-        if(collectOnly) { closeMenu(player);finishSmelt(pos,obj("collected",taken),"Collected "+taken+" from the furnace");return; }
-        var recipe=cooking(player,type,new ItemStack(input));
+        int taken=takeOutput(menu,outputSlot);
+        if(collectOnly) { closeMenu(player);finishSmelt(obj("collected",taken),"Collected "+taken+" from the furnace");return; }
+        var recipe=recipeFor(adapter,block,input);
         if(recipe.isEmpty()){closeMenu(player);skipped.add(obj("furnace",pos(pos),"reason","cannot cook "+id(input)));next();return;}
-        output=recipe.get().value().getResultItem(player.registryAccess()).getItem();
-        int cookTime=recipe.get().value().getCookingTime();
+        output=recipe.get().result().getItem();
+        int cookTime=recipe.get().ticks();
+        java.util.function.ToIntFunction<ItemStack> burn=stack->safely(()->adapter.burnTicks(block,stack),0);
         // Input: from plain stacks, up to the slot's room.
         int room=Math.min(count,input.getDefaultMaxStackSize()-inSlot.getCount()),put=0;
-        for(int i=0;i<36&&put<room;i++){ItemStack s=inventory.getItem(i);if(plain(s)&&s.is(input))put+=transfer(player,menu,i,0,room-put);}
-        int queued=menu.getSlot(0).getItem().getCount();
+        for(int i=0;i<36&&put<room;i++){ItemStack s=inventory.getItem(i);if(plain(s)&&s.is(input))put+=transfer(player,menu,i,inputSlot,room-put);}
+        int queued=menu.getSlot(inputSlot).getItem().getCount();
         // Fuel: enough burn time for everything queued; a lit furnace's current burn is not counted (at most one item extra).
-        ItemStack fuelSlot=menu.getSlot(1).getItem();
-        int needTicks=queued*cookTime-(fuelSlot.isEmpty()?0:fuelSlot.getCount()*fuelSlot.getBurnTime(type)),fuelPut=0;
-        String fuelId=fuelSlot.isEmpty()?null:id(fuelSlot);int perFuel=fuelSlot.isEmpty()?0:fuelSlot.getBurnTime(type);
+        ItemStack fuelSlot=fuelSlotIndex<0?ItemStack.EMPTY:menu.getSlot(fuelSlotIndex).getItem();
+        int needTicks=fuelSlotIndex<0?0:queued*cookTime-(fuelSlot.isEmpty()?0:fuelSlot.getCount()*burn.applyAsInt(fuelSlot)),fuelPut=0;
+        String fuelId=fuelSlot.isEmpty()?null:id(fuelSlot);
         if(needTicks>0) {
             int best=-1;
             if(fuelSlot.isEmpty()) {
                 int bestRank=Integer.MAX_VALUE;
-                for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);int rank=fuel!=null?(plain(s)&&s.is(fuel)&&s.getBurnTime(type)>0?0:-1):fuelRank(s,input,type);if(rank>=0&&rank<bestRank){bestRank=rank;best=i;}}
+                for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);int ticks=s.isEmpty()?0:burn.applyAsInt(s);int rank=fuel!=null?(plain(s)&&s.is(fuel)&&ticks>0?0:-1):fuelRank(s,input,ticks);if(rank>=0&&rank<bestRank){bestRank=rank;best=i;}}
             } else for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);if(plain(s)&&ItemStack.isSameItemSameComponents(s,fuelSlot)){best=i;break;}}
             if(best>=0) {
-                Item kind=inventory.getItem(best).getItem();perFuel=inventory.getItem(best).getBurnTime(type);fuelId=id(kind);
+                Item kind=inventory.getItem(best).getItem();int perFuel=burn.applyAsInt(inventory.getItem(best));fuelId=id(kind);
                 int wantFuel=(needTicks+perFuel-1)/perFuel;
-                for(int i=0;i<36&&fuelPut<wantFuel;i++){ItemStack s=inventory.getItem(i);if(plain(s)&&s.is(kind))fuelPut+=transfer(player,menu,i,1,wantFuel-fuelPut);}
+                for(int i=0;i<36&&fuelPut<wantFuel;i++){ItemStack s=inventory.getItem(i);if(plain(s)&&s.is(kind))fuelPut+=transfer(player,menu,i,fuelSlotIndex,wantFuel-fuelPut);}
             }
         }
-        ItemStack fuelNow=menu.getSlot(1).getItem();
-        int coveredTicks=fuelNow.isEmpty()?0:fuelNow.getCount()*fuelNow.getBurnTime(type);
-        boolean lit=((AbstractFurnaceMenu)menu).isLit();
-        int coveredItems=Math.min(queued,cookTime<=0?queued:coveredTicks/cookTime+(lit?1:0));
-        loaded=obj("furnace",pos(pos),"type",BuiltInRegistries.BLOCK.getKey(player.serverLevel().getBlockState(pos).getBlock()).toString(),"input",id(input),"added",put,"queued",queued,
+        ItemStack fuelNow=fuelSlotIndex<0?ItemStack.EMPTY:menu.getSlot(fuelSlotIndex).getItem();
+        int coveredTicks=fuelNow.isEmpty()?0:fuelNow.getCount()*burn.applyAsInt(fuelNow);
+        boolean lit=safely(()->adapter.working(menu),false);
+        int coveredItems=fuelSlotIndex<0?queued:Math.min(queued,cookTime<=0?queued:coveredTicks/cookTime+(lit?1:0));
+        loaded=obj("furnace",pos(pos),"type",BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString(),"input",id(input),"added",put,"queued",queued,
             "output",id(output),"cookSeconds",cookTime/20.0,"readyInSeconds",queued*cookTime/20.0,"fuel",fuelId,"fuelAdded",fuelPut,"coveredByFuel",coveredItems);
         if(taken>0)loaded.addProperty("collectedBefore",taken);
         collected=taken;
-        if(put==0&&queued==0){closeMenu(player);finishSmelt(pos,loaded,"Nothing was put in");return;}
+        if(put==0&&queued==0){closeMenu(player);finishSmelt(loaded,"Nothing was put in");return;}
         if(coveredItems<queued&&!lit)loaded.addProperty("fuelShortItems",queued-coveredItems);
         if(coveredItems==0&&!lit){closeMenu(player);loaded.addProperty("code","NO_FUEL");operation.finish("failed","NO_FUEL: the input is in the furnace but there is no fuel for it",withChange(loaded));station=null;return;}
-        if(!wait){closeMenu(player);finishSmelt(pos,loaded,"Loaded "+put+" "+id(input)+"; ready in about "+Math.round(queued*cookTime/20.0)+" s; come back with smelt-item collect");return;}
-        furnace=menu;expectedOutput=coveredItems;waitUntil=Math.min(deadline,now()+(long)(queued*cookTime*50L)+10_000);
+        if(!wait){closeMenu(player);finishSmelt(loaded,"Loaded "+put+" "+id(input)+"; ready in about "+Math.round(queued*cookTime/20.0)+" s; come back with smelt-item collect");return;}
+        furnace=menu;furnaceLayout=layout;expectedOutput=coveredItems;waitUntil=Math.min(deadline,now()+(long)(queued*cookTime*50L)+10_000);
     }
-    private int takeOutput(AbstractContainerMenu menu) {
-        ItemStack out=menu.getSlot(2).getItem();if(out.isEmpty())return 0;
+    private int takeOutput(AbstractContainerMenu menu,int slot) {
+        ItemStack out=menu.getSlot(slot).getItem();if(out.isEmpty())return 0;
         Item kind=out.getItem();int beforeCount=total(player.getInventory(),kind);
-        quickMove(player,menu,2);
+        quickMove(player,menu,slot);
         return total(player.getInventory(),kind)-beforeCount;
     }
     private JsonObject withChange(JsonObject result){result.add("inventoryChange",delta(before,counts(player.getInventory())));if(skipped.size()>0)result.add("skipped",skipped);return result;}
-    private void finishSmelt(BlockPos pos,JsonObject result,String summary){operation.finish("succeeded",summary,withChange(result));station=null;}
+    private void finishSmelt(JsonObject result,String summary){operation.finish("succeeded",summary,withChange(result));station=null;}
     private void tickWait() {
         if(player.containerMenu!=furnace||!furnace.stillValid(player))throw error("STALE_CONTAINER","The furnace closed while waiting");
+        int outputSlot=furnaceLayout.slot(Port.RESULT),inputSlot=furnaceLayout.slot(Port.INGREDIENT);
         // Take output as it comes so the slot never fills up.
-        collected+=takeOutput(furnace);
-        boolean done=collected>=expectedOutput||furnace.getSlot(0).getItem().isEmpty()&&!((AbstractFurnaceMenu)furnace).isLit();
+        collected+=takeOutput(furnace,outputSlot);
+        WorkstationAdapter adapter=station.adapter();
+        boolean done=collected>=expectedOutput||furnace.getSlot(inputSlot).getItem().isEmpty()&&!safely(()->adapter.working(furnace),false);
         if(!done&&now()<waitUntil)return;
-        collected+=takeOutput(furnace);
+        collected+=takeOutput(furnace,outputSlot);
         closeMenu(player);
-        loaded.addProperty("collected",collected);loaded.addProperty("leftInFurnace",furnace.getSlot(0).getItem().getCount());
-        finishSmelt(station,loaded,done?"Smelted and collected "+collected+" "+id(output):"Waited "+(waitUntil>=deadline?"until the time limit":"the expected time")+"; collected "+collected+" so far");
+        loaded.addProperty("collected",collected);loaded.addProperty("leftInFurnace",furnace.getSlot(inputSlot).getItem().getCount());
+        finishSmelt(loaded,done?"Smelted and collected "+collected+" "+id(output):"Waited "+(waitUntil>=deadline?"until the time limit":"the expected time")+"; collected "+collected+" so far");
     }
 
     // ---------- walking and opening ----------
@@ -264,7 +296,7 @@ final class WorkstationTask {
             JsonObject result=withChange(obj("code",crafting?"NO_CRAFTING_TABLE":"NO_FURNACE"));
             operation.finish("failed",(crafting?"NO_CRAFTING_TABLE":"NO_FURNACE")+": no usable workstation nearby",result);return;
         }
-        if(Vec3.atCenterOf(station).distanceTo(player.position())>32)throw error("OUT_OF_REACH","Workstation is more than 32 blocks away");
+        if(Vec3.atCenterOf(station.pos()).distanceTo(player.position())>32)throw error("OUT_OF_REACH","Workstation is more than 32 blocks away");
     }
     boolean waiting(){return furnace!=null;}
     void tick() {
@@ -273,9 +305,9 @@ final class WorkstationTask {
         if(now()>=deadline&&furnace==null)throw error("TIMEOUT","Workstation task time limit reached");
         if(furnace!=null){tickWait();return;}
         if(station==null)return;
-        BlockState state=player.serverLevel().getBlockState(station);
-        if(crafting?!state.is(Blocks.CRAFTING_TABLE):cookingType(state)==null){skipped.add(obj("at",pos(station),"reason","gone"));next();return;}
-        FlatApproach geometry=new FlatApproach(player);BlockPos target=station;
+        BlockPos target=station.pos();WorkstationAdapter adapter=station.adapter();BlockState state=state(target);
+        if(!safely(()->adapter.block(state),false)){skipped.add(obj("at",pos(target),"reason","gone"));next();return;}
+        FlatApproach geometry=new FlatApproach(player);
         if(!(player.onGround()&&geometry.containerReach(player.position(),target))) {
             if(navigation==null){NativeNavigation.conditions(player);if(!player.onGround())return;navigation=new NativeNavigation(player,session,operation);}
             try { if(!navigation.tick(Vec3.atCenterOf(target),feet->geometry.containerReach(feet,target)))return; }
@@ -284,15 +316,13 @@ final class WorkstationTask {
         }
         player.stopInput();
         use(player,target);
+        if(player.containerMenu==player.inventoryMenu){skipped.add(obj("at",pos(target),"reason","did not open"));next();return;}
         if(crafting) {
-            if(!(player.containerMenu instanceof CraftingMenu menu)){closeMenu(player);skipped.add(obj("at",pos(target),"reason","did not open"));next();return;}
-            Plan plan=null;for(Plan p:plans)if(feasible(p,player.getInventory(),1)>0){plan=p;break;}
-            if(plan==null){closeMenu(player);throw missingError();}
-            craftIn(menu,3,plan,target);station=null;
-        } else {
-            if(player.containerMenu==player.inventoryMenu){skipped.add(obj("at",pos(target),"reason","did not open"));next();return;}
-            smeltAt(target);
-        }
+            AbstractContainerMenu menu=player.containerMenu;
+            StationLayout layout=safely(()->adapter.menu(menu)?adapter.layout(menu):null,null);
+            if(layout==null||!layout.isGrid()||layout.slot(Port.RESULT)<0){closeMenu(player);skipped.add(obj("at",pos(target),"reason","did not open"));next();return;}
+            craftIn(menu,layout,recipesAt(adapter,state),target);station=null;
+        } else smeltAt(station);
     }
     void stop() {
         if(navigation!=null)navigation.stop();navigation=null;

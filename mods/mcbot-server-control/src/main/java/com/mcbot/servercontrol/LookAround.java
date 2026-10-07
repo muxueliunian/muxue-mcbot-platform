@@ -40,7 +40,7 @@ final class LookAround {
     /** The kind of notable block, or null for ordinary terrain. */
     static String category(BlockState state) {
         Block block=state.getBlock();
-        if(state.is(net.neoforged.neoforge.common.Tags.Blocks.ORES))return "ore";
+        if(state.is(ResourceCatalog.ORES))return "ore";
         if(state.is(BlockTags.LOGS))return "log";
         if(NearbyBlocks.ordinaryContainer(state))return "container";
         if(state.is(BlockTags.BEDS))return "bed";

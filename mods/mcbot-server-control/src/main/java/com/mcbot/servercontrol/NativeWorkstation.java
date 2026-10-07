@@ -1,6 +1,7 @@
 package com.mcbot.servercontrol;
 
 import com.google.gson.*;
+import com.mcbot.servercontrol.api.workstation.*;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import java.util.*;
 import net.minecraft.core.BlockPos;
@@ -22,7 +23,7 @@ import net.minecraft.world.phys.*;
 import static com.mcbot.servercontrol.Protocol.*;
 
 /**
- * Crafting and furnace work through the ordinary player packets: grid and furnace slots are filled with PICKUP
+ * Slot work for workstations (driven by WorkstationTask through the station's adapter) through the ordinary player packets: grid and furnace slots are filled with PICKUP
  * clicks from the body's own stacks, results are taken with QUICK_MOVE (shift-click), so vanilla crafts, consumes,
  * returns remainders (empty buckets) and awards experience exactly as for a player. Only plain stacks (no custom
  * components: names, enchantments, damage) are used as ingredients or fuel. Shaped and shapeless crafting recipes
@@ -105,59 +106,30 @@ final class NativeWorkstation {
     static JsonObject pos(BlockPos p){return obj("x",p.getX(),"y",p.getY(),"z",p.getZ());}
 
     // ---------- crafting ----------
-    /** One way to craft the item: the grid cells (row-major in a `width`-wide box; null cells stay empty). */
-    record Plan(ResourceLocation id,ItemStack result,int width,int height,List<Ingredient> cells) {
-        boolean fits(int grid){return width<=grid&&height<=grid;}
+    /** The body's plain main-inventory stacks (slots 0..35) as allocation sources; stacks with components never count. */
+    static List<MaterialAllocator.Source<ItemStack>> sources(Inventory inventory) {
+        List<MaterialAllocator.Source<ItemStack>> sources=new ArrayList<>();
+        for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);if(plain(s))sources.add(new MaterialAllocator.Source<>(i,s,s.getItem(),s.getCount(),s.getMaxStackSize()));}
+        return sources;
     }
-    static List<Plan> plans(ServerPlayer player,Item wanted) {
-        List<Plan> plans=new ArrayList<>();
-        for(RecipeHolder<CraftingRecipe> holder:player.getServer().getRecipeManager().getAllRecipesFor(RecipeType.CRAFTING)) {
-            CraftingRecipe recipe=holder.value();
-            ItemStack result=recipe.getResultItem(player.registryAccess());
-            if(result.isEmpty()||!result.is(wanted))continue;
-            if(recipe instanceof ShapedRecipe shaped) {
-                List<Ingredient> cells=new ArrayList<>();for(Ingredient ingredient:shaped.getIngredients())cells.add(ingredient.isEmpty()?null:ingredient);
-                plans.add(new Plan(holder.id(),result,shaped.getWidth(),shaped.getHeight(),cells));
-            } else if(recipe instanceof ShapelessRecipe shapeless) {
-                int n=shapeless.getIngredients().size();if(n==0||n>9)continue;
-                int width=n<=4?2:3;List<Ingredient> cells=new ArrayList<>(shapeless.getIngredients());
-                while(cells.size()<width*((n+width-1)/width))cells.add(null);
-                plans.add(new Plan(holder.id(),result,width,(n+width-1)/width,cells));
-            }
-        }
-        // Simpler recipes first (fewer cells), so the 2x2 grid is tried before a table is needed.
-        plans.sort(Comparator.comparingInt((Plan p)->p.width()*p.height()).thenComparing(p->p.id().toString()));
-        return plans;
+    static List<java.util.function.Predicate<ItemStack>> cells(StationRecipe recipe) {
+        List<java.util.function.Predicate<ItemStack>> cells=new ArrayList<>();
+        for(Ingredient ingredient:recipe.cells())cells.add(ingredient.isEmpty()?null:ingredient);
+        return cells;
     }
-    /** Inventory slot → count taken, per grid cell; null when `crafts` crafts cannot be laid out from plain stacks. */
-    static List<Map<Integer,Integer>> allocate(Plan plan,Inventory inventory,int crafts) {
-        int[] left=new int[36];for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);left[i]=plain(s)?s.getCount():0;}
-        List<Map<Integer,Integer>> layout=new ArrayList<>();
-        for(Ingredient ingredient:plan.cells()) {
-            if(ingredient==null){layout.add(Map.of());continue;}
-            // One item kind per cell (a grid slot holds one stack); the kind with the most left over.
-            Map<Item,Integer> kinds=new HashMap<>();
-            for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);if(left[i]>0&&ingredient.test(s)&&s.getMaxStackSize()>=crafts)kinds.merge(s.getItem(),left[i],Integer::sum);}
-            Item best=null;int most=0;for(var e:kinds.entrySet())if(e.getValue()>=crafts&&e.getValue()>most){best=e.getKey();most=e.getValue();}
-            if(best==null)return null;
-            Map<Integer,Integer> take=new LinkedHashMap<>();int need=crafts;
-            List<Integer> slots=new ArrayList<>();for(int i=0;i<36;i++)if(left[i]>0&&inventory.getItem(i).is(best))slots.add(i);
-            slots.sort(Comparator.comparingInt(i->-left[i]));
-            for(int i:slots){if(need==0)break;int n=Math.min(need,left[i]);take.put(i,n);left[i]-=n;need-=n;}
-            layout.add(take);
-        }
-        return layout;
+    /** Inventory slot → count taken, per recipe cell; null when `crafts` crafts cannot be laid out from plain stacks. */
+    static List<Map<Integer,Integer>> allocate(StationRecipe recipe,Inventory inventory,int crafts) {
+        return MaterialAllocator.allocate(cells(recipe),sources(inventory),crafts);
     }
-    /** The largest number of crafts (≤ wanted) this plan can lay out in one round. */
-    static int feasible(Plan plan,Inventory inventory,int wanted) {
-        for(int k=Math.min(wanted,64);k>0;k--)if(allocate(plan,inventory,k)!=null)return k;
-        return 0;
+    /** The largest number of crafts (≤ wanted) this recipe can lay out in one round. */
+    static int feasible(StationRecipe recipe,Inventory inventory,int wanted) {
+        return MaterialAllocator.feasible(cells(recipe),sources(inventory),wanted);
     }
-    /** What is short for `crafts` crafts of this plan: each distinct ingredient, its options, needed and held. */
-    static JsonArray missing(Plan plan,Inventory inventory,int crafts) {
+    /** What is short for `crafts` crafts of this recipe: each distinct ingredient, its options, needed and held. */
+    static JsonArray missing(StationRecipe plan,Inventory inventory,int crafts) {
         Map<String,int[]> need=new LinkedHashMap<>();Map<String,Ingredient> by=new HashMap<>();
         for(Ingredient ingredient:plan.cells()) {
-            if(ingredient==null)continue;
+            if(ingredient.isEmpty())continue;
             StringBuilder key=new StringBuilder();for(ItemStack option:ingredient.getItems())key.append(id(option)).append(',');
             need.computeIfAbsent(key.toString(),k->new int[2])[0]+=crafts;by.put(key.toString(),ingredient);
         }
@@ -174,36 +146,39 @@ final class NativeWorkstation {
         }
         return result;
     }
-    /** Grid slot index (1-based after the result slot) for a plan cell in a grid of the given width. */
-    private static int gridSlot(AbstractContainerMenu menu,int grid,Plan plan,int cell) {
-        int row=cell/plan.width(),col=cell%plan.width();
-        return 1+row*grid+col;
+    /** Menu slot of a recipe cell: the recipe's box sits in the top-left corner of the station's grid. */
+    private static int gridSlot(StationLayout layout,StationRecipe recipe,int cell) {
+        int row=cell/recipe.width(),col=cell%recipe.width();
+        return layout.slots(Port.INGREDIENT).get(row*layout.gridWidth()+col);
+    }
+    private static void clearGrid(ServerPlayer player,AbstractContainerMenu menu,StationLayout layout) {
+        for(int slot:layout.slots(Port.INGREDIENT))quickMove(player,menu,slot);
     }
     /**
-     * Craft up to `crafts` times in an open crafting grid (the body's own 2x2, or an opened table's 3x3).
+     * Craft up to `crafts` times in an opened, verified crafting grid (the body's own 2x2, a table's 3x3, a mod's grid).
      * Returns the number of crafts done; leftovers go back to the inventory.
      */
-    static int craft(ServerPlayer player,AbstractContainerMenu menu,int grid,Plan plan,int crafts) {
+    static int craft(ServerPlayer player,AbstractContainerMenu menu,StationLayout layout,StationRecipe recipe,int crafts) {
         if(!menu.getCarried().isEmpty())throw error("BUSY","The cursor holds an item");
-        for(int i=1;i<=grid*grid;i++)if(!quickMove(player,menu,i))throw error("BUSY","The crafting grid is not empty and the inventory has no room");
-        Inventory inventory=player.getInventory();
+        for(int slot:layout.slots(Port.INGREDIENT))if(!quickMove(player,menu,slot))throw error("BUSY","The crafting grid is not empty and the inventory has no room");
+        Inventory inventory=player.getInventory();int resultSlot=layout.slot(Port.RESULT);ItemStack result=recipe.result();
         int done=0;
         while(done<crafts) {
-            int k=feasible(plan,inventory,crafts-done);if(k==0)break;
-            List<Map<Integer,Integer>> layout=allocate(plan,inventory,k);
-            for(int cell=0;cell<layout.size();cell++){
-                int target=gridSlot(menu,grid,plan,cell);
-                for(var take:layout.get(cell).entrySet())transfer(player,menu,take.getKey(),target,take.getValue());
+            int k=feasible(recipe,inventory,crafts-done);if(k==0)break;
+            List<Map<Integer,Integer>> plan=allocate(recipe,inventory,k);
+            for(int cell=0;cell<plan.size();cell++){
+                int target=gridSlot(layout,recipe,cell);
+                for(var take:plan.get(cell).entrySet())transfer(player,menu,take.getKey(),target,take.getValue());
             }
-            ItemStack shown=menu.getSlot(0).getItem();
-            if(shown.isEmpty()||!ItemStack.isSameItem(shown,plan.result())) {
-                for(int i=1;i<=grid*grid;i++)quickMove(player,menu,i);
+            ItemStack shown=menu.getSlot(resultSlot).getItem();
+            if(shown.isEmpty()||!ItemStack.isSameItem(shown,result)) {
+                clearGrid(player,menu,layout);
                 throw error("RECIPE_REFUSED","The game did not offer this recipe in the grid (limited crafting or a mod rule)");
             }
-            int before=total(inventory,plan.result().getItem());
-            quickMove(player,menu,0);
-            int made=(total(inventory,plan.result().getItem())-before)/Math.max(1,plan.result().getCount());
-            for(int i=1;i<=grid*grid;i++)quickMove(player,menu,i);
+            int before=total(inventory,result.getItem());
+            quickMove(player,menu,resultSlot);
+            int made=(total(inventory,result.getItem())-before)/Math.max(1,result.getCount());
+            clearGrid(player,menu,layout);
             if(made<=0)throw error("INVENTORY_FULL","No room in the inventory for the result");
             done+=made;
             if(made<k)break; // inventory full
@@ -212,20 +187,9 @@ final class NativeWorkstation {
     }
 
     // ---------- furnaces ----------
-    static RecipeType<? extends AbstractCookingRecipe> cookingType(BlockState state) {
-        Block block=state.getBlock();
-        if(block==Blocks.FURNACE)return RecipeType.SMELTING;
-        if(block==Blocks.SMOKER)return RecipeType.SMOKING;
-        if(block==Blocks.BLAST_FURNACE)return RecipeType.BLASTING;
-        return null; // modded furnaces go through their adapters (8b)
-    }
-    static Optional<? extends RecipeHolder<? extends AbstractCookingRecipe>> cooking(ServerPlayer player,RecipeType<? extends AbstractCookingRecipe> type,ItemStack input) {
-        @SuppressWarnings("unchecked") RecipeType<AbstractCookingRecipe> raw=(RecipeType<AbstractCookingRecipe>)type;
-        return player.getServer().getRecipeManager().getRecipeFor(raw,new SingleRecipeInput(input),player.level());
-    }
     /** Fuel the body would pick by itself: coal and charcoal, then planks, logs, sticks and wooden slabs. Never the input. */
-    static int fuelRank(ItemStack stack,Item input,RecipeType<?> type) {
-        if(!plain(stack)||stack.is(input)||stack.getBurnTime(type)<=0)return -1;
+    static int fuelRank(ItemStack stack,Item input,int burnTicks) {
+        if(!plain(stack)||stack.is(input)||burnTicks<=0)return -1;
         if(stack.is(Items.COAL)||stack.is(Items.CHARCOAL))return 0;
         if(stack.is(ItemTags.PLANKS))return 1;
         if(stack.is(ItemTags.LOGS_THAT_BURN))return 2;

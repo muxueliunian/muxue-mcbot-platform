@@ -20,7 +20,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 import net.minecraft.world.phys.*;
-import net.neoforged.neoforge.common.Tags;
 import static com.mcbot.servercontrol.Protocol.*;
 
 /**
@@ -33,6 +32,8 @@ final class ResourceCatalog {
     enum Kind { LOG, ORE, STONE;
         String wire(){return name().toLowerCase(Locale.ROOT);}
     }
+    /** Convention tags (c:): the same ids on NeoForge and Fabric. */
+    static final TagKey<Block> ORES=TagKey.create(Registries.BLOCK,ResourceLocation.fromNamespaceAndPath("c","ores")),STONES=TagKey.create(Registries.BLOCK,ResourceLocation.fromNamespaceAndPath("c","stones"));
     static final Set<String> FIRST_STONES=Set.of("minecraft:stone","minecraft:deepslate","minecraft:granite","minecraft:diorite","minecraft:andesite");
     /** A requested resource: an explicit block ID or a block tag (`#c:ores`). Only syntax here; the live tag decides at scan time. */
     static boolean selector(String value) {
@@ -44,8 +45,8 @@ final class ResourceCatalog {
         ResourceLocation key=BuiltInRegistries.BLOCK.getKey(state.getBlock());
         String path=key.getPath();
         if(state.is(BlockTags.LOGS)) return path.contains("stripped")||path.endsWith("_wood")||path.endsWith("_hyphae")?null:Kind.LOG;
-        if(state.is(Tags.Blocks.ORES)) return Kind.ORE;
-        if(state.is(Tags.Blocks.STONES)||FIRST_STONES.contains(key.toString())) return Kind.STONE;
+        if(state.is(ORES)) return Kind.ORE;
+        if(state.is(STONES)||FIRST_STONES.contains(key.toString())) return Kind.STONE;
         return null;
     }
     static String id(BlockState state){return BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();}

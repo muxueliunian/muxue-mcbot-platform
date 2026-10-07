@@ -17,6 +17,7 @@ public final class McbotServerControl {
     private ServerController controller;
     private LocalHttpBridge bridge;
     private CommandFileFixture fixture;
+    static { com.mcbot.servercontrol.platform.LoaderPlatform.install(NeoForgePlatform.INSTANCE); }
     public McbotServerControl() {
         NeoForge.EVENT_BUS.addListener(this::started);
         NeoForge.EVENT_BUS.addListener(this::stopping);
@@ -38,8 +39,8 @@ public final class McbotServerControl {
             // Add-on registration closes here; JSON interactions are read from config/mcbot-server-control/interactions.
             var adapters=ModAdapters.load(directory);
             for(String problem:adapters.problems()) LOGGER.warn("MCBOT adapter: {}",problem);
-            LOGGER.info("MCBOT adapters: containers {}, interactions {}",adapters.containers().stream().map(a->a.id()).toList(),
-                ItemInteractions.ids(ItemInteractions.installed()));
+            LOGGER.info("MCBOT adapters: containers {}, interactions {}, workstations {}",adapters.containers().stream().map(a->a.id()).toList(),
+                ItemInteractions.ids(ItemInteractions.installed()),ModAdapters.workstationIds());
             controller=new ServerController(event.getServer(),config);
             bridge=new LocalHttpBridge(directory,config,event.getServer()::execute,controller::call);
             fixture=CommandFileFixture.start(server);

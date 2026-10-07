@@ -21,6 +21,8 @@ export class EventJournal {
   private deliveredOperations = new Set<string>();
   private notifiedOperations = new Set<string>();
   private tracedOperations = new Set<string>();
+  private sleepers?: Set<string>;
+  private asleep?: boolean;
   constructor(runtimeDir?: string, private readonly username?: string, private readonly botPlayers: string[] = [], private readonly attachmentChatCursor?: number) {
     if (!runtimeDir || !username) return;
     fs.mkdirSync(runtimeDir, { recursive: true });
@@ -106,6 +108,17 @@ export class EventJournal {
       this.add(chat.username ? 'chat' : 'system_chat', chat.username ? `${chat.username}: ${chat.message}` : chat.message);
     }
     this.chatCursor = Math.max(this.chatCursor ?? 0, observation.chatCursor);
+    this.ingestSleep(observation);
+  }
+  /** A nearby player getting into bed, and the body getting up (morning, damage, wake-up), wake the model. */
+  private ingestSleep(observation: Observation): void {
+    const sleepers = new Set(observation.entities.filter(entity => entity.type === 'minecraft:player' && entity.sleeping === true && entity.name !== this.username && !this.botPlayers.includes(entity.name)).map(entity => entity.name));
+    // The first observation is a baseline: someone already asleep at attachment is not news.
+    if (this.sleepers) for (const name of sleepers) if (!this.sleepers.has(name)) this.add('player_sleep', `${name} 上床睡觉了。`);
+    this.sleepers = sleepers;
+    if (observation.sleeping === undefined) return;
+    if (this.asleep === true && !observation.sleeping) this.add('woke', `${observation.username} 已起床（天亮、受伤或被叫醒）。`);
+    this.asleep = observation.sleeping;
   }
   latestSeq(): number { return this.seq; }
   deliveredSeq(): number {

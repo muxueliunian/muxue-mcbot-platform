@@ -36,6 +36,7 @@ export function summarizeObservation(state: Observation) {
     ...(state.groundItems ? { groundItems: state.groundItems.map(item => ({ entityId: item.entityId, position: item.position, visibility: item.visibility, ...(item.onGround !== undefined ? { onGround: item.onGround } : {}), stack: stackSummary(item.stack) })), groundItemsTruncated: state.groundItemsTruncated } : {}),
     chat: state.chat.slice(-10), chatCursor: state.chatCursor,
     container: summarizeContainer(state.container), ...(state.block ? { block: state.block } : {}),
+    ...(state.sleeping !== undefined ? { sleeping: state.sleeping } : {}), ...(state.time ? { time: state.time } : {}),
     details: 'Compact view. Exact guarded snapshots remain available from list-inventory/get-container or get-status details:true.',
   };
 }

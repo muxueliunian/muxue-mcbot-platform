@@ -26,6 +26,8 @@ Mod 适配（R5）：附属模组通过公开包 `com.mcbot.servercontrol.api` �
 
 完整协议见 [ServerBody v2](../../docs/server_body_protocol.md)。当前16个原子动作：send-chat、look-at、move-to-position、follow-player、follow-companion、dig-block、place-block、open-container、click-slot、close-container、select-slot、drop-item、approach-container、approach-player、approach-resource、pickup-item，另有只读nearby-blocks／nearby-resources。Node历史交互批次28工具、持续陪伴批次30工具，有限采集批次再新增discover-resources／gather-resources／collect-items，完整能力集共**33个MCP工具**；follow-companion／approach-resource／pickup-item由任务内部调用，不直接发布给模型。按实际capabilities裁剪，不发布自动重生或长期记忆工具。ClientBody协议v1和原动作参数保持兼容。
 
+2026-10-07（第 8e 步）加了 `sleep-in-bed` 和 `wake-up`：找附近的空床走过去，用原生 `startSleepInBed` 躺下（不右键方块，下界不会炸床；重生点会设到这张床），睡着时只接受说话和起床；观察带 `sleeping` 和 `time`。细节见协议。
+
 新增`companion-pickup`是pickup-item玩家边界保护的能力标记，仅供Node门控，不是第17个原子动作，也不新增MCP工具；act对此标记明确UNSUPPORTED。未带guard的旧有限拾取保持兼容，Node可选持续拾取的接线／真实闭环以本批验收为准。
 
 观察来自真实服务端世界；有限move-to-position／follow-player遇障碍即停，approach与持续模式仅做下述有界平地绕障。液体、空中、缺失支撑或未加载地形会停止，不挖路或传送。聊天按NeoForge ServerChatEvent可取消规则处理并发送实际游戏消息。单格挖放走普通生存玩家入口、视线／距离／世界边界与原版／NeoForge保护；挖掘使用当前主手与原版时间，停止清理延迟挖掘。放置坐标是支撑格，只向给定face相邻空格放置，拒绝门／床／双格植物等多格方块及菜单方块支撑。

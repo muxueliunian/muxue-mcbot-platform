@@ -158,6 +158,16 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
     register('pillar-up', 'Climb straight up 1-12 blocks to reach a block overhead: jump and place a block from the inventory under the feet each time (dirt, planks or logs first, stone last). Needs headroom; stops early when blocks or room run out. Remembers the pillar: after dig-block up there, call pillar-down. gather-resources climbs trees and high resources by itself.', { blocks: z.number().int().min(1).max(12) }, async ({ blocks }) => pillar.up(blocks));
     register('pillar-down', 'Come back down the pillar built with pillar-up, digging its blocks out one by one from the top (they drop and are picked up). Only digs blocks it placed itself.', {}, async () => pillar.down());
   }
+  if (serverObserved && body.hello.capabilities.includes('sleep-in-bed')) {
+    register('sleep-in-bed', 'Walk to the nearest free bed within 16 blocks (around the named player, or yourself) and lie down, like a player right-clicking it. Only at night or in a thunderstorm and in the Overworld; monsters nearby, an occupied or obstructed bed fail with a code. Lying down also sets your respawn point to that bed, as for any player. Pauses companion mode first; resume it after waking. While asleep every action except send-chat and wake-up is refused. You get up by yourself in the morning or when hurt (event woke); wake-up gets up earlier. running requires polling get-operation.', {
+      player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional().describe('Look for a bed near this player, e.g. the one who just went to bed'), timeoutMs,
+    }, async args => {
+      tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
+      if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' });
+      return operationResult(await body.act('sleep-in-bed', args));
+    });
+    register('wake-up', 'Get out of bed now. Succeeds when already awake.', {}, async () => operationResult(await body.act('wake-up', {})));
+  }
   if (serverObserved && body.hello.capabilities.includes('nearby-blocks')) {
     if (body.hello.capabilities.includes('approach-container')) register('approach-container', 'Walk to a discovered container using its short-lived local reference and bounded safe routes on loaded level ground. Replacement or expiration fails. running requires polling get-operation.', { containerRef: z.string().uuid(), timeoutMs }, async ({ containerRef, timeoutMs }) => operationResult(await tasks.approachContainer(containerRef, timeoutMs)));
     register('discover-containers', 'Find bounded nearby loaded containers centered on the named player, or the bot when omitted. Contents are not read. Use the returned short-lived containerRef; ask when candidates are ambiguous.', {

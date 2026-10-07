@@ -24,7 +24,7 @@ export interface NearbyBlocks {
   candidates: Array<{ position: Position; id: string; properties: Components; targetToken?: string; distance: number; visibility: 'visible' | 'occluded' | 'unknown'; visible?: boolean | null }>;
   truncated?: boolean; budget?: unknown;
 }
-export interface Entity { id: string; type: string; name: string; position: Position }
+export interface Entity { id: string; type: string; name: string; position: Position; sleeping?: boolean }
 export interface FoodCandidate { slot: number; id: string; count: number; nutrition: number; saturationModifier: number; eatDurationTicks: number; safe: boolean; reason?: string }
 export interface Threat {
   entityId: string; type: string | null; classification: 'hostile' | 'attacking_self' | 'neutral' | 'friendly' | 'player' | 'unknown';
@@ -64,6 +64,8 @@ export interface Observation {
   instanceId?: string; controlGeneration?: number; selectedSlot?: number;
   operationBudget?: OperationBudget;
   groundItems?: GroundItem[]; groundItemsTruncated?: boolean; pickupCursor?: number; pickupOldestCursor?: number; pickupReceipts?: PickupReceipt[];
+  /** ServerBody: the body is lying in a bed; time of day (0..23999) and whether beds work now. */
+  sleeping?: boolean; time?: { dayTime: number; canSleep: boolean };
 }
 export interface BodyHello {
   protocol: 1 | 2; backend?: 'client' | 'server'; instanceId?: string; worldId?: string;
@@ -101,6 +103,8 @@ export interface ActionArguments {
     & ({ emptyHand: true } | { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components });
   'use-item': { interaction: string; slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; timeoutMs?: number };
   'pillar-up': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components };
+  'sleep-in-bed': { player?: string; timeoutMs?: number };
+  'wake-up': Record<string, never>;
 }
 export type ActionName = keyof ActionArguments;
 export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';

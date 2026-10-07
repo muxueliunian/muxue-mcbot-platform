@@ -93,9 +93,13 @@ NBT 类型为 end／byte／short／int／long／float／double／byte_array／st
 | click-slot | `{containerId,expectedRevision,slot,expectedItem,expectedCount,expectedComponents,expectedCarriedItem,expectedCarriedCount,expectedCarriedComponents,button?}`；仅普通 PICKUP，button 0／1。每次点击后重读菜单，确认实际槽位／carried 变化 |
 | close-container | `{containerId,expectedRevision}`；检查当前窗口与版本，走原生关闭／carried 归还或掉落路径 |
 | select-slot | `{slot,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?}`；slot 0–8，匹配完整当前栈后选择，不搬移库存。可选上限在原生写入前比较实际getMaxStackSize，旧API兼容 |
+| sleep-in-bed | `{player?,timeoutMs?}`（2026-10-07 第 8e 步）；以指定玩家（不给就是 Bot 自己）为中心，在已加载区块的水平 16 格、上下 4 格里找最近的空床（`BedBlock`，`occupied=false`），走到原版床的距离内后走原生 `ServerPlayer.startSleepInBed`，不右键方块（下界／末地右键床会爆炸，这条路只会拒绝）。出发前白天拒绝 NOT_NIGHT、不能睡的维度拒绝 BED_NOT_POSSIBLE_HERE，没床 NO_BED；躺下时按原版结果报 NOT_SAFE（附近有怪）、BED_OBSTRUCTED、OUT_OF_REACH 等，走路途中床没了 STALE_TARGET、被占 BED_OCCUPIED。成功 result 为 `{bed,id,sleeping:true,respawnSet:true}`：和玩家一样，躺下会把重生点设到这张床。默认 30 秒 |
+| wake-up | `{}`；`stopSleepInBed`，已醒着也成功，result `{wasSleeping,sleeping}`。睡着时除 send-chat 和 wake-up 以外的动作都拒绝（SLEEPING）；天亮、受伤由原版叫醒 |
 | drop-item | 同 select-slot，另携 `{count}`；仅当前选中槽，count 1–64 且不超过当前数量，通过原版逐个 DROP_ITEM 执行。result 的 requestedCount／removedCount／droppedCount 分别记录请求、库存减少、实际新掉落实体；不把丢物事件取消后的库存减少称为成功交付 |
 
 drop-item携expectedMaxStackSize时，每次原生DROP_ITEM前均再核验；数量上限不因实际栈大于64而扩大。Node的give-item可以把一个真实足量栈的最多256个目标分成每批最多64个丢出；容器取物仍要求一个足量源栈和空快捷栏，不跨栈凑数，目标不能超过实际源／目标栈有效上限。
+
+Observation 另带 `sleeping`（Bot 是否躺在床上）和 `time:{dayTime,canSleep}`（一天里的时刻 0–23999；canSleep 是当前维度能用床且不是白天），附近玩家的 entities 条目带 `sleeping`。客户端运行端据此发两种唤醒事件：附近玩家上床 `player_sleep`（接管时已经在睡的不算），Bot 自己起床 `woke`。
 
 ## 地面物品、原生拾取与有限采集
 

@@ -51,7 +51,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // 需要叫醒 agent 的事件；reflex（自动进食/反击）、presence（上下线说明）等只在下次一起带上
 export const WAKE_TYPES = new Set(['chat', 'whisper', 'hurt', 'low_health', 'death', 'player_joined', 'player_left',
-  'time', 'spawn', 'danger', 'follow', 'player_death', 'advancement', 'player_sleep', 'teleport', 'task', 'companion', 'survival']);
+  'time', 'spawn', 'danger', 'follow', 'player_death', 'advancement', 'player_sleep', 'woke', 'teleport', 'task', 'companion', 'survival']);
 const BATCH_DELAY_MS = 1500;
 const SERVER_CHAT_QUIET_MS = 120;
 const SERVER_CHAT_MAX_MS = 350;
@@ -599,6 +599,7 @@ export function startupPrompt(args, memoryOn) {
 本轮仅确认准备好并结束，不调用游戏工具；后续事件会自动唤醒。只使用实际列出的能力；可做聊天、观察、看向和短距离安全地面移动／跟随，不承诺完整寻路。生存工具若已列出，可做明确授权的单格挖放、容器、物品任务和有界资源采集，不破坏已有建筑。
 普通取物交还优先 discover-containers → fetch-and-give；附近发现需明确以发言玩家还是角色为中心，多个合理候选先澄清，不猜坐标。也可按任务需要使用 container-list／container-withdraw／give-item；运行端在一次工具调用内完成完整前置核验、开箱取物关箱与交还步骤，普通流程不要逐槽点击或复制 NBT／components。
 若提供 pillar-up／pillar-down，用 dig-block 挖头顶够不着的指定方块时，先 pillar-up 垫高几格（需要背包里有泥土、木头或石头），挖完用 pillar-down 下来，它只挖自己放的方块；采集资源不用手动垫高。
+若提供 sleep-in-bed，收到 player_sleep（附近玩家上床）事件时，如果正在陪那位玩家，就用 sleep-in-bed 并把 player 填成那位玩家，到附近空床躺下，这样不会卡住跳夜；可以顺口说一句。工具会先暂停陪伴模式；收到 woke（自己起床了）事件后，再用 companion-mode resume 接着跟。没有空床、不是晚上、附近有怪时会失败，照实说就好，不要硬找床或自己放床。躺下会把自己的重生点设到那张床，这和玩家一样。睡着时除了说话和 wake-up 别的动作都会被拒绝；玩家叫你起来时用 wake-up。
 若提供 look-around，想知道周围有什么（远处的玩家、怪物、掉落物，露在外面的矿、树、箱子、床等）时用它看 32 格内的概况，它只读不动，埋在方块里的看不到；要动手时再用对应的发现工具拿目标。
 若提供 discover-resources／gather-resources，可按用户授权的具体材料在 16 格内发现资源（采集时会自己走过去），再用resourceRef提交有限采集；原木、矿石、石料按方块标签认，模组的树、矿、石头也算：blockIds 可以填方块 ID，也可以填标签，比如 ["#minecraft:logs"] 找任何树，["#c:ores"] 找任何矿，["#c:ores/iron"] 只找铁矿；发现不代表可以拆建筑，不自动扩大区域。发现原木时会顺着相连的原木往上找到整棵树（只算原木，树叶不算），gather-resources 遇到太高够不着的目标会自己搭柱子上去（砍树用原木垫，其他用泥土、木头，最后才用石头），砍完一格格挖掉柱子下来、方块收回。discover-resources 以你自己的位置为中心找；玩家说“我旁边／这棵／这里”的东西时，先 approach-player 走到玩家身边再找，别砍了自己旁边的。要砍整棵树时，count 填这棵树找到的原木数；还没砍完就再发现一次接着砍，汇报时照实说剩了几节。每个候选都带 drops（按服务器掉落表算的可能产物），gather-resources 的 item 从里面选：采圆石时发现blockIds:["minecraft:stone"]，item:"minecraft:cobblestone"；矿石填它的普通产物（比如 minecraft:raw_iron、minecraft:diamond），不是矿石方块或铁锭。矿石任务拒绝精准采集工具，也要够等级的镐；时运或原生掉落可造成实际拾取超过目标，依据回执如实报告。资源方块ID与目标掉落物ID分别填写。collect-items只捡附近掉落物，不挖方块。先暂停正在运行的陪伴，再提交有限任务；采集立即返回running，后续终态事件会通知，提交后结束本轮并继续响应聊天，不循环调用模型推进每一格。
 若提供 get-survival-state／set-reflexes，程序可自动进食，并在defenseSupported为true时进行有限近身自卫。你可读取最新生存／威胁事实和策略revision，再修改开关、防御范围、排除实体、低血阈值、保护食物或工具偏好；停止会解除本能授权，读取和聊天不重新启动它。prepare-item可把主背包物品准备到热栏，满热栏时明确targetSlot允许交换，不丢弃原物。assess-tool区分掉落资格和速度估计，unknown不是可采。defend-self复用同一程序防卫，不追杀；低血或点燃苦力怕先尝试有界安全退让，无路会拒绝，不能保证必能逃生。eat-food只消费一次安全食物，unknown不得自动重试。紧急进食或防卫可能取消旧任务，先核对剩余目标再明确发新任务，不重放旧操作。

@@ -37,11 +37,12 @@ const observationSchema = z.object({
   operationBudget: operationBudget.optional(),
   sessionId: identifier, worldId: identifier, connected: z.boolean(), username: identifier, dimension: z.string(),
   health: z.number(), food: z.number(), position, yaw: z.number(), pitch: z.number(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack),
-  entities: z.array(z.object({ id: z.string(), type: z.string(), name: z.string(), position })),
+  entities: z.array(z.object({ id: z.string(), type: z.string(), name: z.string(), position, sleeping: z.boolean().optional() })),
   chat: z.array(z.object({ seq: z.number().int(), time: z.number(), username: z.string().optional(), message: z.string() })),
   chatCursor: z.number().int(), container: z.object({ id: identifier, type: z.string(), revision: generation, slots: z.array(stack), carried: z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize }) }).nullable(),
   block: z.object({ position, state: z.enum(['loaded', 'unloaded']), id: z.string().optional(), properties: z.record(z.unknown()).optional() }).optional(),
   source: z.literal('server-observed'),
+  sleeping: z.boolean().optional(), time: z.object({ dayTime: z.number().int().min(0).max(23999), canSleep: z.boolean() }).optional(),
   groundItems: z.array(z.object({ entityId: z.string().uuid(), position, stack: itemValue, onGround: z.boolean().optional(), visible: z.boolean().nullable().optional(), visibility: z.enum(['visible', 'occluded', 'unknown']) })).max(32).optional(), groundItemsTruncated: z.boolean().optional(),
   pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier, storedIn: identifier.optional() })).max(256).optional(),
 });
@@ -80,7 +81,7 @@ interface ServerOptions {
   onLease?: (lease: ServerLease) => void | Promise<void>;
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
-const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up'];
+const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up', 'sleep-in-bed', 'wake-up'];
 const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION', 'COMPANION_PROTECTED', 'COMPANION_MINING_CONFLICT', 'GAME_PAUSED']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
@@ -371,6 +372,8 @@ export class ServerBody implements Body {
       'defend-entity': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, entityId: z.string().uuid(), expectedDimension: identifier, maxDistance: z.number().finite().min(1).max(3), minHealth: z.number().finite().min(1).max(20), maxAttacks: z.number().int().min(1).max(3), timeoutMs: z.number().int().min(500).max(5000) }).strict(),
       'retreat-from-entity': z.object({ entityId: z.string().uuid(), expectedDimension: identifier, distance: z.number().finite().min(1.5).max(6).optional(), timeoutMs: z.number().int().min(500).max(5000).optional() }).strict(),
       'pillar-up': z.object({ ...guardedStack, expectedCount: z.number().int().positive() }).strict(),
+      'sleep-in-bed': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }).strict(),
+      'wake-up': z.object({}).strict(),
       'drop-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, count: z.number().int().min(1).max(64), recipient: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), expectedEntityId: z.string().uuid().optional() }).refine(args => (args.recipient === undefined) === (args.expectedEntityId === undefined)),
     };
     const face = z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(), interaction = z.string().refine(id => this.hello.interactions?.includes(id) ?? false);

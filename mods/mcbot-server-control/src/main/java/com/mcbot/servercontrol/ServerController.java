@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -50,6 +50,7 @@ final class ServerController implements ControlSession.Game {
     private PickupItem pickup;
     private NativeNavigation navigation;
     private NativePillar pillar;
+    private BlockPos sleepBed;
     private ServerPlayer followedPlayer;
     private net.minecraft.world.entity.LivingEntity retreatTarget;
     private Vec3 retreatOrigin;
@@ -164,9 +165,12 @@ final class ServerController implements ControlSession.Game {
         for(Entity entity:player.serverLevel().getEntities(player,player.getBoundingBox().inflate(32))) {
             if(entity.distanceToSqr(player)>32*32) continue;
             entities.add(obj("id",entity.getUUID().toString(),"type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),"name",entity instanceof Player p?p.getGameProfile().getName():entity.getName().getString(),"position",position(entity.position())));
+            if(entity instanceof Player p)entities.get(entities.size()-1).getAsJsonObject().addProperty("sleeping",p.isSleeping());
             if(entities.size()>=64) break;
         }
         JsonObject result=obj("connected",true,"username",config.username(),"dimension",player.serverLevel().dimension().location().toString(),"health",player.getHealth(),"food",player.getFoodData().getFoodLevel(),"position",position(player.position()),"yaw",player.getYRot(),"pitch",player.getXRot(),"inventory",inventory,"selectedSlot",player.getInventory().selected,"entities",entities,"chat",chat,"chatCursor",chatSequence,"container",survival.container(),"source","server-observed");
+        result.addProperty("sleeping",player.isSleeping());
+        result.add("time",obj("dayTime",player.serverLevel().getDayTime()%24000,"canSleep",player.level().dimensionType().natural()&&!player.level().isDay()));
         JsonObject drops=groundItems();drops.entrySet().forEach(entry->result.add(entry.getKey(),entry.getValue()));
         pickups.observation().entrySet().forEach(entry->result.add(entry.getKey(),entry.getValue()));
         if(params.has("block")) {
@@ -278,6 +282,9 @@ final class ServerController implements ControlSession.Game {
         if(!session.mayDrive(operation)) throw error("LEASE_LOST","Body lease expired before action");
         gazeHold=now()+IdleGaze.HOLD_AFTER_ACTION_MS;
         JsonObject args=operation.args;
+        if(player.isSleeping()&&!Set.of("send-chat","wake-up").contains(operation.name)) throw error("SLEEPING","Body is asleep in a bed; call wake-up first");
+        if(operation.name.equals("wake-up")) { operation.finish("succeeded","Body is awake",NativeSleep.wake(player)); return; }
+        if(operation.name.equals("sleep-in-bed")) { beginSleep(operation); return; }
         if(survival.handles(operation.name)) { survival.begin(operation);return; }
         if(operation.name.equals("send-chat")) {
             String message=string(args,"message");
@@ -339,6 +346,7 @@ final class ServerController implements ControlSession.Game {
         try {
             if(active.name.equals("approach-container")||active.name.equals("approach-player")||active.name.equals("approach-resource")) {tickApproach();return;}
             if(active.name.equals("retreat-from-entity")){tickRetreat();return;}
+            if(active.name.equals("sleep-in-bed")){tickSleep();return;}
             if(now()>=actionDeadline) { finish(active.name.equals("follow-player")?"succeeded":"failed","Movement time limit reached"); return; }
             Vec3 target;double tolerance;
             if(active.name.equals("follow-player")) {
@@ -354,7 +362,7 @@ final class ServerController implements ControlSession.Game {
     }
     /** Head movement only while nothing aims the body: no action, or a follow standing and waiting. */
     private void idleGaze(BodyPlayer body){
-        if(now()<gazeHold||survival!=null&&survival.busy()||nativeWriteInProgress())return;
+        if(now()<gazeHold||body.isSleeping()||survival!=null&&survival.busy()||nativeWriteInProgress())return;
         gaze.tick(body,speaker,spokeAt,now());
     }
     private void beginApproach(ControlSession.Operation operation) {
@@ -412,6 +420,29 @@ final class ServerController implements ControlSession.Game {
         if(!connected())throw error("BLOCKED","Body is not connected in authorized survival state");
         if(!player.onGround())throw error("BLOCKED","Start navigation from supported ground");
     }
+    /** Walk to the nearest free bed (around the named player, or the body) and lie down when vanilla's bed range is reached. */
+    private void beginSleep(ControlSession.Operation operation) {
+        NativeSleep.requireSleepable(player);
+        Vec3 center=player.position();
+        if(operation.args.has("player")) {
+            ServerPlayer near=findPlayer(string(operation.args,"player"));
+            if(near==null) throw error("PLAYER_NOT_VISIBLE","Named player is not within 32 blocks in this dimension");
+            center=near.position();
+        }
+        BlockPos bed=NativeSleep.nearestFreeBed(player,center);
+        if(bed==null) throw error("NO_BED","No free bed within 16 blocks in loaded chunks");
+        if(Vec3.atCenterOf(bed).distanceTo(player.position())>32) throw error("OUT_OF_REACH","The bed is more than 32 blocks away");
+        requireWalkable();
+        sleepBed=bed;active=operation;navigation=new NativeNavigation(player,session,operation);
+        actionDeadline=now()+(long)bounded(operation.args,"timeoutMs",30_000,500,120_000);
+    }
+    private void tickSleep() {
+        if(now()>=actionDeadline)throw error("TIMEOUT","Did not reach the bed in time");
+        var state=NativeSleep.requireFreeBed(player,sleepBed);BlockPos bed=sleepBed;
+        if(!NativeSleep.inReach(player.position(),bed,state)&&!navigation.tick(Vec3.atCenterOf(bed),feet->NativeSleep.inReach(feet,bed,state)))return;
+        player.stopInput();
+        finish("succeeded","Asleep in bed",NativeSleep.lieDown(player,bed));
+    }
     private void beginRetreat(ControlSession.Operation operation) {
         requireWalkable();bounded(operation.args,"distance",4,1.5,6);
         retreatTarget=ThreatSense.lookup(player,string(operation.args,"entityId"),string(operation.args,"expectedDimension"));
@@ -446,7 +477,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;pillar=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { active=null;pillar=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     void remove() {
         session.revokeCurrent("Server body removed");

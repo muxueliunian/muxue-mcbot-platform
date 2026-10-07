@@ -22,7 +22,7 @@
 
 - 跟随、等待、跟随时捡指定物品，可以边做边聊天，随时叫停
 - 单格挖放、标准容器、走近取物再交还
-- 有限采集：石料、原木，煤、铁、铜等 6 种矿石
+- 有限采集：原木、矿石、石料，按方块标签认，模组的树、矿、石头也算；整棵树会垫高砍完
 - 背包整理、工具选择、自动进食、有限高差寻路、近距自卫
 - 手持物品右键方块（`interact-block`）和对空使用（`use-item`），按登记的交互放行，内置的只有原版堆肥桶
 - 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）

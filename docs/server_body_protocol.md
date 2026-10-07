@@ -17,7 +17,7 @@
 | heartbeat | `{instanceId,sessionId,leaseId}` | `{ttlMs:10000,controlGeneration}`；只续当前有效租约，不复活过期租约 |
 | observe | `{instanceId,sessionId,leaseId,block?}` | 现有 Observation 字段，`source:"server-observed"`，另含 instanceId/controlGeneration；未加载区块不隐式加载，空 container 必须为 null |
 | nearby-blocks | `{instanceId,sessionId,leaseId,centerPlayer?,radius?,maxResults?}` | 只读发现普通容器方块，不读取内容；返回 instanceId/sessionId/worldId/controlGeneration/dimension、center、candidates、truncated 和 budget。需 `nearby-blocks` 能力；radius 1–8（默认4）、maxResults 1–16（默认8）、y±2，仅已加载区块。指定玩家须同维度、Bot 32格内且视线通过 |
-| nearby-resources | `{instanceId,sessionId,leaseId,blockIds,radius?,maxResults?,center?}` | 只读有限资源发现；blockIds为1–8个明确目录ID，radius 1–6（默认4）、maxResults 1–64（默认32）。center为`{x,y,z}`，默认Bot位置且距Bot不得超过8格；返回完整控制上下文、center、candidates、truncated、budget，详见有限采集边界 |
+| nearby-resources | `{instanceId,sessionId,leaseId,blockIds,radius?,maxResults?,center?}` | 只读有限资源发现；blockIds为1–8个方块ID或方块标签（`#c:ores`），radius 1–16（默认4）、maxResults 1–64（默认32）。center为`{x,y,z}`，默认Bot位置且距Bot不得超过8格；返回完整控制上下文、center、candidates、truncated、budget，详见有限采集边界 |
 | survival-state | `{instanceId,sessionId,leaseId,details?}` | 只读当前维度／控制上下文、serverTick/observedAt、生命／饥饿／饱和、选槽及foods；默认details:true含自身inventory，false省略完整库存。safe表示食品语义已核验，不代表省略的栈守卫可以用于写入 |
 | assess-tool | `{instanceId,sessionId,leaseId,x,y,z,expectedBlock?,policy?,minRemainingDurability?,dropPreference?}` | 32格内已加载目标；完整上下文含dimension，返回36槽候选、基础资格／估算／耐久／掉落偏好、推荐及原因；未知不推荐，禁止临时装备来执行只读评估 |
 | act | `{instanceId,sessionId,leaseId,controlGeneration,operationId,name,args}` | 现有 Operation 字段，另含 controlGeneration；同 ID 同内容返回原结果，异内容拒绝。动作按原生字段比较，不哈希；结果缓存淘汰后同 ID 也不能重新执行 |
@@ -105,7 +105,7 @@ Observation新增`groundItems`：`[{entityId,position,stack:{id,count,components
 
 pickup-item成功result为`{entityId,pickedUpCount,pickup:"confirmed",requestedCount,remainingCount,stack}`；部分原生拾取也只报告真实片段。失败保留真实已获得量和`code`，没有Post时为`pickup:"unconfirmed"`，不猜消失实体的剩余量。其它玩家拾取为PICKUP_TAKEN，未知消失／合并为PICKUP_UNKNOWN，变体或上限变化为STALE_ITEM；危险／掉血／无进展为BLOCKED，移动过远为TARGET_MOVED，原生延迟／拒绝等未确认在有限时限内停止。收据也覆盖dig／walk期间的自然拾取；Node按seq累计一次，不再把pickup-item返回量重复相加。
 
-资源目录包括五种石料：`minecraft:stone`、`minecraft:deepslate`、`minecraft:granite`、`minecraft:diorite`、`minecraft:andesite`；八种原木：`minecraft:oak_log`、`minecraft:spruce_log`、`minecraft:birch_log`、`minecraft:jungle_log`、`minecraft:acacia_log`、`minecraft:dark_oak_log`、`minecraft:mangrove_log`、`minecraft:cherry_log`。2026-10-04新增六种矿石：`minecraft:coal_ore`、`minecraft:iron_ore`、`minecraft:copper_ore`以及各自的`deepslate_`变种，仅目标普通产物`minecraft:coal`、`minecraft:raw_iron`、`minecraft:raw_copper`。blockIds不支持通配符；不是任意矿石或Mod方块目录，也不能区分玩家建筑与天然地形。明确用户请求／授权区域仍由Agent判断，发现不等于破坏授权。
+2026-10-07（第 8a 步）起资源按方块标签认，模组的也算：原木是 `#minecraft:logs`（不含去皮原木和 `_wood`／`_hyphae` 六面树皮木），矿石是 `#c:ores`，石料是 `#c:stones` 加上原版 `minecraft:stone`／`deepslate`／`granite`／`diorite`／`andesite`；带方块实体的不算。blockIds 可以是方块 ID（必须属于上面三类，否则 UNSUPPORTED），也可以是标签（`#c:ores/iron`），标签只用来缩小范围。每个候选多带 `kind`（`log|ore|stone`）和 `drops`：服务器用顶级镐（原木用斧）不带时运、分别带和不带精准采集，各按掉落表掷 12 次算出的 `{item,preference,least}`，preference 是 `any|silk_touch|no_silk_touch`，least 是这几次里每块最少的数量（偶然掉落为 0）；矿石只报普通产物，不报精准采集掉的矿石块。实际数量仍以原生拾取回执为准。陪挖的拾取授权按目标矿石的同一份掉落表核对。不能区分玩家建筑与天然地形。明确用户请求／授权区域仍由Agent判断，发现不等于破坏授权。
 
 有限任务先筛选与目标产物匹配的冻结候选，矿石须完整工具评估／准备能力、已知掉落效果与非精准工具；服务端资源引用挖掘仍在执行前核验实际主手及原生位置相关采掘资格。首批不支持精准矿石块，不按工具名称写等级表，不保证数据包或Mod未改变掉落。目标数量按原生新拾取回执累计；铜的多产物、时运等可导致一次真实拾取超过目标，以`overage`如实记录，到量后不再开挖新候选。实际掉落不匹配、无工具、未知或部分完成均保留真实结果，不扩大区域或自动重试。
 

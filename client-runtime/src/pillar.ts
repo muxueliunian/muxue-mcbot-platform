@@ -16,7 +16,8 @@ export interface PillarHost {
 // Soft blocks a bare hand or any tool digs quickly; then stone, which drops only with a pickaxe.
 const soft = /^minecraft:(dirt|coarse_dirt|rooted_dirt|grass_block|podzol|mycelium|moss_block|clay|netherrack|[a-z_]+_planks|[a-z_]+_log|[a-z_]+_wood|[a-z_]+_stem|[a-z_]+_hyphae)$/;
 const stone = /^minecraft:(cobblestone|mossy_cobblestone|cobbled_deepslate|stone|deepslate|andesite|diorite|granite|tuff|calcite|blackstone|basalt|smooth_basalt|end_stone|sandstone|red_sandstone|stone_bricks)$/;
-export const isLogItem = (id: string) => /^minecraft:[a-z_]+_log$/.test(id);
+// Modded logs and stems too (biomesoplenty:fir_log); stripped ones are just as good to stand on.
+export const isLogItem = (id: string) => /^[a-z0-9_.-]+:[a-z0-9_/]*_(log|stem)$/.test(id);
 
 /** Lower is used first; undefined is never stood on. The server still refuses anything but a plain full cube. */
 export function pillarRank(id: string, purpose: PillarPurpose): number | undefined {

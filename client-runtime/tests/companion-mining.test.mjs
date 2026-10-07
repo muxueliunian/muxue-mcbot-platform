@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { resourceOf } from './resource-catalog.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { BodyError } from '../dist/body.js';
@@ -23,7 +24,7 @@ function fixture(t, { block = 'minecraft:coal_ore', yieldCount = 1, automatic = 
   const candidates = [], item = block.includes('copper') ? 'minecraft:raw_copper' : block.includes('iron') ? 'minecraft:raw_iron' : 'minecraft:coal';
   const f = { state, calls, candidates, operations, playerId, item, stopFailure: false, followState: 'waiting', automatic,
     advance(ms) { clock += ms; },
-    addBlock(x = 3, id = block) { const value = { position: { x, y: 64, z: 0 }, id, properties: {}, targetToken: randomUUID(), distance: x, visible: true, requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }; candidates.push(value); return value; },
+    addBlock(x = 3, id = block) { const value = { position: { x, y: 64, z: 0 }, id, ...resourceOf(id), properties: {}, targetToken: randomUUID(), distance: x, visible: true, requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }; candidates.push(value); return value; },
     addDrop(count = yieldCount, id = item, x = 3.5) { const value = { entityId: randomUUID(), position: { x, y: 64, z: 0.5 }, onGround: true, visibility: 'visible', stack: { id, count, components: {}, maxStackSize: 64 } }; state.groundItems.push(value); return value; },
     pick(value) {
       state.pickupReceipts.push({ seq: ++state.pickupCursor, entityId: value.entityId, position: clone(value.position), stack: clone(value.stack), pickedUpCount: value.stack.count, sessionId: state.sessionId, controlGeneration: state.controlGeneration, dimension: state.dimension });

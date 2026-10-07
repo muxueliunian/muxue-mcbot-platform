@@ -10,7 +10,8 @@ export interface PickupState { items: string[]; radius: number; pickedUpCount?: 
 export interface MiningOptions { blockIds: string[]; maxBlocks: number; radius?: number; durationMs?: number }
 export interface MiningState { blockIds: string[]; maxBlocks: number; radius: number; durationMs: number; deadline: number; attemptedBlocks: number; remainingBlocks: number; minedBlocks: number; active: boolean; disabledReason?: string; lastCode?: string; countStatus: 'confirmed' | 'partial-or-unknown'; dropAttribution: 'unconfirmed'; newPickedByItem: Array<{ item: string; count: number; maxStackSize: number; variant: number; storedIn?: string }> }
 type MiningTracker = { state: MiningState; lastScanAt: number; attempted: Set<string>; cursor: number; generations: Set<number>; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components; storedIn?: string }>; child?: symbol; childMined: number };
-const miningBlocks = new Set(['minecraft:coal_ore', 'minecraft:deepslate_coal_ore', 'minecraft:iron_ore', 'minecraft:deepslate_iron_ore', 'minecraft:copper_ore', 'minecraft:deepslate_copper_ore']);
+// Ores by block ID or tag (#c:ores, modded too); the body scans only ores whatever else is named.
+const miningSelector = /^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/;
 type PickupTracker = { state: PickupState; cursor: number; generations: Set<number>; count: number; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components; storedIn?: string }>; attempted: Set<string>; pending?: { item: GroundItem; cursor: number; receipts: PickupReceipt[] } };
 type Intent = { action: 'follow' | 'wait'; player?: string; expectedEntityId?: string; distance?: number; wander?: boolean; context: Context; pickup?: { items: string[]; radius: number } };
 export interface CompanionState {
@@ -167,7 +168,7 @@ export class CompanionMode {
     if (request.mining) {
       if (!['companion-mining', 'nearby-resources', 'approach-resource', 'dig-block', 'pickup-item', 'select-slot', 'assess-tool'].every(cap => this.body.hello.capabilities.includes(cap))) throw new BodyError('UNSUPPORTED', '游戏端没有完整持续陪挖／工具及玩家边界保护能力');
       const { blockIds, maxBlocks, radius = 4, durationMs = 300000 } = request.mining;
-      if (!Array.isArray(blockIds) || blockIds.length < 1 || blockIds.length > 6 || new Set(blockIds).size !== blockIds.length || blockIds.some(id => !miningBlocks.has(id)) || !Number.isInteger(maxBlocks) || maxBlocks < 1 || maxBlocks > 32 || !Number.isInteger(radius) || radius < 3 || radius > 4 || !Number.isInteger(durationMs) || durationMs < 10000 || durationMs > 600000 || (request.distance ?? 2.5) > radius) throw new BodyError('INVALID_ARGUMENT', '陪挖需要六矿石明确子集、maxBlocks 1..32、整数半径3..4和durationMs 10000..600000；跟随距离不能超过半径');
+      if (!Array.isArray(blockIds) || blockIds.length < 1 || blockIds.length > 8 || new Set(blockIds).size !== blockIds.length || blockIds.some(id => typeof id !== 'string' || !miningSelector.test(id)) || !Number.isInteger(maxBlocks) || maxBlocks < 1 || maxBlocks > 32 || !Number.isInteger(radius) || radius < 3 || radius > 4 || !Number.isInteger(durationMs) || durationMs < 10000 || durationMs > 600000 || (request.distance ?? 2.5) > radius) throw new BodyError('INVALID_ARGUMENT', '陪挖需要1..8个矿石ID或标签（如 #c:ores）、maxBlocks 1..32、整数半径3..4和durationMs 10000..600000；跟随距离不能超过半径');
     }
     if (request.pickup) {
       if (!['companion-pickup', 'pickup-item'].every(cap => this.body.hello.capabilities.includes(cap))) throw new BodyError('UNSUPPORTED', '游戏端没有持续拾取玩家边界保护能力');
@@ -290,7 +291,7 @@ export class CompanionMode {
       const latestPlayer = fresh.entities.find(entity => entity.id === companionMiningGuard.expectedEntityId)!;
       if (!isDeepStrictEqual(latestPlayer.position, target.position)) throw new BodyError('COMPANION_OUT_OF_RANGE', '陪挖扫描期间玩家已移动；此轮未选定矿石');
       const positionKey = (point: { x: number; y: number; z: number }) => `${point.x},${point.y},${point.z}`;
-      const candidate = scan.candidates.find(candidate => mining.state.blockIds.includes(candidate.id) && candidate.visible && candidate.targetToken && !mining.attempted.has(positionKey(candidate.position))
+      const candidate = scan.candidates.find(candidate => candidate.kind === 'ore' && candidate.visible && candidate.targetToken && !mining.attempted.has(positionKey(candidate.position))
         && Math.hypot(candidate.position.x + 0.5 - latestPlayer.position.x, candidate.position.y + 0.5 - latestPlayer.position.y, candidate.position.z + 0.5 - latestPlayer.position.z) >= 2);
       if (!candidate) { await this.returnFromMining(epoch, mining, child, false); return; }
       mining.attempted.add(positionKey(candidate.position)); mining.state.attemptedBlocks++;

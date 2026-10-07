@@ -13,7 +13,7 @@ import static com.mcbot.servercontrol.Protocol.*;
 final class ResourceTargets {
     static final long TTL_MS=120_000;
     static final int LIMIT=256;
-    record Target(String session,long generation,Object dimension,BlockPos position,BlockState state,Object chunk,long expiresAt,CompanionMiningGuard miningGuard) {}
+    record Target(String session,long generation,Object dimension,BlockPos position,BlockState state,Object chunk,long expiresAt,CompanionMiningGuard miningGuard,List<ResourceCatalog.Drop> drops) {}
     private final ControlSession session;
     private final LongSupplier clock;
     private final LinkedHashMap<String,Target> targets=new LinkedHashMap<>();
@@ -23,15 +23,18 @@ final class ResourceTargets {
         return issue(body,position,state,null);
     }
     String issue(ServerPlayer body,BlockPos position,BlockState state,CompanionMiningGuard miningGuard) {
+        List<ResourceCatalog.Drop> drops=List.of();
         if(miningGuard!=null) {
-            if(!ResourceCatalog.ore(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()))throw error("UNSUPPORTED","Companion mining only accepts the six ordinary ore resources");
+            if(!ResourceCatalog.ore(state))throw error("UNSUPPORTED","Companion mining only accepts ores (#c:ores)");
             miningGuard.validateTarget(position);
+            // Pickups are authorized against what this ore really drops on this server.
+            drops=ResourceCatalog.drops(body,position,state);
         }
         var chunk=body.serverLevel().getChunkSource().getChunkNow(position.getX()>>4,position.getZ()>>4);
         if(chunk==null) throw error("UNLOADED","Resource chunk is not loaded");
         targets.entrySet().removeIf(e->e.getValue().expiresAt()<=clock.getAsLong());
         while(targets.size()>=LIMIT) targets.remove(targets.keySet().iterator().next());
-        String id=UUID.randomUUID().toString();targets.put(id,new Target(session.sessionId(),session.generation(),body.serverLevel(),position.immutable(),state,chunk,clock.getAsLong()+TTL_MS,miningGuard));return id;
+        String id=UUID.randomUUID().toString();targets.put(id,new Target(session.sessionId(),session.generation(),body.serverLevel(),position.immutable(),state,chunk,clock.getAsLong()+TTL_MS,miningGuard,drops));return id;
     }
     Target require(ServerPlayer body,String id) {
         Target target=requireContext(body,id);
@@ -49,12 +52,11 @@ final class ResourceTargets {
     }
     Target requirePickup(ServerPlayer body,String id,Vec3 drop,String expectedItem) {
         Target target=requireContext(body,id);
-        String block=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(target.state().getBlock()).toString();
-        validatePickupAuthorization(target,drop,block,expectedItem);return target;
+        validatePickupAuthorization(target,drop,expectedItem);return target;
     }
-    static void validatePickupAuthorization(Target target,Vec3 drop,String block,String expectedItem) {
+    static void validatePickupAuthorization(Target target,Vec3 drop,String expectedItem) {
         if(target.miningGuard()==null)throw error("UNSUPPORTED","Pickup resource token has no bound companion mining guard");
-        if(!Objects.equals(ResourceCatalog.ORE_DROPS.get(block),expectedItem))throw error("UNSUPPORTED","Pickup item does not match the ordinary ore output authorization");
+        if(!ResourceCatalog.drops(target.drops(),expectedItem))throw error("UNSUPPORTED","Pickup item is not an ordinary drop of the mined ore");
         target.miningGuard().validatePickup(target.position(),drop);
     }
     static boolean valid(Target target,String session,long generation,Object dimension,long now) {

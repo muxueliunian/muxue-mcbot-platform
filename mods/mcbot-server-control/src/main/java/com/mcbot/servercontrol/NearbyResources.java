@@ -22,13 +22,12 @@ final class NearbyResources {
         var mining=args.has("companionMiningGuard")?CompanionMiningGuard.options(object(args,"companionMiningGuard")):null;
         if(mining!=null&&args.has("center"))throw error("INVALID_ARGUMENT","Companion mining scan center is always the live bound player position");
         if(!args.has("blockIds")||!args.get("blockIds").isJsonArray()||args.getAsJsonArray("blockIds").isEmpty()||args.getAsJsonArray("blockIds").size()>8)
-            throw error("INVALID_ARGUMENT","blockIds requires one to eight explicit catalog IDs");
+            throw error("INVALID_ARGUMENT","blockIds requires one to eight block IDs or block tags");
         Set<String> ids=new LinkedHashSet<>();
         for(JsonElement entry:args.getAsJsonArray("blockIds")) {
-            if(!entry.isJsonPrimitive()||!entry.getAsJsonPrimitive().isString()||!ResourceCatalog.allowed(entry.getAsString())) throw error("UNSUPPORTED","Resource ID is not in the finite stone/log/coal/iron/copper catalog");
+            if(!entry.isJsonPrimitive()||!entry.getAsJsonPrimitive().isString()||!ResourceCatalog.selector(entry.getAsString())) throw error("INVALID_ARGUMENT","blockIds entries are block IDs (minecraft:oak_log) or block tags (#c:ores)");
             ids.add(entry.getAsString());
         }
-        if(mining!=null&&ids.stream().anyMatch(id->!ResourceCatalog.ore(id)))throw error("UNSUPPORTED","Companion mining scans only the six ordinary ore catalog blocks");
         int radius=integer(args,"radius",mining==null?4:mining.maxDistance(),1,mining==null?MAX_RADIUS:mining.maxDistance()),limit=integer(args,"maxResults",32,1,64);
         Vec3 center=body;
         if(args.has("center")) {JsonObject p=object(args,"center");center=new Vec3(number(p,"x"),number(p,"y"),number(p,"z"));}
@@ -41,6 +40,7 @@ final class NearbyResources {
         Options options=options(args,body.position());
         CompanionMiningGuard mining=args.has("companionMiningGuard")?CompanionMiningGuard.create(body,object(args,"companionMiningGuard")):null;
         if(mining!=null){mining.validateBody();options=new Options(options.blockIds(),options.radius(),options.maxResults(),mining.center());}
+        var selection=ResourceCatalog.select(options.blockIds());
         BlockPos origin=BlockPos.containing(options.center());
         List<Candidate> matches=new ArrayList<>(),found=new ArrayList<>();int visited=0,unloaded=0,rejected=0;boolean exhausted=false;
         FlatApproach geometry=new FlatApproach(body);
@@ -52,33 +52,39 @@ final class NearbyResources {
                 var chunk=body.serverLevel().getChunkSource().getChunkNow(pos.getX()>>4,pos.getZ()>>4);
                 if(chunk==null){unloaded++;continue;}
                 BlockState state=chunk.getBlockState(pos);
-                if(!options.blockIds().contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()))continue;
+                // Companion mining digs ores only, whatever the request named.
+                if(!selection.matches(state)||ResourceCatalog.kind(state)==null||mining!=null&&!ResourceCatalog.ore(state))continue;
                 matches.add(new Candidate(pos,state,Vec3.atCenterOf(pos).distanceTo(options.center())));
             }
         }
         matches.sort(Comparator.comparingDouble(Candidate::distance).thenComparingInt(c->c.position().getX()).thenComparingInt(c->c.position().getY()).thenComparingInt(c->c.position().getZ()));
-        Set<BlockPos> tree=new HashSet<>(mining==null?treeAbove(body,origin,options,matches):Set.of());
+        Set<BlockPos> tree=new HashSet<>(mining==null?treeAbove(body,origin,options,selection,matches):Set.of());
         // Safety and line-of-sight checks cost terrain reads: run them nearest first, one past the limit to report truncation.
         List<Candidate> hidden=new ArrayList<>();
         for(Candidate match:matches) {
             if(found.size()>options.maxResults())break;
             // Logs high in a tree are usually hidden behind the trunk or leaves from the ground: dig time checks the real line of sight.
             try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry);
-                if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){if(mining==null&&match.state().is(BlockTags.LOGS))hidden.add(match);else rejected++;continue;}}
+                if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){if(mining==null&&ResourceCatalog.kind(match.state())==ResourceCatalog.Kind.LOG)hidden.add(match);else rejected++;continue;}}
             catch(Protocol.Error unsafe){if(unsafe.code.equals("PATH_BUDGET")){exhausted=true;break;}rejected++;continue;}
             found.add(match);
         }
         rejected+=trunk(found,hidden,tree,options.maxResults());
         JsonArray candidates=new JsonArray();
         var inventory=ToolAssessment.inventory(body);
+        // One loot-table profile per block type in this scan (same block, same drops).
+        Map<BlockState,JsonArray> profiles=new HashMap<>();
         for(Candidate candidate:found.subList(0,Math.min(found.size(),options.maxResults()))) {
             JsonObject properties=new JsonObject();candidate.state().getValues().forEach((property,value)->properties.addProperty(property.getName(),value.toString()));
             var tools=ToolAssessment.evaluateSummary(inventory,candidate.state(),candidate.state().getDestroySpeed(body.serverLevel(),candidate.position()));
-            var policy=ResourceCatalog.discoveryPolicy(BuiltInRegistries.BLOCK.getKey(candidate.state().getBlock()).toString());
+            var kind=ResourceCatalog.kind(candidate.state());
+            var policy=ResourceCatalog.discoveryPolicy(kind==ResourceCatalog.Kind.ORE);
+            JsonArray drops=profiles.computeIfAbsent(candidate.state(),state->{JsonArray list=new JsonArray();for(var drop:ResourceCatalog.drops(body,candidate.position(),state))list.add(drop.json());return list;});
             JsonArray suitable=new JsonArray();for(var tool:tools)if(tool.slot()<9&&ToolAssessment.recommendationReason(tool,policy)==null)suitable.add(tool.slot());
             var recommended=ToolAssessment.recommend(tools,body.getInventory().selected,policy,true);
             var inventoryRecommended=ToolAssessment.recommend(tools,body.getInventory().selected,policy,false);
             JsonObject value=obj("position",position(Vec3.atLowerCornerOf(candidate.position())),"id",BuiltInRegistries.BLOCK.getKey(candidate.state().getBlock()).toString(),"properties",properties,
+                "kind",kind.wire(),"drops",drops.deepCopy(),
                 "targetToken",targets.issue(body,candidate.position(),candidate.state(),mining),"distance",candidate.distance(),"visible",!tree.contains(candidate.position()),"requiresCorrectTool",candidate.state().requiresCorrectToolForDrops(),"suitableToolSlots",suitable);
             if(recommended!=null)value.addProperty("recommendedToolSlot",recommended.slot());
             if(inventoryRecommended!=null)value.addProperty("recommendedInventorySlot",inventoryRecommended.slot());
@@ -89,12 +95,12 @@ final class NearbyResources {
     }
     /**
      * Logs above the scan band connected (26-neighbourhood) to a requested log found in it, appended to the
-     * matches bottom-up. Only requested log IDs, loaded cells, within TREE_SPREAD of the scan radius.
+     * matches bottom-up. Only requested logs, loaded cells, within TREE_SPREAD of the scan radius.
      */
-    private static Set<BlockPos> treeAbove(ServerPlayer body,BlockPos origin,Options options,List<Candidate> matches) {
+    private static Set<BlockPos> treeAbove(ServerPlayer body,BlockPos origin,Options options,ResourceCatalog.Selection selection,List<Candidate> matches) {
         Set<BlockPos> seen=new HashSet<>(),added=new LinkedHashSet<>();
         Deque<BlockPos> queue=new ArrayDeque<>();
-        for(Candidate match:matches) {seen.add(match.position());if(match.state().is(BlockTags.LOGS))queue.add(match.position());}
+        for(Candidate match:matches) {seen.add(match.position());if(ResourceCatalog.kind(match.state())==ResourceCatalog.Kind.LOG)queue.add(match.position());}
         int spread=options.radius()+TREE_SPREAD;
         List<Candidate> extra=new ArrayList<>();
         while(!queue.isEmpty()&&added.size()<TREE_LIMIT) {
@@ -107,7 +113,7 @@ final class NearbyResources {
                 var chunk=body.serverLevel().getChunkSource().getChunkNow(next.getX()>>4,next.getZ()>>4);
                 if(chunk==null)continue;
                 BlockState state=chunk.getBlockState(next);
-                if(!state.is(BlockTags.LOGS)||!options.blockIds().contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()))continue;
+                if(ResourceCatalog.kind(state)!=ResourceCatalog.Kind.LOG||!selection.matches(state))continue;
                 queue.add(next);
                 if(next.getY()>origin.getY()+ABOVE&&added.size()<TREE_LIMIT){added.add(next);extra.add(new Candidate(next,state,Vec3.atCenterOf(next).distanceTo(options.center())));}
             }

@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { BodyError, type Body, type Observation, type Operation, type ItemValue, type Position, type NearbyResources, type ActionName, type ActionArguments, type GroundItem, type CompanionGuard } from './body.js';
 import type { EventJournal } from './events.js';
 import { selectFood, type SurvivalTasks } from './survival-tasks.js';
-import { isLogItem, pillarBlockCount, pillarDown, pillarUp, type PillarBlock, type PillarHost, type PillarPurpose } from './pillar.js';
+import { pillarBlockCount, pillarDown, pillarUp, type PillarBlock, type PillarHost, type PillarPurpose } from './pillar.js';
 import type { SurvivalPolicy } from './survival-reflexes.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
@@ -17,32 +17,19 @@ const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'k
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number };
 type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; stuckHigh?: number };
-type Active = { id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number };
+type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
-// Fixed vanilla ordinary outputs authorize targets, never predict actual loot/yield or stack limits.
-const oreDrops: Readonly<Record<string, string>> = {
-  'minecraft:coal_ore': 'minecraft:coal', 'minecraft:deepslate_coal_ore': 'minecraft:coal',
-  'minecraft:iron_ore': 'minecraft:raw_iron', 'minecraft:deepslate_iron_ore': 'minecraft:raw_iron',
-  'minecraft:copper_ore': 'minecraft:raw_copper', 'minecraft:deepslate_copper_ore': 'minecraft:raw_copper',
-};
-function dropPreference(block: string, item: string): 'any' | 'silk_touch' | 'no_silk_touch' | undefined {
-  if (Object.hasOwn(oreDrops, block)) return oreDrops[block] === item ? 'no_silk_touch' : undefined;
-  if (block === 'minecraft:stone') return item === 'minecraft:cobblestone' ? 'no_silk_touch' : item === block ? 'silk_touch' : undefined;
-  if (block === 'minecraft:deepslate') return item === 'minecraft:cobbled_deepslate' ? 'no_silk_touch' : item === block ? 'silk_touch' : undefined;
-  if (['minecraft:granite', 'minecraft:diorite', 'minecraft:andesite', 'minecraft:oak_log', 'minecraft:spruce_log', 'minecraft:birch_log', 'minecraft:jungle_log', 'minecraft:acacia_log', 'minecraft:dark_oak_log', 'minecraft:mangrove_log', 'minecraft:cherry_log'].includes(block) && block === item) return 'any';
-  return undefined;
-}
-
 type Candidate = NearbyResources['candidates'][number];
+// The server rolls each block's real loot table (plain and silk touch tool): drops authorize targets, never predict yield.
+const dropOf = (candidate: Candidate, item: string) => candidate.drops.find(drop => drop.item === item);
+const dropPreference = (candidate: Candidate, item: string) => dropOf(candidate, item)?.preference;
 /** Ordinary block reach is 4.5 blocks from the eyes to the hit point; the block centre a little inside that counts as reachable. */
 const REACH = 4.4, EYE = 1.62;
 const eyeDistance = (feet: Position, block: Position) => Math.hypot(block.x + 0.5 - feet.x, block.y + 0.5 - (feet.y + EYE), block.z + 0.5 - feet.z);
 const inReach = (feet: Position, block: Position) => eyeDistance(feet, block) <= REACH;
 /** Native refusals of a dig from where the body stands; nothing was broken, so the block waits for an approach. */
 const reachRefusals = new Set(['OUT_OF_REACH', 'NO_LINE_OF_SIGHT']);
-/** Least items one block drops without Fortune (raw copper drops 2..5); everything else gathered drops at least one. */
-const leastYield: Record<string, number> = { 'minecraft:raw_copper': 2 };
 /**
  * A candidate this many blocks above the feet is climbed to on a pillar (an arm reaches about five up from
  * beside it, but leaves and the trunk usually block that line of sight). The climb stays on candidates within
@@ -50,7 +37,8 @@ const leastYield: Record<string, number> = { 'minecraft:raw_copper': 2 };
  */
 const CLIMB_ABOVE = 4, CLIMB_SPREAD = 2.5, MAX_PILLAR = 20;
 const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air', 'minecraft:short_grass', 'minecraft:tall_grass', 'minecraft:fern', 'minecraft:large_fern']);
-const isLeaves = (id: string | undefined) => !!id && /^minecraft:[a-z_]+_leaves$/.test(id);
+// Modded leaves are named the same way (biomesoplenty:fir_leaves).
+const isLeaves = (id: string | undefined) => !!id && /^[a-z0-9_.-]+:[a-z0-9_/]*leaves$/.test(id);
 const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
 const nearest = (list: Candidate[], feet: Position) => [...list].sort((a, b) => eyeDistance(feet, a.position) - eyeDistance(feet, b.position))[0];
 /** Stops that mean nobody may act for the task any more: the pillar stays where it is. */
@@ -83,7 +71,7 @@ export class GatherTasks {
     this.references.set(resourceRef, { context: contextOf(scan), expires: this.now() + 30000, scan, radius: options.radius });
     if (this.references.size > 32) this.references.delete(this.references.keys().next().value!);
     return { resourceRef, center: scan.center, candidates: scan.candidates.map(({ targetToken: _private, properties: _properties, ...item }) => item), truncated: scan.truncated,
-      limitation: '只限本次已加载、可见的原版石料／原木及煤、铁、铜和深层矿石候选和固定区域；矿石只支持煤／粗铁／粗铜普通产物，精准矿石块未支持。不能识别人工建筑或天然树，不支持任意模组矿石；数据包实际掉落仍以原生拾取回执为准。引用30秒内提交；不补扫扩展候选，不挖路或搭桥。' };
+      limitation: '只限本次已加载、可见的原木、矿石、石料候选（按方块标签认，模组的也算：#minecraft:logs、#c:ores、#c:stones）和固定区域；drops 是按服务器掉落表算出的可能产物，矿石只取普通产物（不支持精准采集矿石块），实际数量以原生拾取回执为准。不能识别人工建筑。引用30秒内提交；不补扫扩展候选，不挖路或搭桥。' };
   }
   private check(task: Active): void {
     task.borrowed?.check();
@@ -172,7 +160,7 @@ export class GatherTasks {
   /** One observed ore block, without a predicted item yield or an old-ground pickup goal. */
   async mineCompanionBlock(candidate: NearbyResources['candidates'][number], owner: BorrowedMining): Promise<Operation> {
     if (!this.body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体没有持续陪挖原生玩家边界保护能力');
-    const item = oreDrops[candidate.id];
+    const item = candidate.kind === 'ore' ? candidate.drops.find(drop => drop.preference !== 'silk_touch')?.item : undefined;
     if (!item || !candidate.visible || !candidate.targetToken || !isDeepStrictEqual(candidate, owner.candidate)) throw new BodyError('INVALID_ARGUMENT', '陪挖只接受一个已观察的明确普通矿石候选');
     const accepted = await this.startOwned('gather-resources', { item, count: 1, radius: owner.companionGuard.maxDistance, maxSteps: 16, timeoutMs: 60000 }, owner);
     while (this.operations.get(accepted.operationId)?.status === 'running') { owner.check(); await new Promise(resolve => setTimeout(resolve, 50)); }
@@ -206,7 +194,6 @@ export class GatherTasks {
       }
       let candidates: NearbyResources['candidates'] = [];
       if (name === 'gather-resources') {
-        if (Object.hasOwn(oreDrops, request.item)) throw new BodyError('UNSUPPORTED', '首轮矿石采集只支持煤／粗铁／粗铜普通产物，精准矿石块目标尚未支持');
         if (miningOwner(borrowed)) candidates = [structuredClone(borrowed.candidate)];
         else {
           const ref = this.references.get(request.resourceRef ?? '');
@@ -214,9 +201,11 @@ export class GatherTasks {
           if (!isDeepStrictEqual(ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
           task.center = ref.scan.center; task.radius = ref.radius; candidates = structuredClone(ref.scan.candidates);
         }
-        const compatible = candidates.filter(candidate => dropPreference(candidate.id, request.item) !== undefined);
-        if (candidates.length > 0 && compatible.length === 0) throw new BodyError('UNSUPPORTED', '冻结资源候选与所需物品的已知掉落不匹配，未开挖');
+        const compatible = candidates.filter(candidate => dropPreference(candidate, request.item) !== undefined);
+        if (candidates.length > 0 && compatible.length === 0) throw new BodyError('UNSUPPORTED', `冻结资源候选都掉不出 ${request.item}（可能的掉落：${[...new Set(candidates.flatMap(candidate => candidate.drops.map(drop => drop.item)))].join('、') || '无'}；矿石块要精准采集，暂不支持），未开挖`);
         candidates = compatible;
+        // Least items one block drops without Fortune (raw copper 2..5); a chance drop counts 0.
+        if (compatible.length) task.least = Math.min(...compatible.map(candidate => dropOf(candidate, request.item)!.least));
       }
       const currentTask = task;
       for (const item of state.groundItems) if (item.stack.id === request.item && !miningOwner(borrowed) && (!borrowed || item.entityId === borrowed.entityId) && this.inside(currentTask, item.position)) currentTask.allowed.add(item.entityId);
@@ -384,7 +373,7 @@ export class GatherTasks {
       }
     }
     let slot = candidate.recommendedToolSlot;
-    const preference = dropPreference(candidate.id, task.request.item)!;
+    const preference = dropPreference(candidate, task.request.item)!;
     if (this.survival && this.body.assessTool) {
       const assessed = await this.body.assessTool({ ...candidate.position, expectedBlock: candidate.id, policy: policy?.toolPolicy, minRemainingDurability: policy?.minRemainingDurability,
         dropPreference: preference });
@@ -392,8 +381,8 @@ export class GatherTasks {
       if (!isDeepStrictEqual(contextOf(assessed), task.context)) throw new BodyError('WORLD_CHANGED', '工具评估不属于采集授权代次');
       const choice = assessed.candidates.find(tool => tool.slot === assessed.recommendedSlot);
       if (!choice || choice.eligible !== true || choice.componentsComplete === false || choice.components === undefined) throw new BodyError('WRONG_TOOL', '没有已核验且满足掉落／耐久策略的工具');
-      if (Object.hasOwn(oreDrops, candidate.id) && choice.dropEffectsKnown !== true) throw new BodyError('UNKNOWN', '矿石工具的掉落效果尚未核验，未开挖或自动重试');
-      if (Object.hasOwn(oreDrops, candidate.id) && (!Number.isInteger(choice.silkTouch) || choice.silkTouch! < 0)) throw new BodyError('UNKNOWN', '矿石工具缺少明确精准采集评估，未开挖');
+      if (candidate.kind === 'ore' && choice.dropEffectsKnown !== true) throw new BodyError('UNKNOWN', '矿石工具的掉落效果尚未核验，未开挖或自动重试');
+      if (candidate.kind === 'ore' && (!Number.isInteger(choice.silkTouch) || choice.silkTouch! < 0)) throw new BodyError('UNKNOWN', '矿石工具缺少明确精准采集评估，未开挖');
       if (preference === 'no_silk_touch' && choice.silkTouch! > 0 || preference === 'silk_touch' && choice.silkTouch === 0) throw new BodyError('WRONG_TOOL', '推荐工具与目标掉落冲突，未开挖');
       task.progress.stage = 'preparing-tool';
       if (choice.count === 0 && choice.id === 'minecraft:air' && choice.slot <= 8) {
@@ -405,7 +394,7 @@ export class GatherTasks {
       }
       state = await this.observe(task); slot = state.selectedSlot;
     } else {
-      if (Object.hasOwn(oreDrops, candidate.id)) throw new BodyError('UNSUPPORTED', '矿石采集需要完整工具评估与准备能力，未仅依据基础快捷栏资格开挖');
+      if (candidate.kind === 'ore') throw new BodyError('UNSUPPORTED', '矿石采集需要完整工具评估与准备能力，未仅依据基础快捷栏资格开挖');
       if (slot === undefined || !candidate.suitableToolSlots.includes(slot)) throw new BodyError('WRONG_TOOL', '本次授权资源没有合适快捷栏工具，未挖掘');
     }
     if (slot === undefined) throw new BodyError('WRONG_TOOL', '准备工具后没有权威选槽状态');
@@ -418,7 +407,7 @@ export class GatherTasks {
   /** Blocks dug since the last pickup already cover the rest of the goal at the item's least native yield per block. */
   private covered(task: Active, pending: number): boolean {
     const target = task.progress.targetCount;
-    return target === undefined ? pending >= 1 : pending * (leastYield[task.request.item] ?? 1) >= target - (task.progress.pickedUpCount ?? 0);
+    return target === undefined ? pending >= 1 : pending * (task.least ?? 1) >= target - (task.progress.pickedUpCount ?? 0);
   }
   /**
    * Dig every frozen candidate reachable from where the body stands, nearest first, until the dug blocks
@@ -512,7 +501,7 @@ export class GatherTasks {
     if (!spot) { remaining.splice(remaining.indexOf(target), 1); task.progress.unreachable = (task.progress.unreachable ?? 0) + 1; return 0; }
     task.progress.stage = 'walking-to-pillar-spot';
     await this.step(task, 'move-to-position', { x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5, tolerance: 0.3, timeoutMs: Math.min(20000, Math.max(500, task.deadline - this.now())) });
-    const purpose: PillarPurpose = isLogItem(task.request.item) ? 'log' : 'other';
+    const purpose: PillarPurpose = target.kind === 'log' ? 'log' : 'other';
     const host = this.pillarHost(task), placed: PillarBlock[] = [];
     let dug = 0, failure: unknown;
     try {
@@ -566,7 +555,7 @@ export class GatherTasks {
         const candidate = nearest(remaining, state.position);
         const high = !miningOwner(task.borrowed) && this.climbable() && candidate.position.y - feetLevel(state.position) >= CLIMB_ABOVE;
         // A tree is climbed straight away; anything else high may sit on a slope, so walk up first and climb when no spot reaches it.
-        if (high && isLogItem(task.request.item)) { pending += await this.climb(task, remaining, candidate); continue; }
+        if (high && candidate.kind === 'log') { pending += await this.climb(task, remaining, candidate); continue; }
         state = await this.prepareFor(task, candidate, state);
         task.progress.stage = 'approaching-resource';
         try {

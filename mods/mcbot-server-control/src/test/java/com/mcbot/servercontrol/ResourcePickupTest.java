@@ -33,8 +33,8 @@ final class ResourcePickupTest {
         void failure(String code){pickup.tick();check(operation.status.equals("failed")&&operation.result.getAsJsonObject().get("code").getAsString().equals(code),"pickup fails with "+code);check(view.input==null,"failure stops physical input");int moves=view.moves;pickup.tick();check(view.moves==moves,"failed pickup never automatically retries");}
     }
     static void run(){
-        check(ResourceCatalog.allowed("minecraft:stone")&&ResourceCatalog.allowed("minecraft:cherry_log"),"explicit first-batch stones and logs allowed");
-        check(!ResourceCatalog.allowed("minecraft:diamond_ore")&&!ResourceCatalog.allowed("minecraft:cobblestone")&&!ResourceCatalog.allowed("example:log"),"unlisted ores, building cobblestone and unadapted mod resources rejected");
+        check(ResourceCatalog.selector("minecraft:stone")&&ResourceCatalog.selector("example:maple_log")&&ResourceCatalog.selector("#c:ores")&&ResourceCatalog.selector("#minecraft:logs"),"block IDs and block tags (modded too) are resource selectors");
+        check(!ResourceCatalog.selector("stone")&&!ResourceCatalog.selector("#ores")&&!ResourceCatalog.selector("Minecraft:Stone")&&!ResourceCatalog.selector("##c:ores"),"selectors must be namespaced IDs or tags");
         check(ResourceCatalog.protectsPlayer(BlockPos.ZERO,new AABB(0.2,1,0.2,0.8,2.8,0.8)),"block supporting whole player sole cannot be a resource");
         check(ResourceCatalog.protectsPlayer(BlockPos.ZERO,new AABB(0.2,0.7,0.2,0.8,2.5,0.8)),"block intersecting another player cannot be dug");
         check(!ResourceCatalog.protectsPlayer(BlockPos.ZERO,new AABB(1.2,1,0.2,1.8,2.8,0.8)),"adjacent wall resource does not equal player support");
@@ -44,16 +44,15 @@ final class ResourcePickupTest {
         Vec3 origin=new Vec3(0.5,1,0.5);
         NearbyResources.Options options=NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",6,"maxResults",64),origin);
         check(options.radius()==6&&options.maxResults()==64&&options.center().equals(origin),"bounded default scan center preserves exact body position");
-        NearbyResources.Options ores=NearbyResources.options(obj("blockIds",List.copyOf(ResourceCatalog.ORE_DROPS.keySet())),origin);
+        NearbyResources.Options ores=NearbyResources.options(obj("blockIds",List.of("minecraft:coal_ore","minecraft:deepslate_coal_ore","minecraft:iron_ore","minecraft:deepslate_iron_ore","minecraft:copper_ore","minecraft:deepslate_copper_ore")),origin);
         check(ores.blockIds().size()==6&&ores.radius()==4&&ores.maxResults()==32&&ores.center().equals(origin),"six explicit ore IDs enter the same frozen bounded discovery entrance");
-        check(ResourceCatalog.ORE_DROPS.get("minecraft:iron_ore").equals("minecraft:raw_iron")&&ResourceCatalog.ORE_DROPS.get("minecraft:deepslate_copper_ore").equals("minecraft:raw_copper"),"ore authorization uses ordinary vanilla outputs without predicting count");
-        errorCode("UNSUPPORTED",()->NearbyResources.options(obj("blockIds",List.of("example:copper_ore")),origin));
+        check(NearbyResources.options(obj("blockIds",List.of("#c:ores","example:maple_log")),origin).blockIds().size()==2,"tags and modded IDs enter discovery; the live catalog decides at scan time");
+        errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("copper_ore")),origin));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of()),origin));
-        errorCode("UNSUPPORTED",()->NearbyResources.options(obj("blockIds",List.of("minecraft:diamond_ore")),origin));
         check(NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",16),origin).radius()==16,"scan reaches sixteen blocks");
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"radius",17),origin));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"center",obj("x",9,"y",1,"z",0)),origin));
-        Object dimension=new Object();var target=new ResourceTargets.Target("session",1,dimension,BlockPos.ZERO,null,new Object(),100,null);
+        Object dimension=new Object();var target=new ResourceTargets.Target("session",1,dimension,BlockPos.ZERO,null,new Object(),100,null,List.of());
         check(ResourceTargets.valid(target,"session",1,dimension,99),"resource ref live in bound epoch");
         check(!ResourceTargets.valid(target,"session",1,dimension,100)&&!ResourceTargets.valid(target,"session",2,dimension,1)&&!ResourceTargets.valid(target,"session",1,new Object(),1),"expiry stop generation and real dimension invalidate references");
         JsonObject dropPosition=obj("x",3,"y",201.25,"z",3),dropStack=stack(1,99);

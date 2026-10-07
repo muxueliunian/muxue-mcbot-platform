@@ -104,7 +104,7 @@ test('MCP invalid or conflicting mining requests do not rearm stopped reflexes',
   const f = await mcpFixture(t);
   const invalid = [
     { action: 'follow', player: 'Alex', mining: { blockIds: ['minecraft:coal_ore'] } },
-    { action: 'follow', player: 'Alex', mining: { ...miningOptions, blockIds: ['minecraft:diamond_ore'] } },
+    { action: 'follow', player: 'Alex', mining: { ...miningOptions, blockIds: ['diamond_ore'] } },
     { action: 'follow', player: 'Alex', mining: { ...miningOptions, blockIds: ['minecraft:coal_ore', 'minecraft:coal_ore'] } },
     { action: 'follow', player: 'Alex', distance: 5, mining: miningOptions },
     { action: 'wait', mining: miningOptions },

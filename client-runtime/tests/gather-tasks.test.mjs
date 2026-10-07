@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { resourceOf } from './resource-catalog.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { GatherTasks } from '../dist/gather-tasks.js';
@@ -21,7 +22,7 @@ function fixture({ drops = [], blocks = 3, automatic = false, max = 64, dropCoun
     inventory: Array.from({ length: 36 }, (_, slot) => ({ slot, id: full ? 'minecraft:dirt' : 'minecraft:air', count: full ? 64 : 0, components: {}, ...(full ? { maxStackSize: 64 } : {}) })),
     groundItems: drops.map((value, index) => ({ entityId: randomUUID(), position: { x: index + 1, y: 64, z: 0 }, onGround: true, visibility: 'visible', stack: clone(value) })), groundItemsTruncated: false, pickupCursor: 0, pickupOldestCursor: 0, pickupReceipts: [] };
   state.inventory[0] = { slot: 0, id: 'minecraft:iron_pickaxe', count: 1, components: {}, maxStackSize: 1 };
-  const candidates = Array.from({ length: blocks }, (_, i) => ({ position: { x: i + 1, y: 64, z: 1 }, id: blockId, properties: {}, distance: i + 1, visible: true, targetToken: randomUUID(), requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }));
+  const candidates = Array.from({ length: blocks }, (_, i) => ({ position: { x: i + 1, y: 64, z: 1 }, id: blockId, ...resourceOf(blockId), properties: {}, distance: i + 1, visible: true, targetToken: randomUUID(), requiresCorrectTool: true, suitableToolSlots: [0], recommendedToolSlot: 0 }));
   let broken = 0;
   let owner;
   const calls = [], ops = new Map();
@@ -104,6 +105,16 @@ test('gather stops digging in place once the dug blocks cover the goal', async (
   const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 2 }));
   assert.equal(result.status, 'succeeded', result.summary); assert.equal(result.result.minedBlocks, 2);
   assert.equal(f.calls.filter(call => call.name === 'approach-resource').length, 0);
+});
+test('modded resources gather by the drops the server reports, with their least yield per block', async () => {
+  const logs = fixture({ blocks: 3, blockId: 'biomesoplenty:fir_log', dropItem: 'biomesoplenty:fir_log' });
+  const chopped = await logs.done(await logs.tasks.start('gather-resources', { resourceRef: await logs.ref(), item: 'biomesoplenty:fir_log', count: 2 }));
+  assert.equal(chopped.status, 'succeeded', chopped.summary); assert.equal(chopped.result.minedBlocks, 2);
+  const slate = fixture({ blocks: 3, blockId: 'example:slate', dropItem: 'example:slate_cobble', dropCount: 3 });
+  for (const candidate of slate.candidates) candidate.drops = [{ item: 'example:slate_cobble', preference: 'any', least: 3 }];
+  const dug = await slate.done(await slate.tasks.start('gather-resources', { resourceRef: await slate.ref(), item: 'example:slate_cobble', count: 3 }));
+  assert.equal(dug.status, 'succeeded', dug.summary); assert.equal(dug.result.minedBlocks, 1, 'three per block covers the goal after one block');
+  await assert.rejects(slate.tasks.start('gather-resources', { resourceRef: await slate.ref(), item: 'minecraft:dirt', count: 1 }), error => error.code === 'UNSUPPORTED' && error.message.includes('example:slate_cobble'));
 });
 test('a reachable-looking block refused for line of sight is left for an approach, not retried in place', async () => {
   const f = fixture({ blocks: 2 });
@@ -219,7 +230,7 @@ test('ore target mismatch and unsupported silk ore block goals never mine, mixed
     assert.equal(f.calls.some(call => call.name === 'dig-block'), false);
   }
   const f = survivalFixture({ blockId: 'minecraft:iron_ore', dropItem: 'minecraft:raw_iron', blocks: 2 }); f.policy.autoEat = false;
-  f.candidates[0].id = 'minecraft:oak_log';
+  Object.assign(f.candidates[0], { id: 'minecraft:oak_log', ...resourceOf('minecraft:oak_log') });
   const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:raw_iron', count: 1 }));
   assert.equal(result.status, 'succeeded');
   assert.deepEqual(f.calls.filter(call => call.name === 'dig-block').map(call => call.args.targetToken), [f.candidates[1].targetToken]);

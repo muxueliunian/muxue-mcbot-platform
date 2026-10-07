@@ -313,10 +313,9 @@ final class SurvivalActions {
         return before.get("id").equals(now.get("id"))&&before.get("components").equals(now.get("components"));
     }
     private void requireOrdinaryOreTool(BlockState state,BlockPos position) {
-        String id=BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-        if(!ResourceCatalog.ore(id))return;
+        if(!ResourceCatalog.ore(state))return;
         var view=ToolAssessment.snapshot(player.getInventory().selected,player.getMainHandItem(),player.registryAccess());
-        ResourceCatalog.requireOrdinaryOreTool(id,ToolAssessment.candidate(view,state,state.getDestroySpeed(player.serverLevel(),position)));
+        ResourceCatalog.requireOrdinaryOreTool(true,ToolAssessment.candidate(view,state,state.getDestroySpeed(player.serverLevel(),position)));
     }
     private void completeDig() {
         ControlSession.Operation operation=digging;

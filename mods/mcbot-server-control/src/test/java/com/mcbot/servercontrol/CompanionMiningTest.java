@@ -41,9 +41,10 @@ final class CompanionMiningTest {
         errorCode("INVALID_ARGUMENT",()->CompanionMiningGuard.options(obj("player","Alex","expectedEntityId","1-1-1-1-1","maxDistance",4)));
         errorCode("INVALID_ARGUMENT",()->CompanionMiningGuard.options(obj("player","Alex/other","expectedEntityId",UUID_PLAYER.toString(),"maxDistance",4)));
         errorCode("INVALID_ARGUMENT",()->CompanionMiningGuard.options(obj("player","Alex","expectedEntityId",UUID_PLAYER.toString())));
-        var scan=NearbyResources.options(obj("blockIds",List.copyOf(ResourceCatalog.ORE_DROPS.keySet()),"companionMiningGuard",args()),new Vec3(1.5,1,0.5));
-        check(scan.radius()==4&&scan.blockIds().size()==6,"guarded discovery accepts exactly the existing six ore IDs");
-        errorCode("UNSUPPORTED",()->NearbyResources.options(obj("blockIds",List.of("minecraft:stone"),"companionMiningGuard",args()),Vec3.ZERO));
+        var scan=NearbyResources.options(obj("blockIds",List.of("minecraft:coal_ore","minecraft:deepslate_coal_ore","minecraft:iron_ore","minecraft:deepslate_iron_ore","minecraft:copper_ore","minecraft:deepslate_copper_ore"),"companionMiningGuard",args()),new Vec3(1.5,1,0.5));
+        check(scan.radius()==4&&scan.blockIds().size()==6,"guarded discovery accepts ore IDs");
+        // Non-ores in a guarded request are skipped at scan time (the live #c:ores tag decides); the token issue refuses them too.
+        check(NearbyResources.options(obj("blockIds",List.of("#c:ores"),"companionMiningGuard",args()),new Vec3(1.5,1,0.5)).blockIds().equals(Set.of("#c:ores")),"guarded discovery accepts the ore tag");
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:iron_ore"),"companionMiningGuard",args(),"center",obj("x",0,"y",0,"z",0)),Vec3.ZERO));
         errorCode("INVALID_ARGUMENT",()->NearbyResources.options(obj("blockIds",List.of("minecraft:iron_ore"),"companionMiningGuard",args(),"radius",5),Vec3.ZERO));
 
@@ -72,24 +73,24 @@ final class CompanionMiningTest {
         check(!CompanionMiningGuard.miningSameCell(ORE,false,ORE,false,ORE),"stale positions without active flags do not conflict");
         check(!CompanionMiningGuard.miningSameCell(ORE,true,BlockPos.ZERO,true,new BlockPos(4,1,0)),"other actively mined cells do not conflict");
 
-        var target=new ResourceTargets.Target("session",1,good.dimension,ORE,null,new Object(),100,bound);
+        var target=new ResourceTargets.Target("session",1,good.dimension,ORE,null,new Object(),100,bound,List.of(new ResourceCatalog.Drop("minecraft:raw_iron","no_silk_touch",1)));
         // The source block may now be air. This production helper intentionally never reads its state.
-        ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_iron");
+        ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:raw_iron");
         good.player=new Vec3(2.5,1,0.5);
         errorCode("COMPANION_PROTECTED",()->bound.validateTarget(ORE));
-        ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_iron");
+        ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:raw_iron");
         check(true,"post-dig pickup keeps player/radius authority but does not apply mining-only minimum distance or original-state test");
-        errorCode("UNSUPPORTED",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_copper"));
-        errorCode("COMPANION_OUT_OF_RANGE",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(-2,1,0.5),"minecraft:iron_ore","minecraft:raw_iron"));
+        errorCode("UNSUPPORTED",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:raw_copper"));
+        errorCode("COMPANION_OUT_OF_RANGE",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(-2,1,0.5),"minecraft:raw_iron"));
         good.player=new Vec3(0.5,1,0.5);errorCode("COMPANION_OUT_OF_RANGE",()->bound.validatePickup(ORE,new Vec3(0.3,1,0.5)));
         bound.validatePickup(ORE,new Vec3(5.2,1,0.5));check(true,"mined drop may slide past the radius within the fixed reach margin and its source neighbourhood");
         errorCode("COMPANION_OUT_OF_RANGE",()->bound.validatePickup(ORE,new Vec3(6.0001,1,0.5)));
         good.feet=new Vec3(4.5001,1,0.5);errorCode("COMPANION_OUT_OF_RANGE",()->bound.validatePickup(ORE,new Vec3(4,1,0.5)));good.feet=new Vec3(1.5,1,0.5);
-        good.identity=new Object();errorCode("STALE_COMPANION",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_iron"));
+        good.identity=new Object();errorCode("STALE_COMPANION",()->ResourceTargets.validatePickupAuthorization(target,new Vec3(3.4,1,0.5),"minecraft:raw_iron"));
         check(ResourceTargets.valid(target,"session",1,good.dimension,99),"pickup source token can retain its context after block removal");
         check(!ResourceTargets.valid(target,"session",1,good.dimension,100)&&!ResourceTargets.valid(target,"session",2,good.dimension,1)&&!ResourceTargets.valid(target,"other",1,good.dimension,1)&&!ResourceTargets.valid(target,"session",1,new Object(),1),"expiry, stop generation, session and dimension still invalidate pickup tokens");
-        var unguarded=new ResourceTargets.Target("session",1,good.dimension,ORE,null,new Object(),100,null);
-        errorCode("UNSUPPORTED",()->ResourceTargets.validatePickupAuthorization(unguarded,new Vec3(3.4,1,0.5),"minecraft:iron_ore","minecraft:raw_iron"));
+        var unguarded=new ResourceTargets.Target("session",1,good.dimension,ORE,null,new Object(),100,null,List.of(new ResourceCatalog.Drop("minecraft:raw_iron","no_silk_touch",1)));
+        errorCode("UNSUPPORTED",()->ResourceTargets.validatePickupAuthorization(unguarded,new Vec3(3.4,1,0.5),"minecraft:raw_iron"));
         Dig uncertain=new Dig();uncertain.begin();uncertain.world.conflict=true;uncertain.boundary.sent();uncertain.tick();
         check(uncertain.operation.status.equals("unknown"),"only a native effect already sent without confirmation turns guard failure into unknown");
         System.out.println("CompanionMiningTest: "+checks+" checks passed (production guards/boundary with deterministic views, no live-game mining)");

@@ -44,7 +44,7 @@ dig／place／open 必须携完整 expectedProperties；place 另携当前物品
 
 select-slot核对`{slot,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?}`后选0–8快捷栏。drop-item另携明确count（1–64），只能从当前选槽丢且不得超过栈数量；可选expectedMaxStackSize在每次原生写入前比较实际上限。走原版DROP_ITEM，分别报告requestedCount、removedCount、droppedCount，不把事件取消或未生成实体的库存减少冒充交付。Node的count／stacks任务最多解析256个，单栈容器来源与空快捷栏要求仍在；已有足量实际栈的give-item按最多64个分批drop，不静默截断，也不跨栈凑数。
 
-有限资源目录是原版五种石料与八种普通overworld原木，精确ID见协议；矿石、任意Mod资源、天然树识别和自动陪挖尚未迁移。nearby-resources要求1–8个明确blockIds，半径默认4／最多6，候选默认32／最多64，固定center距Bot最多8格，扫描y±2；只看已加载且Bot可见的目标，最多845位置／150000地形读。发现、approach和资源dig共同禁止脚面以下方块、方块实体、自己或附近玩家身体／脚底支撑、相邻液体／危险与上方重力方块。目录不能识别人工建筑，Agent仍须根据明确授权选择范围。
+有限资源按方块标签认（原木 `#minecraft:logs`、矿石 `#c:ores`、石料 `#c:stones`，模组的也算），候选带种类和按掉落表算出的掉落，见协议。nearby-resources要求1–8个方块ID或标签，半径默认4／最多16，候选默认32／最多64，固定center距Bot最多8格，扫描y±2；只看已加载且Bot可见的目标，最多845位置／150000地形读。发现、approach和资源dig共同禁止脚面以下方块、方块实体、自己或附近玩家身体／脚底支撑、相邻液体／危险与上方重力方块。目录不能识别人工建筑，Agent仍须根据明确授权选择范围。
 
 资源候选含完整方块状态、私有targetToken、实际适用工具槽／推荐快捷栏。ResourceTargets固定120秒、最多256个，绑定session／generation／维度／坐标／BlockState／加载Chunk实例；普通块无BlockEntity，同chunk同状态替换不声称可检测。approach-resource仅走到16格内资源的原版reach／LOS站位；dig-block可携资源token逐步核验、使用正确掉落工具，仍走原生挖掘与保护。模型通过30秒本地resourceRef冻结整个候选集，不重扫、不垫高、不挖地板下坑。
 

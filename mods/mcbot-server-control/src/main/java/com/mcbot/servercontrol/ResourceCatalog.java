@@ -113,8 +113,10 @@ final class ResourceCatalog {
     }
     static boolean drops(List<Drop> drops,String item){return drops.stream().anyMatch(drop->drop.item().equals(item));}
 
-    static void requireSafe(ServerPlayer body,BlockPos pos,FlatApproach geometry) {
-        if(!atOrAboveFeet(pos,body.position()))throw error("BLOCKED","First-batch gathering cannot excavate below the body's feet plane");
+    static void requireSafe(ServerPlayer body,BlockPos pos,FlatApproach geometry) {requireSafe(body,pos,geometry,false);}
+    /** belowFeet: finding a whole tree whose base is lower than where the body stands (on a ledge); the dig itself is checked again from where the body then stands. */
+    static void requireSafe(ServerPlayer body,BlockPos pos,FlatApproach geometry,boolean belowFeet) {
+        if(!belowFeet&&!atOrAboveFeet(pos,body.position()))throw error("BLOCKED","First-batch gathering cannot excavate below the body's feet plane");
         BlockState state=geometry.requireLoaded(pos);
         if(kind(state)==null||FlatApproach.hazard(state)) throw error("UNSUPPORTED","Resource is not a natural log, ore or stone (by block tags)");
         // Do not excavate the floor supporting any nearby player, or a cell intersecting their body.

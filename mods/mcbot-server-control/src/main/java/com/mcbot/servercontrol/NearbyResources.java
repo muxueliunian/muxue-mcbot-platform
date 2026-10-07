@@ -17,7 +17,7 @@ final class NearbyResources {
     // Whole trees: logs connected to a log in the scan band are followed up to TREE_ABOVE above the centre
     // (at most TREE_LIMIT more), so gathering can climb a trunk for the rest. Leaves are never candidates.
     static final int TREE_ABOVE=24,TREE_LIMIT=64,TREE_SPREAD=4;
-    record Options(Set<String> blockIds,int radius,int maxResults,Vec3 center,boolean wholeTree) {}
+    record Options(Set<String> blockIds,int radius,int maxResults,Vec3 center,boolean wholeTree,int trees) {}
     static Options options(JsonObject args,Vec3 body) {
         var mining=args.has("companionMiningGuard")?CompanionMiningGuard.options(object(args,"companionMiningGuard")):null;
         if(mining!=null&&args.has("center"))throw error("INVALID_ARGUMENT","Companion mining scan center is always the live bound player position");
@@ -35,19 +35,20 @@ final class NearbyResources {
         if(args.has("center")) {JsonObject p=object(args,"center");center=new Vec3(number(p,"x"),number(p,"y"),number(p,"z"));}
         // A whole tree may be named by where it stands (a player's coordinates); gathering walks to it.
         if(center.distanceTo(body)>(wholeTree?16:8)) throw error("INVALID_ARGUMENT","Resource scan center must remain within eight blocks of the body (sixteen for a whole tree)");
-        return new Options(Set.copyOf(ids),radius,limit,center,wholeTree);
+        int trees=wholeTree?integer(args,"trees",1,1,8):1;
+        return new Options(Set.copyOf(ids),radius,limit,center,wholeTree,trees);
     }
     private static int integer(JsonObject args,String key,int fallback,int min,int max) {double value=bounded(args,key,fallback,min,max);if(value!=Math.rint(value))throw error("INVALID_ARGUMENT",key+" must be an integer");return (int)value;}
     record Candidate(BlockPos position,BlockState state,double distance) {}
     static JsonObject discover(ServerPlayer body,JsonObject args,ResourceTargets targets) {
         Options options=options(args,body.position());
         CompanionMiningGuard mining=args.has("companionMiningGuard")?CompanionMiningGuard.create(body,object(args,"companionMiningGuard")):null;
-        if(mining!=null){mining.validateBody();options=new Options(options.blockIds(),options.radius(),options.maxResults(),mining.center(),false);}
+        if(mining!=null){mining.validateBody();options=new Options(options.blockIds(),options.radius(),options.maxResults(),mining.center(),false,1);}
         var selection=ResourceCatalog.select(options.blockIds());
         BlockPos origin=BlockPos.containing(options.center());
         List<Candidate> matches=new ArrayList<>(),found=new ArrayList<>();int visited=0,unloaded=0,rejected=0;boolean exhausted=false;
         FlatApproach geometry=new FlatApproach(body);
-        TreeScan.Tree whole=options.wholeTree()?TreeScan.nearest(body.serverLevel(),options.center(),options.radius(),selection):null;
+        TreeScan.Tree whole=options.wholeTree()?TreeScan.nearest(body.serverLevel(),options.center(),options.radius(),selection,options.trees()):null;
         if(whole!=null) for(BlockPos pos:whole.logs()) matches.add(new Candidate(pos,body.serverLevel().getBlockState(pos),Vec3.atCenterOf(pos).distanceTo(options.center())));
         else for(int x=-options.radius();x<=options.radius();x++) for(int z=-options.radius();z<=options.radius();z++) {
             if(x*x+z*z>options.radius()*options.radius())continue;
@@ -69,7 +70,7 @@ final class NearbyResources {
         for(Candidate match:matches) {
             if(found.size()>options.maxResults())break;
             // Logs high in a tree are usually hidden behind the trunk or leaves from the ground: dig time checks the real line of sight.
-            try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry);
+            try {if(mining!=null)mining.validateTarget(match.position());ResourceCatalog.requireSafe(body,match.position(),geometry,whole!=null);
                 // A whole tree is asked for as a whole: logs hidden in its crown are marked unseen (dig time checks the real line of sight).
                 if(whole!=null){if(!geometry.blockVisible(match.position()))tree.add(match.position());}
                 else if(!tree.contains(match.position())&&!geometry.blockVisible(match.position())){

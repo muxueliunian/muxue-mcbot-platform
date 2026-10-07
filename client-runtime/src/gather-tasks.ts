@@ -36,7 +36,8 @@ const reachRefusals = new Set(['OUT_OF_REACH', 'NO_LINE_OF_SIGHT']);
  * CLIMB_SPREAD of its column (one tree), rises at most MAX_PILLAR blocks, and only breaks leaves in its way.
  */
 const CLIMB_ABOVE = 4, CLIMB_SPREAD = 2.5, MAX_PILLAR = 20;
-const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air', 'minecraft:short_grass', 'minecraft:tall_grass', 'minecraft:fern', 'minecraft:large_fern']);
+// Walked through or stood in like air: plants, vines and a snow layer (snowy taigas cover the ground beside every trunk).
+const openCells = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air', 'minecraft:short_grass', 'minecraft:tall_grass', 'minecraft:fern', 'minecraft:large_fern', 'minecraft:snow', 'minecraft:vine', 'minecraft:dead_bush', 'minecraft:glow_lichen']);
 // Modded leaves are named the same way (biomesoplenty:fir_leaves).
 const isLeaves = (id: string | undefined) => !!id && /^[a-z0-9_.-]+:[a-z0-9_/]*leaves$/.test(id);
 const feetLevel = (feet: Position) => Math.floor(feet.y + 0.01);
@@ -81,7 +82,7 @@ export class GatherTasks {
     this.finish(this.active, 'cancelled', '用户已叫停，旧采集不恢复', 'CANCELLED');
     if (!this.active.borrowed) this.body.releaseTask?.(this.active.taskToken); this.active = undefined;
   }
-  async discover(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position; wholeTree?: boolean }): Promise<unknown> {
+  async discover(options: { blockIds: string[]; radius: number; maxResults: number; center?: Position; wholeTree?: boolean; trees?: number }): Promise<unknown> {
     if (!this.body.nearbyResources) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
     const epoch = this.epoch;
     const scan = await this.body.nearbyResources(options);
@@ -90,10 +91,12 @@ export class GatherTasks {
     this.references.set(resourceRef, { context: contextOf(scan), expires: this.now() + 30000, scan, radius: options.radius, wholeTree: !!options.wholeTree && scan.wholeTree === true });
     if (this.references.size > 32) this.references.delete(this.references.keys().next().value!);
     if (options.wholeTree) {
-      // A whole tree has up to 256 logs: a count per tree, not every candidate, keeps the reply short.
-      const logs = scan.candidates;
-      return { resourceRef, center: scan.center, wholeTree: true, logs: logs.length, drops: logs[0]?.drops, lowest: logs[0]?.position, highest: logs.reduce<Position | undefined>((top, log) => !top || log.position.y > top.y ? log.position : top, undefined), truncated: scan.truncated,
-        limitation: logs.length ? '这是离 center 最近的那一整棵树（斜着长的、隔着树叶的树枝也算进来，旁边另一棵扎根的树不算）。gather-resources 传 wholeTree:true、不填数量，就砍完这一棵、捡完掉落。' : '附近没找到这种原木，换个 center 或范围再找，或者问玩家是哪棵。' };
+      // Up to 256 logs: a summary per tree, not every candidate, keeps the reply short.
+      const byTree = new Map<number, Candidate[]>();
+      for (const log of scan.candidates) { const id = log.tree ?? 0; byTree.set(id, [...(byTree.get(id) ?? []), log]); }
+      const trees = [...byTree.values()].map(logs => ({ logs: logs.length, id: logs[0].id, lowest: logs.reduce((low, log) => log.position.y < low.y ? log.position : low, logs[0].position), top: Math.max(...logs.map(log => log.position.y)) }));
+      return { resourceRef, center: scan.center, wholeTree: true, logs: scan.candidates.length, trees, drops: scan.candidates[0]?.drops, truncated: scan.truncated,
+        limitation: scan.candidates.length ? '离 center 最近的这几整棵树（斜着长的、隔着树叶的树枝都算进去，根已经砍掉、悬着的剩余部分也算一棵）。gather-resources 传 wholeTree:true、不填数量，一次提交就一棵一棵全砍完、捡完掉落。' : '附近没找到这种原木，换个 center 或范围再找，或者问玩家是哪棵。' };
     }
     return { resourceRef, center: scan.center, candidates: scan.candidates.map(({ targetToken: _private, properties: _properties, ...item }) => item), truncated: scan.truncated,
       limitation: '只限本次已加载、可见的原木、矿石、石料候选（按方块标签认，模组的也算：#minecraft:logs、#c:ores、#c:stones）和固定区域；drops 是按服务器掉落表算出的可能产物，矿石只取普通产物（不支持精准采集矿石块），实际数量以原生拾取回执为准。不能识别人工建筑。引用30秒内提交；不补扫扩展候选，不挖路或搭桥。' };
@@ -155,6 +158,14 @@ export class GatherTasks {
         task.progress.items.push({ item: receipt.stack.id, count: receipt.pickedUpCount, maxStackSize: receipt.stack.maxStackSize });
         continue;
       }
+      // Walking over other things (a sapling or stick from leaves the task broke) picks them up natively: that is
+      // reported, never counted toward the goal, and does not end the task (a player chopping does the same).
+      if (!miningOwner(task.borrowed) && receipt.stack.id !== task.request.item) {
+        task.progress.unexpectedPickedUpCount += receipt.pickedUpCount;
+        const seen = task.progress.items.find(item => item.item === receipt.stack.id);
+        if (seen) seen.count += receipt.pickedUpCount; else task.progress.items.push({ item: receipt.stack.id, count: receipt.pickedUpCount, maxStackSize: receipt.stack.maxStackSize });
+        continue;
+      }
       try {
         if (miningOwner(task.borrowed) && task.oldGround?.has(receipt.entityId)) throw new BodyError('UNEXPECTED_PICKUP', '自然碰撞收取了子任务开始前的地面物品；不把它当作本轮采矿目标');
         if (!this.inside(task, receipt.position) || (task.name === 'collect-items' && !task.allowed.has(receipt.entityId))) throw new BodyError('OUTSIDE_AUTHORIZATION', '原生拾取了冻结范围之外的掉落；已保留实际结果并停止');
@@ -214,7 +225,7 @@ export class GatherTasks {
     let task: Active | undefined;
     try {
       // Reserve synchronously even while the initial read or chat acknowledgement is in flight.
-      task = { id, taskToken: borrowed?.taskToken ?? id, borrowed, name, epoch, context: {}, center: { x: 0, y: 0, z: 0 }, radius: request.radius ?? 4, deadline: this.now() + (request.timeoutMs ?? (request.wholeTree ? 300000 : 60000)), cursor: 0, allowed: new Set(), collectedEntities: new Map(), request, progress } as Active;
+      task = { id, taskToken: borrowed?.taskToken ?? id, borrowed, name, epoch, context: {}, center: { x: 0, y: 0, z: 0 }, radius: request.radius ?? 4, deadline: this.now() + (request.timeoutMs ?? (request.wholeTree ? Math.min(600000, Math.max(120000, (request.count ?? 0) * 4000)) : 60000)), cursor: 0, allowed: new Set(), collectedEntities: new Map(), request, progress } as Active;
       if (miningOwner(borrowed)) { task.deadline = Math.min(task.deadline, borrowed.deadline); delete progress.requestedCount; delete progress.targetCount; progress.limitation = '单块原生破坏与本子任务新拾取分开确认；物品掉落归属未确认，不预测产量。'; }
       this.active = task;
       const state = await this.body.observe(); this.check(task);
@@ -829,6 +840,7 @@ export class GatherTasks {
    */
   private async spiral(task: Active, remaining: Candidate[], ring: Array<{ x: number; z: number }>, bottom: number): Promise<number> {
     let dug = 0, level = bottom;
+    try {
     for (let i = 0; i < MAX_PILLAR; i++) {
       if (this.done(task) || dug > 0 && this.covered(task, dug)) break;
       const column = ring[i % ring.length];
@@ -855,8 +867,22 @@ export class GatherTasks {
       const next = remaining.find(candidate => samePosition(candidate.position, { x: Math.floor(at.x), y: feetLevel(at) - 1, z: Math.floor(at.z) }));
       task.footing = next ? new Set([next.targetToken!]) : undefined;
     }
-    task.footing = undefined;
+    } catch (error) {
+      // Stopped up on the trunk (a failed pickup, a refused dig): come down the column before reporting, unless nobody may act.
+      if (!(error instanceof BodyError) || haltCodes.has(error.code) || unknownCodes.has(error.code)) throw error;
+      try { await this.comeDown(task, remaining, bottom); } catch {}
+      throw error;
+    } finally { task.footing = undefined; }
     return dug;
+  }
+  /** Dig down the column the body stands in, log by log, to one above the ground (the logs dug are not counted toward this step). */
+  private async comeDown(task: Active, remaining: Candidate[], bottom: number): Promise<void> {
+    for (let i = 0; i < MAX_PILLAR + 4; i++) {
+      const at = await this.landed(task);
+      if (feetLevel(at) <= bottom + 1) return;
+      const below = remaining.find(candidate => samePosition(candidate.position, { x: Math.floor(at.x), y: feetLevel(at) - 1, z: Math.floor(at.z) }));
+      if (!below || !(await this.digUnder(task, remaining, below, true))) return;
+    }
   }
   /**
    * Dig every frozen candidate reachable from where the body stands (nearest first) before collecting the

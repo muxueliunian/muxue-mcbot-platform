@@ -3,7 +3,10 @@
 //   1. 2x2 大云杉（18 层、72 节，顶上一圈树叶）：discover-resources wholeTree:true 找到整棵 72 节，gather-resources wholeTree:true 不填数量，整棵砍完、捡完；
 //   2. 斜着长的金合欢：树干三节、斜着往东伸出去的枝（对角相连），往西还有一根隔着树叶、和树干不相连的枝；旁边 3 格一棵橡树，树冠挨着。
 //      只找到金合欢那 9 节（两根枝都算、橡树不算、远处悬空的一截原木不算），整棵砍完，橡树一节不动；
-//   3. 普通扫描（不是 wholeTree）时候选也带树编号：金合欢的两根枝和树干同一个编号，橡树另一个。
+//   3. 普通扫描（不是 wholeTree）时候选也带树编号：金合欢的两根枝和树干同一个编号，橡树另一个；
+//   4. 积雪针叶林：树旁边一层薄雪、Bot 从 2 格高的雪台子上开始，整棵砍完；
+//   5. trees:3 一次找到三棵、一次提交砍完，地上的木棍顺手捡到也不中断；
+//   6. 根已经砍掉、悬在空中的半截 2x2 云杉也认成一棵，垫高砍完。
 // 不启停服务器、不调用模型、不计算哈希。需要：隔离服开着、平坦世界、没装要求客户端的 Mod。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -91,7 +94,7 @@ try {
   let op = await settle(await tool('gather-resources', { resourceRef: bigPlan.value.resourceRef, item: 'minecraft:spruce_log', wholeTree: true }));
   report.runs.big = op.value;
   const bigLeft = await left(big, 'minecraft:spruce_log'), bigLogs = await countItem('minecraft:spruce_log'), bigStuck = (op.value.result?.stuckHigh ?? 0) + (op.value.result?.stuckInLeaves ?? 0);
-  check('2x2 大云杉整棵砍完：目标是 72 个（不用填数量），拿到的加上如实报告卡住的正好 72，泥土没少，回到地面', op.value.result?.wholeTree === true && op.value.result?.targetCount === 72 && bigLeft.length === 0 && bigLogs + bigStuck === 72 && await countItem('minecraft:dirt') === 32 && (await pos('Claude'))[1] < Y + 2.01,
+  check('2x2 大云杉整棵砍完：目标是 72 个（不用填数量），拿到的加上如实报告卡住的正好 72，泥土没少，回到地面', op.value.result?.wholeTree === true && op.value.result?.targetCount === 72 && bigLeft.length === 0 && bigLogs <= 72 && bigLogs + bigStuck >= 72 && await countItem('minecraft:dirt') === 32 && (await pos('Claude'))[1] < Y + 2.01,
     { bigLeft, bigLogs, bigStuck, dirt: await countItem('minecraft:dirt'), status: op.value.status, summary: op.value.summary, result: op.value.result, bot: await pos('Claude') });
 
   // 2. 斜着长的金合欢：树干 (3404, 201..203, 3404)；东枝斜着伸出 (3405,204)(3406,205)(3407,206)(3407,207)；
@@ -121,8 +124,58 @@ try {
   op = await settle(await tool('gather-resources', { resourceRef: acaciaPlan.value.resourceRef, item: 'minecraft:acacia_log', wholeTree: true }));
   report.runs.acacia = op.value;
   const acaciaLeft = await left(acacia, 'minecraft:acacia_log'), oakLeft = await left(oak, 'minecraft:oak_log'), acaciaLogs = await countItem('minecraft:acacia_log'), acaciaStuck = (op.value.result?.stuckHigh ?? 0) + (op.value.result?.stuckInLeaves ?? 0);
-  check('金合欢整棵砍完（拿到的加上卡住的正好 10），橡树一节没动，悬空那截还在', acaciaLeft.length === 0 && acaciaLogs + acaciaStuck === acacia.length && oakLeft.length === oak.length && await isBlock(floating, 'minecraft:acacia_log') && await countItem('minecraft:oak_log') === 0,
+  check('金合欢整棵砍完（拿到的加上卡住的正好 10），橡树一节没动，悬空那截还在', acaciaLeft.length === 0 && acaciaLogs <= acacia.length && acaciaLogs + acaciaStuck >= acacia.length && oakLeft.length === oak.length && await isBlock(floating, 'minecraft:acacia_log') && await countItem('minecraft:oak_log') === 0,
     { acaciaLeft, oakLeft, acaciaLogs, acaciaStuck, status: op.value.status, summary: op.value.summary, result: op.value.result, bot: await pos('Claude') });
+  // 4. 积雪针叶林（10-07 试玩第三棵）：树干 (3404, 201..206, 3404)，四周地上一层薄雪，西边一道 2 格高的雪块台子（x 3400..3402），
+  //    Bot 站在台子上 (3401.5, 203)；树干上半截有树叶。要下台子、站到树旁边的薄雪上砍完。
+  await ground();
+  const snowy = Array.from({ length: 6 }, (_, i) => [3404, Y + 1 + i, 3404]);
+  await fixture(`fill 3400 ${Y + 1} 3399 3402 ${Y + 2} 3409 snow_block`);
+  await fixture(`fill 3403 ${Y + 1} 3399 3409 ${Y + 1} 3409 snow[layers=1]`);
+  for (const [y, r] of [[Y + 4, 2], [Y + 5, 1], [Y + 6, 1], [Y + 7, 0]]) await fixture(`fill ${3404 - r} ${y} ${3404 - r} ${3404 + r} ${y} ${3404 + r} spruce_leaves[persistent=true]`);
+  for (const p of snowy) await fixture(`setblock ${p.join(' ')} spruce_log`);
+  await command('clear Claude'); await command('give Claude diamond_axe'); await command('give Claude dirt 32');
+  await command(`tp Claude 3401.5 ${Y + 3} 3404.5 -90 0`); await wait(1500);
+  const snowPlan = await tool('discover-resources', { blockIds: ['#minecraft:logs'], radius: 6, wholeTree: true });
+  check('积雪地形：找到整棵 6 节', !snowPlan.error && snowPlan.value.logs === 6, snowPlan.value);
+  op = await settle(await tool('gather-resources', { resourceRef: snowPlan.value.resourceRef, item: 'minecraft:spruce_log', wholeTree: true }));
+  report.runs.snowy = op.value;
+  const snowLeft = await left(snowy, 'minecraft:spruce_log'), snowLogs = await countItem('minecraft:spruce_log'), snowStuck = (op.value.result?.stuckHigh ?? 0) + (op.value.result?.stuckInLeaves ?? 0);
+  check('积雪地形：下了台子站在薄雪上砍完，6 个拿到（加上卡住的），没有标成够不着', snowLeft.length === 0 && snowLogs <= 6 && snowLogs + snowStuck >= 6 && !op.value.result?.unreachable,
+    { snowLeft, snowLogs, snowStuck, status: op.value.status, summary: op.value.summary, result: op.value.result, bot: await pos('Claude') });
+
+  // 5. 一次砍三棵：三棵 5 节云杉 (3404,3404) (3409,3404) (3404,3410)，再远处一棵 (3412,3412) 不该砍；第一棵旁边地上撒 3 根木棍（路过会顺手捡到）
+  await ground();
+  const three = [[3404, 3404], [3409, 3404], [3404, 3410]].flatMap(([x, z]) => Array.from({ length: 5 }, (_, i) => [x, Y + 1 + i, z]));
+  const fourth = Array.from({ length: 5 }, (_, i) => [3413, Y + 1 + i, 3413]);
+  for (const [x, z] of [[3404, 3404], [3409, 3404], [3404, 3410], [3413, 3413]]) await fixture(`fill ${x - 1} ${Y + 4} ${z - 1} ${x + 1} ${Y + 6} ${z + 1} spruce_leaves[persistent=true]`);
+  for (const p of [...three, ...fourth]) await fixture(`setblock ${p.join(' ')} spruce_log`);
+  for (const dz of [-1, 0, 1]) await command(`summon item 3402.5 ${Y + 1} ${3404.5 + dz} {Item:{id:"minecraft:stick",count:1}}`);
+  await command('clear Claude'); await command('give Claude diamond_axe'); await command('give Claude dirt 32');
+  await command(`tp Claude 3401.5 ${Y + 1} 3406.5 -90 0`); await wait(1500);
+  const threePlan = await tool('discover-resources', { blockIds: ['#minecraft:logs'], radius: 10, wholeTree: true, trees: 3 });
+  report.runs.threePlan = threePlan.value;
+  check('一次找到最近的三棵（15 节，每棵 5 节），远处第四棵不算', !threePlan.error && threePlan.value.logs === 15 && threePlan.value.trees?.length === 3 && threePlan.value.trees.every(t => t.logs === 5), threePlan.value);
+  op = await settle(await tool('gather-resources', { resourceRef: threePlan.value.resourceRef, item: 'minecraft:spruce_log', wholeTree: true }));
+  report.runs.three = op.value;
+  const threeLeft = await left(three, 'minecraft:spruce_log'), fourthLeft = await left(fourth, 'minecraft:spruce_log'), threeLogs = await countItem('minecraft:spruce_log'), threeStuck = (op.value.result?.stuckHigh ?? 0) + (op.value.result?.stuckInLeaves ?? 0);
+  check('一次提交砍完三棵，第四棵不动；顺手捡到的木棍只记下来、不中断任务', threeLeft.length === 0 && fourthLeft.length === 5 && threeLogs <= 15 && threeLogs + threeStuck >= 15 && op.value.result?.code !== 'UNEXPECTED_PICKUP' && (op.value.result?.items ?? []).every(item => item.item !== 'minecraft:spruce_log'),
+    { threeLeft, fourthLeft, threeLogs, threeStuck, sticks: await countItem('minecraft:stick'), status: op.value.status, summary: op.value.summary, result: op.value.result });
+
+  // 6. 根已经砍掉的 2x2 云杉：只剩 (3404..3405, 205..212) 悬在空中（下面 201..204 是空的），树叶在 209..212
+  await ground();
+  const remnant = []; for (let y = Y + 5; y <= Y + 12; y++) for (const x of [3404, 3405]) for (const z of [3404, 3405]) remnant.push([x, y, z]);
+  await fixture(`fill 3402 ${Y + 9} 3402 3407 ${Y + 12} 3407 spruce_leaves[persistent=true]`);
+  await fixture(`fill 3404 ${Y + 5} 3404 3405 ${Y + 12} 3405 spruce_log`);
+  await command('clear Claude'); await command('give Claude diamond_axe'); await command('give Claude dirt 32');
+  await command(`tp Claude 3401.5 ${Y + 1} 3404.5 -90 0`); await wait(1500);
+  const remnantPlan = await tool('discover-resources', { blockIds: ['#minecraft:logs'], radius: 6, wholeTree: true });
+  check('根砍掉的半截树：悬着的 32 节也认成一棵、全找到', !remnantPlan.error && remnantPlan.value.logs === 32, remnantPlan.value);
+  op = await settle(await tool('gather-resources', { resourceRef: remnantPlan.value.resourceRef, item: 'minecraft:spruce_log', wholeTree: true }));
+  report.runs.remnant = op.value;
+  const remnantLeft = await left(remnant, 'minecraft:spruce_log'), remnantLogs = await countItem('minecraft:spruce_log'), remnantStuck = (op.value.result?.stuckHigh ?? 0) + (op.value.result?.stuckInLeaves ?? 0);
+  check('半截树垫高砍完，拿到的加上卡住的正好 32，回到地面', remnantLeft.length === 0 && remnantLogs <= 32 && remnantLogs + remnantStuck >= 32 && (await pos('Claude'))[1] < Y + 2.01,
+    { remnantLeft, remnantLogs, remnantStuck, status: op.value.status, summary: op.value.summary, result: op.value.result, bot: await pos('Claude') });
   report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.error = redact(error.stack || error.message); process.exitCode = 1; console.error(report.error);

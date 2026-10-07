@@ -296,7 +296,7 @@ export class ServerBody implements Body {
     this.assertActive();
     if (!this.hello.capabilities.includes('nearby-resources')) throw new BodyError('UNSUPPORTED', '身体不支持有限资源观察');
     if (options.companionMiningGuard && !this.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '游戏端未声明持续陪挖的玩家保护能力');
-    const parsed = z.object({ blockIds: z.array(z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).min(1).max(8), radius: z.number().int().min(1).max(16), maxResults: z.number().int().min(1).max(64), center: position.optional(), wholeTree: z.boolean().optional(),
+    const parsed = z.object({ blockIds: z.array(z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/)).min(1).max(8), radius: z.number().int().min(1).max(16), maxResults: z.number().int().min(1).max(64), center: position.optional(), wholeTree: z.boolean().optional(), trees: z.number().int().min(1).max(8).optional(),
       companionMiningGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().int().min(3).max(4) }).strict().optional(),
     }).strict().refine(value => !value.companionMiningGuard || value.center === undefined && value.radius <= value.companionMiningGuard.maxDistance).safeParse(options);
     if (!parsed.success) throw new BodyError('INVALID_ARGUMENT', '资源扫描范围或陪挖玩家守卫无效；陪挖中心必须由服务端确定');

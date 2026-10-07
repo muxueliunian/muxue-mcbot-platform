@@ -374,7 +374,7 @@ test('first native receipt can resolve a stack while automatic dig pickup and ov
   const extra = await over.done(await over.tasks.start('collect-items', { item: 'minecraft:cobblestone', count: 3 }));
   assert.equal(extra.result.pickedUpCount, 10); assert.equal(extra.result.overage, 7);
 });
-test('confirmed dig count survives unexpected native pickup or a later observation failure', async () => {
+test('confirmed dig count survives a later observation failure; another item picked up on the way does not end the goal', async () => {
   for (const failure of ['variant', 'read']) {
     const f = fixture();
     f.body.afterAct = name => {
@@ -383,8 +383,9 @@ test('confirmed dig count survives unexpected native pickup or a later observati
       else f.body.beforeObserve = () => { throw new BodyError('TRANSPORT_LOST', 'lost after confirmed dig'); };
     };
     const result = await f.done(await f.tasks.start('gather-resources', { resourceRef: await f.ref(), item: 'minecraft:cobblestone', count: 3 }));
-    assert.equal(result.result.minedBlocks, 1); assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 1);
-    assert.equal(result.result.code, failure === 'variant' ? 'UNEXPECTED_PICKUP' : 'TRANSPORT_LOST');
+    if (failure === 'read') { assert.equal(result.result.minedBlocks, 1); assert.equal(f.calls.filter(call => call.name === 'dig-block').length, 1); assert.equal(result.result.code, 'TRANSPORT_LOST'); }
+    // Another item picked up on the way (a sapling from broken leaves) is reported, not counted, and the goal goes on.
+    else { assert.notEqual(result.result.code, 'UNEXPECTED_PICKUP'); assert.ok(result.result.unexpectedPickedUpCount >= 1); assert.deepEqual(result.result.items.map(item => [item.item, item.count]), [['minecraft:dirt', result.result.unexpectedPickedUpCount]]); assert.ok(result.result.minedBlocks >= 1); }
   }
 });
 test('pre-existing inventory components do not bind or reject the authorized ground variant', async () => {

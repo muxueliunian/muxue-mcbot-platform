@@ -89,9 +89,11 @@ try {
   const { respawnIfDead } = await import('./server-body-control.mjs');
   console.log('respawn: ' + await respawnIfDead({ connectionFile: path.join(serverDir, 'config/mcbot-server-control/connection.json'), username: 'Claude', worldId: connection.worldId }));
   client = new Client({ name: 'server-travel-natural-smoke', version: '0.1.0' });
-  await client.connect(new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
+  const transport = new StdioClientTransport({ command: process.execPath, cwd: root, stderr: 'pipe',
     args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
-      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] }));
+      '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()] });
+  transport.stderr?.on('data', chunk => fs.appendFile(path.join(dir, 'runtime-stderr.txt'), redact(chunk)).catch(() => {}));
+  await client.connect(transport);
   const names = (await client.listTools()).tools.map(t => t.name);
   check('travel-to 已发布', names.includes('travel-to'), names);
   for (const route of routes.filter(r => !only || only.includes(r.name))) {

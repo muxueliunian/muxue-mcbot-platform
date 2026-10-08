@@ -237,7 +237,7 @@ final class NativeNavigation {
             model.setPathfindingMalus(PathType.DANGER_FIRE,-1);model.setPathfindingMalus(PathType.DAMAGE_FIRE,-1);
             model.setPathfindingMalus(PathType.DANGER_POWDER_SNOW,-1);model.setPathfindingMalus(PathType.POWDER_SNOW,-1);
             model.setPathfindingMalus(PathType.DANGER_OTHER,-1);model.setPathfindingMalus(PathType.DAMAGE_OTHER,-1);
-            evaluator=new RouteEvaluator();evaluator.leaps=!wide;evaluator.boundedDrops=wide;evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(true);evaluator.setCanFloat(false);
+            evaluator=new RouteEvaluator();evaluator.leaps=!wide;evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(true);evaluator.setCanFloat(false);
         }
     }
     /**
@@ -339,12 +339,12 @@ final class NativeNavigation {
         /** Gap leaps; a long walk goes round a gap instead (a missed leap by a cliff is a long fall). */
         boolean leaps=true;
         /**
-         * Never step to a BLOCKED node or drop further than the model may fall. Vanilla shares one node per block and
-         * marks the block under a too-long fall BLOCKED (cost -1) even when it is already queued; it then lets a node
-         * with negative cost lead to more of them, cheaper each time. With a one-block fall limit that chained whole
-         * cliffs of two-block drops into a route (a long walk measured in game: 106 down to 95, fall damage).
+         * Every route: never step to a BLOCKED node or drop further than the model may fall. Vanilla shares one node per
+         * block and marks the block under a too-long fall BLOCKED (cost -1) even when it is already queued; it then lets a
+         * node with negative cost lead to more of them, cheaper each time. With a one-block fall limit that chained whole
+         * cliffs of two-block drops into a route (a long walk measured in game: 106 down to 95, fall damage); ordinary
+         * walking (three-block limit) can chain the same way down a deeper cliff.
          */
-        boolean boundedDrops;
         @Override public int getNeighbors(Node[] output,Node node){
             int count=super.getNeighbors(output,node);
             for(Direction direction:Direction.Plane.HORIZONTAL){
@@ -358,7 +358,7 @@ final class NativeNavigation {
             int kept=0;
             for(int i=0;i<count;i++){
                 Node next=output[i];
-                if(boundedDrops&&(next.type==PathType.BLOCKED||next.costMalus<0||node.y-next.y>mob.getMaxFallDistance()))continue;
+                if((next.type==PathType.BLOCKED||next.costMalus<0||node.y-next.y>mob.getMaxFallDistance()))continue;
                 if(allowed.test(new Vec3(next.x+0.5,next.y,next.z+0.5)))output[kept++]=next;
             }
             return kept;

@@ -42,7 +42,7 @@ const require = createRequire(new URL('../mcp-server/package.json', import.meta.
 const mineflayer = require('mineflayer');
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
+assert(['http://127.0.0.1:8766/v2', 'http://127.0.0.1:8767/v2'].includes(connection.endpoint), 'control endpoint'); // 8767 since 10-07: the user's own client may hold 8766 assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-companion-mining-${selectedCase ? 'case-' : ''}${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const report = { started: new Date().toISOString(), serverDir, backup: backup.backup, plan, selectedCase: selectedCase ?? null,

@@ -23,6 +23,8 @@ npm ci
 npm test
 Set-Location ../mods/mcbot-server-control
 ./gradlew.bat build
+Set-Location ../mcbot-yes-steve-model   # 附属模组编译时要用核心的 jar，先构建核心
+./gradlew.bat build
 ```
 
 Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；`check`还包括`loaderNeutralCheck`：只有`build.gradle`里登记的加载器文件能用`net.neoforged`，其余代码只用原版类，为以后的Fabric版留边界（见[工作站设计](workstation_design.md)）；应查看实际检查输出，不能仅凭`test SKIPPED`断言没有检查。Linux可用`bash ./gradlew build`，但本次整理版仅在Windows复验；Windows原生窗口截图、进程控制等用例不能直接外推为云端通过。
@@ -73,7 +75,7 @@ node scripts/webui.mjs --open      # 默认端口 8770，--port 换端口，--ru
 - 只读驱动器写在 `runtime/` 里的文件：心跳 `companion-<名字>.json`（在线、是否在推理）、会话 `session-<名字>.json`（上下文大小、上次请求）、活动记录 `activity-<名字>.jsonl`（游戏事件和聊天、AI 回复、工具调用、每轮开始和结束、驱动器提示，超过 5MB 轮转）。三家 Agent 都走同一个驱动器，记录格式一样。
 - 页面上的「陪伴模式」「最近工具」「最近出错」是从记录里推算的。
 - 「叫停」放 `companion-<名字>.halt` 标记，驱动器按游戏里叫停的流程停下动作和推理，等玩家用名字或昵称给新任务（目前只支持 ServerBody）；「停止托管」放 `companion-<名字>.stop`，和 `stop-companion.ps1` 一样让驱动器退出。WebUI 不碰游戏，关掉它不影响托管。
-- 「配置」页（`scripts/webui-profiles.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。可以配 Agent、账号目录、模型、思考强度、连接文件、昵称、记忆目录（旁边即时显示有没有 `xiaoke/persona.md`，留空用仓库里的 `memory`，没有人设时说话会像客服）、保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)），高级里有 Node 路径和会话选项；每项对应 `start-server-play.ps1` 的同名参数。「保存并启动托管」用 `pwsh start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换 `pwsh`。
+- 「配置」页（`scripts/webui-profiles.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。可以配 Agent、账号目录、模型、思考强度、连接文件、昵称、记忆目录（旁边即时显示有没有 `xiaoke/persona.md`，留空用仓库里的 `memory`，没有人设时说话会像客服）、保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)）、外观（服务器装了 YSM 和 [YSM 适配](../mods/mcbot-yes-steve-model/README.md)时出现，模型列表用连接文件向服务器 hello 要，每次接管后套用；服务器没开时保留已选的），高级里有 Node 路径和会话选项；每项对应 `start-server-play.ps1` 的同名参数。「保存并启动托管」用 `pwsh start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换 `pwsh`。
 - 配置页只存路径和参数，不存凭据：Agent 用账号目录里已有的登录；档案里出现 `apiKey` 这类不认识的字段会被拒绝。连接文件只读出角色、世界和地址，控制令牌不回传给网页。能从网页启动托管，就等于拿到令牌的人能用你的账号开托管，所以令牌地址不要发给别人。
 
 ## 单人模式实测
@@ -89,16 +91,8 @@ node scripts/singleplayer-smoke.mjs --game-dir '<run/client的绝对路径>' --p
 
 ## 进度与证据
 
-**2026-10-05最新约束：用户需要内存，暂不使用服务器。** 已保存关服并停止空闲Java／Gradle进程；在用户明确恢复前，不开服、连服、运行Java构建或真实游戏模型测试。可以继续源码、轻量Node测试和文档。持续陪挖源码／离线检查已完成，完整实服矩阵仍待排查拾取越界并继续；当前测试服已恢复上一轮已验证的Mod，新构建留在build目录，详见交付计划顶部，不能把首个定向通过当作完整陪挖验收。
+当前进度和每一步的验证记录看[交付计划](delivery_plan.md)，第一次看这个仓库先读[评审入口](review_guide.md)。已完成的批次验收、旧计划和 10-03 的旧评审入口在 `archive/`。
 
-2026-10-05用户已明确恢复隔离服测试，本轮只使用已有登录的Codex。新组件已安装并完成[首版受限基础搭档验收](archive/server_alpha_release_validation.md)：导航／防卫55项、R8容器24项、矿石14场景53项真实程序检查；Codex受控10阶段（叫停212ms、首新任务一次）及普通世界自然3阶段短跟随通过。四个自然目标点的采样累计位移约23.09格、高度63–64.2522，生命核对20；自然叫停323ms。本轮未新增30分钟运行，也未用Claude验证新增矿石。结束已保存关闭、相关端口无监听，服务器配置按备份实际字节恢复，普通验证世界保留本地；新脚本与文档已于2026-10-06提交。
+报告证据时把三类分开：离线测试、隔离服实测（脚本驱动真实服务器，不用模型）、真实模型试玩。隔离服实测脚本是 `scripts/server-*-smoke.mjs`，要用本机的隔离服、存档备份和端口；原始日志、存档和 `output/` 不随仓库分发。已知偶发：Node 24.15 原生退出 0xC0000409（重跑通过，原因没查到，可用 `-NodePath` 换 24.19）、mcp-server 的 vision 浏览器清理测试、导航与防卫里的高处拾取那项。
 
-历史：2026-10-04 [第一轮容器与矿石](archive/r8_ore_offline_validation.md)只编码／离线验证，2026-10-05先纳入主线整理提交，随后才完成上述实服验收。不能用前一日离线记录替代实际游戏证据。
-
-2026-10-03 网页评审后的 R1／R2／R3 修复见[边界修复记录](archive/boundary_review_fixes.md)。ServerBody Claude 游戏模式现移除全部内置宿主工具，仅使用 Minecraft MCP；人设由宿主固定只读注入，不依赖 Agent 的 Read／Write。要求支持 `--restricted` 的 Claude CLI（本机核对 2.1.287，最低 2.1.248）；参数不支持时不能降级宽权限。
-
-后续[混合故障回归](archive/server_mixed_validation.md)已完成并补齐R4的共享写锁和停止确认边界：运行端157项、实服基线24项、3轮108项、约5分钟10轮349项及Claude-b真实10阶段通过；新验证副本已保存关闭。新脚本`server-mixed-smoke.mjs`、`server-mixed-agent-trial.mjs`仍要求获授权隔离服及本批备份，不对普通存档运行。
-
-[基础生存Alpha](archive/survival_alpha_plan.md)第一批背包／工具／进食已完成。10月3日第二批有限高差导航、自卫／退让、威胁与AI策略通过227项运行端、732项Java、55项真实程序及Claude-b五阶段；此前30分钟受控运行及独立短复验（生命值检查缺口见记录）见[第二批记录](archive/server_navigation_defense_validation.md)。10月5日新增R8、矿石实服及Codex生存／自然短回归见上方首版记录。所有本能共用写权，未知不自动重试；策略修改先停止旧活动任务。当前完整39工具；根规则中的33是较早快照数量，实际以capabilities和最新记录为准。持续陪挖与小型建筑随后分别交付。R6仅完成自身库存退化；R5／R7、R6剩余部分、多小时稳定性、真实Mod异常和Node24.15原生退出仍待做。文字“暂停”当前走宿主硬停止，Agent软暂停另有实际模式状态。
-
-进度见`delivery_plan.md`；已完成的验收和架构评审材料在`archive/`（评审入口`archive/review_guide.md`）。整理前最近一次为143项Node检查、387项Java检查、23项真实程序检查，Claude和Codex各5个实际阶段。真实报告是历史执行记录，原始日志／存档仍留本地，不代表网页评审者已复现。整理版自己的离线复验另见`archive/export_validation.md`。
+隔离服实测要原版协议测试玩家时（陪挖、保护、导航与防卫等），先把核心以外的模组临时挪出 `mods`，测完放回；装着客户端模组时原版协议客户端进不了服。

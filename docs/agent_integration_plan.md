@@ -1,5 +1,7 @@
 # MCBOT 多 Agent 与原生 API 接入计划
 
+> **2026-10-08 状态说明**：本文的进度描述停在 10-03～10-06，已过时。之后：R7 统一 Agent 适配接口 10-06 完成（第 4 步）；dsh 走 ACP 接入、10-06 隔离服真实模型通过，之后试玩两轮（第 5 步）；v0.1 只做 Claude Code、Codex、dsh 三家，Antigravity 和原生 API 不在 v0.1 范围里（原生 API 列在 v0.1 之后）。本文保留的是接入方式的调研和取舍理由；当前进度看[评审入口](review_guide.md)和[交付计划](delivery_plan.md)。
+
 2026-10-03 进度核对。Codex V0 已实现并完成首轮试玩；ServerBody 上本机 Claude／Codex 的 C 验收也已完成。最终通用接入层、其他新增 Agent 和原生 API 通道尚未完成。与 [通用适配主计划](archive/platform_compat_plan.md) 一起作为架构方向，近期顺序以 [交付清单](delivery_plan.md) 为准。
 
 **最新部署约束：Agent默认在用户本机运行；另一台Agent主机是保留的设计目标，异机安全传输与部署尚未交付。保留Claude Code账号环境，模型凭据不交给MC服务器；本机避免额外完整MC客户端，服务端正常成本可接受。C与真人体验已完成；10月3日Claude-b与Codex均实际跑通取物和持续陪伴新接口，见[本批记录](archive/server_companion_validation.md)。**

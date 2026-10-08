@@ -34,7 +34,7 @@ Agent：Claude Code、Codex、DeepSeek Harness（dsh，可直接用桌面版自�
 
 还没有：主动保护玩家、建筑、模组机器通用适配、原生 API、多版本。详见[交付计划](docs/delivery_plan.md)。
 
-用 `start-server-play.ps1` 启动。五十多个 MCP 工具不代表所有 Mod 或服务器都能用。托管时可以另开一个终端运行 `node scripts/webui.mjs --open`，在本机网页里看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。
+用 `start-server-play.ps1` 启动。五十多个 MCP 工具不代表所有 Mod 或服务器都能用。托管时可以另开一个终端运行 `node scripts/webui.mjs --open`，在本机网页里看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管；「配置」页可以保存 Agent、账号、模型、思考强度等设置，一键启动托管（[说明](docs/dev.md#本地-webui)）。
 
 ## 目录
 

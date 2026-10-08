@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createWebServer, listBots, readActivity, requestControl, parseWebArgs } from '../../scripts/webui.mjs';
+import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, launchArgs, createLauncher, accountDirs } from '../../scripts/webui-profiles.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-webui-'));
 const heartbeat = (dir, name, extra = {}) => fs.writeFileSync(path.join(dir, `companion-${name}.json`),
@@ -97,5 +98,135 @@ test('WebUI 服务：只听本机，要令牌 Cookie，拒绝别的 Host', async
     const status = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: '/api/bots', headers: { cookie, host: `evil.example:${port}` } },
       (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject));
     assert.equal(status, 403, 'DNS 重绑定');
+  } finally { await web.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- 配置页 ----
+const connection = (dir, extra = {}) => {
+  const file = path.join(dir, 'connection.json');
+  fs.writeFileSync(file, JSON.stringify({ protocol: 2, backend: 'server', username: 'Claude', worldId: 'alpha', token: 'secret-token', endpoint: 'http://127.0.0.1:8767/v2', ...extra }));
+  return file;
+};
+const profile = (dir, extra = {}) => ({ label: '小克试玩', agent: 'claude', effort: 'low', connectionFile: connection(dir), ...extra });
+
+test('配置档案：只收认识的字段，不存 API key；思考强度按 Agent 分；路径要完整', () => {
+  const dir = tmp();
+  try {
+    const p = normalizeProfile(profile(dir, { model: 'claude-sonnet-5-5', configDir: '~/.claude-r', idleMinutes: '5', rotateTokens: '' }));
+    assert.match(p.id, /^[0-9a-f]{8}$/);
+    assert.equal(p.configDir, path.join(os.homedir(), '.claude-r'));
+    assert.equal(p.idleMinutes, 5); assert.equal(p.rotateTokens, null);
+    assert.deepEqual(p.credential, { kind: 'login' });
+    assert.throws(() => normalizeProfile(profile(dir, { apiKey: 'sk-x' })), /不认识的字段：apiKey/);
+    assert.throws(() => normalizeProfile(profile(dir, { credential: { kind: 'apiKey', value: 'sk-x' } })), /以后再做/);
+    assert.throws(() => normalizeProfile(profile(dir, { agent: 'gemini' })), /Agent/);
+    assert.throws(() => normalizeProfile(profile(dir, { agent: 'dsh', effort: 'medium' })), /low、high、max/);
+    assert.equal(normalizeProfile(profile(dir, { effort: 'max' })).effort, 'max');
+    assert.throws(() => normalizeProfile(profile(dir, { agent: 'codex', effort: 'max' })), /思考强度/);
+    assert.throws(() => normalizeProfile(profile(dir, { nickname: '-Headless' })), /不能以 - 开头/);
+    assert.throws(() => normalizeProfile(profile(dir, { model: 'a b' })), /模型名/);
+    assert.throws(() => normalizeProfile(profile(dir, { memoryDir: 'memory' })), /完整路径/);
+    assert.throws(() => normalizeProfile(profile(dir, { maxRestarts: 101 })), /maxRestarts/);
+    assert.throws(() => normalizeProfile({ ...profile(dir), connectionFile: '' }), /连接文件不能为空/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('配置档案存在 runtime 里，可以改、删；坏档案读的时候跳过', () => {
+  const dir = tmp();
+  try {
+    const a = saveProfile(dir, profile(dir));
+    const b = saveProfile(dir, profile(dir, { label: 'dsh', agent: 'dsh', effort: 'high' }));
+    saveProfile(dir, { ...a, model: 'opus' });
+    assert.deepEqual(loadProfiles(dir).map((p) => [p.label, p.model]), [['小克试玩', 'opus'], ['dsh', '']]);
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'webui-profiles.json'), 'utf8'));
+    raw.profiles.push({ label: 'x', agent: 'nope' });
+    fs.writeFileSync(path.join(dir, 'webui-profiles.json'), JSON.stringify(raw));
+    assert.equal(loadProfiles(dir).length, 2);
+    assert.equal(deleteProfile(dir, b.id), true); assert.equal(deleteProfile(dir, b.id), false);
+    assert.deepEqual(loadProfiles(dir).map((p) => p.id), [a.id]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('连接文件：只返回角色、世界和地址，不带令牌；只认本机 ServerBody', () => {
+  const dir = tmp();
+  try {
+    const r = inspectConnection(connection(dir));
+    assert.deepEqual(r, { ok: true, username: 'Claude', worldId: 'alpha', endpoint: 'http://127.0.0.1:8767' });
+    assert.doesNotMatch(JSON.stringify(r), /secret-token/);
+    assert.match(inspectConnection(connection(dir, { endpoint: 'http://10.0.0.2:8767/v2' })).error, /本机/);
+    assert.match(inspectConnection(connection(dir, { protocol: 1 })).error, /协议 2/);
+    assert.match(inspectConnection(path.join(dir, 'none.json')).error, /不存在/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('启动参数：每个值单独一项，带 -Headless；没填的会话选项不传', () => {
+  const dir = tmp();
+  try {
+    const p = normalizeProfile(profile(dir, { model: 'opus', nickname: '小克', maxRestarts: 0 }));
+    const a = launchArgs(p, 'S.ps1');
+    assert.deepEqual(a.slice(0, 4), ['-NoProfile', '-NonInteractive', '-File', 'S.ps1']);
+    const after = (flag) => a[a.indexOf(flag) + 1];
+    assert.equal(after('-ConnectionFile'), p.connectionFile); assert.equal(after('-Agent'), 'claude');
+    assert.equal(after('-Model'), 'opus'); assert.equal(after('-Nickname'), '小克'); assert.equal(after('-MaxRestarts'), '0');
+    assert.ok(a.includes('-Headless')); assert.ok(!a.includes('-IdleMinutes')); assert.ok(!a.includes('-ConfigDir'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('启动：在线的不再启动；脚本退出后能看到退出码和输出', async () => {
+  const dir = tmp();
+  try {
+    const script = path.join(dir, 'fake.mjs');
+    fs.writeFileSync(script, "console.log('ARGS ' + process.argv.slice(2).join('|')); process.exit(3);");
+    let running = false;
+    const launcher = createLauncher({ runtime: dir, isRunning: () => running, command: [process.execPath, script] });
+    const p = normalizeProfile(profile(dir));
+    running = true;
+    assert.match(launcher.launch(p).error, /已经在托管/);
+    running = false;
+    const r = launcher.launch(p);
+    assert.equal(r.ok, true); assert.equal(r.name, 'Claude');
+    assert.match(launcher.launch(p).error, /正在启动/);
+    for (let i = 0; i < 100 && launcher.status('Claude').exitCode === null; i++) await new Promise((res) => setTimeout(res, 50));
+    const s = launcher.status('Claude');
+    assert.equal(s.exitCode, 3); assert.match(s.log, /ARGS -NoProfile\|.*-Headless/);
+    assert.match(launcher.launch(normalizeProfile(profile(dir, { connectionFile: path.join(dir, 'none.json') }))).error, /不存在/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('账号目录：只列用户目录下像账号目录的文件夹名', () => {
+  const home = tmp();
+  try {
+    for (const d of ['.claude', '.claude-r', '.codex', '.dsh', '.config']) fs.mkdirSync(path.join(home, d));
+    fs.writeFileSync(path.join(home, '.claude-file'), '');
+    assert.deepEqual(accountDirs(home), { claude: ['~/.claude', '~/.claude-r'], codex: ['~/.codex'], dsh: ['~/.dsh'] });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('配置接口：要 JSON、查来源；保存后列表不带令牌，启动走启动器', async () => {
+  const dir = tmp();
+  const launched = [];
+  const web = createWebServer({ runtime: dir, token: 'cd34', launcher: { launch: (p) => { launched.push(p.id); return { ok: true, name: 'Claude', pid: 1 }; }, status: () => null } });
+  try {
+    const port = await web.listen(0);
+    const base = `http://127.0.0.1:${port}`;
+    const cookie = (await fetch(`${base}/?t=cd34`, { redirect: 'manual' })).headers.get('set-cookie').split(';')[0];
+    const post = (p, body, headers = {}) => fetch(base + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    assert.equal((await fetch(`${base}/api/profiles`)).status, 403, '没有 Cookie');
+    assert.equal((await fetch(`${base}/api/profiles/save`, { method: 'POST', headers: { cookie, 'content-type': 'text/plain' }, body: '{}' })).status, 415);
+    assert.equal((await post('/api/profiles/save', profile(dir), { origin: 'http://evil.example' })).status, 403);
+    assert.equal((await post('/api/profiles/save', profile(dir, { apiKey: 'sk' }))).status, 400);
+    const saved = await (await post('/api/profiles/save', profile(dir))).json();
+    assert.equal(saved.ok, true);
+    const view = await (await fetch(`${base}/api/profiles`, { headers: { cookie } })).json();
+    assert.equal(view.profiles[0].connection.username, 'Claude'); assert.equal(view.profiles[0].running, false);
+    assert.deepEqual(view.agents.dsh.efforts, ['low', 'high', 'max']);
+    assert.doesNotMatch(JSON.stringify(view), /secret-token/);
+    const conn = await (await post('/api/connection', { file: view.profiles[0].connectionFile })).json();
+    assert.equal(conn.worldId, 'alpha'); assert.doesNotMatch(JSON.stringify(conn), /secret-token/);
+    assert.equal((await post('/api/profiles/launch', { id: saved.profile.id })).status, 200);
+    assert.deepEqual(launched, [saved.profile.id]);
+    assert.equal((await post('/api/profiles/launch', { id: 'ffffffff' })).status, 404);
+    assert.equal((await post('/api/profiles/delete', { id: saved.profile.id })).status, 200);
+    assert.equal(loadProfiles(dir).length, 0);
   } finally { await web.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

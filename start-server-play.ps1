@@ -8,7 +8,12 @@ param(
     [string]$MemoryDir = '',
     [string]$Model = '',
     [string]$NodePath = '',
-    [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort = 'low',
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')][string]$Effort = 'low',
+    # 会话选项，-1 表示用驱动器的默认值（见 scripts/companion.mjs 开头的说明）
+    [ValidateRange(-1, 1440)][int]$IdleMinutes = -1,
+    [ValidateRange(-1, 1440)][int]$ResumeWindowMin = -1,
+    [ValidateRange(-1, 2000000)][int]$RotateTokens = -1,
+    [ValidateRange(-1, 100)][int]$MaxRestarts = -1,
     [switch]$Headless,
     [switch]$PrepareOnly
 )
@@ -60,6 +65,10 @@ $driverArgs = @('scripts/companion.mjs', '--agent', $Agent, '--body', 'server', 
 if ($ConfigDir) { $driverArgs += @('--config-dir', $ConfigDir) }
 if ($MemoryDir) { $driverArgs += @('--memory-dir', $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($MemoryDir)) }
 if ($Model) { $driverArgs += @('--model', $Model) }
+if ($IdleMinutes -ge 0) { $driverArgs += @('--idle-minutes', [string]$IdleMinutes) }
+if ($ResumeWindowMin -ge 0) { $driverArgs += @('--resume-window-min', [string]$ResumeWindowMin) }
+if ($RotateTokens -ge 0) { $driverArgs += @('--rotate-tokens', [string]$RotateTokens) }
+if ($MaxRestarts -ge 0) { $driverArgs += @('--max-restarts', [string]$MaxRestarts) }
 if ($Headless) { $driverArgs += '--headless' }
 & $NodePath @driverArgs
 exit $LASTEXITCODE

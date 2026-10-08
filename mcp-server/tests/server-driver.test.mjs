@@ -8,7 +8,7 @@ import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parseArgs,bodySessionScope,runtimeFiles,startupPrompt,readSessionState,completeServerChat,captureBodyArtifacts,cleanupBodyArtifacts,taskAlreadyDelivered,isWakeEvent} from '../../scripts/companion.mjs';
-import {createServerBodyControl} from '../../scripts/server-body-control.mjs';
+import {createServerBodyControl,respawnIfDead} from '../../scripts/server-body-control.mjs';
 import {CODEX_SERVER_TOOLS,codexThreadConfig} from '../../scripts/agents/codex-app-server.mjs';
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(HERE,'../..');
@@ -26,6 +26,11 @@ async function mock(){
     if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:[]});
     // Like the server: a revoke may name the session the body already left (it is matched against the retired lease).
     if(p.instanceId!==state.instanceId||p.sessionId&&p.sessionId!==state.sessionId&&method!=='revoke')return fail('WRONG_INSTANCE');
+    if(method==='respawn'){
+      if(!state.dead)return fail('INVALID_ARGUMENT');
+      state.dead=false;state.sessionId='session-respawned';
+      return ok({respawned:true,connected:true,instanceId:state.instanceId,sessionId:state.sessionId,controlGeneration:2});
+    }
     if(method==='claim'){
       if(state.lease)return fail('LEASE_BUSY');
       state.lease={leaseId:`lease-${++state.claims}`,stopToken:`stop-${state.claims}`,instanceId:state.instanceId,sessionId:state.sessionId,chatCursor:state.seq,ttlMs:10000,controlGeneration:1};
@@ -160,7 +165,10 @@ for(const agent of ['claude','codex','dsh'])test(`ServerBody 真驱动+${agent}�
     assert.equal(api.state.revokeCount,3,'shutdown先撤销当前控制');
     assert.equal(fs.existsSync(path.join(runtime,'server-control-ServerTest.json')),false,'宿主清理已退出Agent留下的自身控制文件');
     assert.equal(fs.existsSync(path.join(runtime,'client-body-ServerTest.lock')),false,'宿主清理同一已退出Body锁');
-    const methods=new Set(api.state.calls.map(c=>c.method));assert.deepEqual([...methods].sort(),['claim','heartbeat','hello','revoke','watch']);
+    const methods=new Set(api.state.calls.map(c=>c.method));assert.deepEqual([...methods].sort(),['claim','heartbeat','hello','respawn','revoke','watch']);
+    const order=api.state.calls.map(c=>c.method);
+    assert.equal(order.filter(m=>m==='respawn').length,1,'启动时只试一次重生（角色活着，被拒绝）');
+    assert.ok(order.indexOf('respawn')<order.indexOf('claim'),'先检查死活再让 Agent 接管');
   }catch(error){
     fs.mkdirSync(path.join(ROOT,'output'),{recursive:true});
     fs.writeFileSync(path.join(ROOT,`output/server-driver-${agent}-failure.json`),JSON.stringify({message:error.message,output,agent:records(agentLog),calls:api.state.calls},null,2));
@@ -316,4 +324,20 @@ test('角色死后重生换了会话，宿主退出时照样能撤销并让角�
     const revokes=api.state.calls.filter(c=>c.method==='revoke');assert.equal(revokes.length,1);assert.equal(revokes[0].leave,true);
     await control.poll();assert.equal(api.state.calls.filter(c=>c.method==='watch').length,0,'普通的监听仍然要求会话一致');
   }finally{control.close();await api.close();cleanup(dir);}
+});
+
+test('托管启动时角色死了就原生重生，活着的不动，服务器没开不卡住启动',async()=>{
+  const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
+  fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));
+  try{
+    assert.equal(await respawnIfDead(scope),'alive');
+    assert.equal(api.state.sessionId,'session-a','活着的角色会话不变');
+    api.state.dead=true;
+    assert.equal(await respawnIfDead(scope),'respawned');
+    assert.equal(api.state.sessionId,'session-respawned');
+    assert.equal(api.state.calls.filter(c=>c.method==='claim').length,0,'重生不代替接管');
+    api.state.worldId='world-b';
+    assert.equal(await respawnIfDead(scope),'CONTROL_IDENTITY_CHANGED');
+  }finally{await api.close();}
+  try{assert.equal(await respawnIfDead(scope,{timeoutMs:500}),'CONTROL_UNREACHABLE');}finally{cleanup(dir);}
 });

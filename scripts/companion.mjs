@@ -43,7 +43,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { createServerBodyControl } from './server-body-control.mjs';
+import { createServerBodyControl, respawnIfDead } from './server-body-control.mjs';
 import { rcon, tellrawCommand } from './rcon.mjs';
 import { getAgentProtocol, claudeContextTokens, AGENT_NAMES, agentsFor, agentConfigDir } from './agents/process-protocols.mjs';
 
@@ -718,6 +718,8 @@ function main() {
   let pendingEvents = [];
   let pendingUserLines = [];
   let pendingNotes = [];
+  // 启动时把死掉的角色重生了：随下一轮带给 agent，不单独唤醒它
+  let respawnNote = '';
   let batchTimer = null;
   let batchStartedAt = 0;
   let batchDeadline = 0;
@@ -1406,6 +1408,7 @@ function main() {
     }
 
     const parts = header ? [header] : [];
+    if (respawnNote) { parts.push(respawnNote); respawnNote = ''; }
     if (lastStopAt) parts.push(`【停止记录】玩家在 ${new Date(lastStopAt).toISOString()} 已叫停。该时间之前的旧任务已取消，不要自行恢复；只执行之后新的明确指令。`);
     if (pendingEvents.length) {
       // 驱动器已经把这些事件交给 agent，告诉 MCP 服务端不要在 wait-for-events 里重复返回（只记当前进程的序号）
@@ -1597,19 +1600,31 @@ function main() {
   }
 
   // 上次的会话缓存还没过期（同一个账号）就接着，不然开新会话并跑启动轮
-  const saved = readSessionState(F.session);
-  lastStopAt = agentProtocol.identity === 'independent' || args.body === 'server' ? saved.lastStopAt || 0 : 0;
-  conversationId = resumableConversation(saved, Date.now(), { resumeWindowMs, configDir: CONFIG_DIR, provider: PROVIDER, model: args.model || '', bodyScope: BODY_SCOPE });
-  if (conversationId) {
-    lastRequestAt = saved.lastRequestAt;
-    contextTokens = saved.contextTokens;
-    info(`接着上次的会话 ${conversationId}（${Math.round((Date.now() - lastRequestAt) / 60000)} 分钟前，上下文 ${Math.round(contextTokens / 1000)}k）`);
-    resumeNote = '托管刚重启过（一般是开发那边更新了程序）';
-    startAgent();
-  } else {
-    startAgent();
-    sendTurn(STARTUP_PROMPT, 'startup');
+  function startSession() {
+    const saved = readSessionState(F.session);
+    lastStopAt = agentProtocol.identity === 'independent' || args.body === 'server' ? saved.lastStopAt || 0 : 0;
+    conversationId = resumableConversation(saved, Date.now(), { resumeWindowMs, configDir: CONFIG_DIR, provider: PROVIDER, model: args.model || '', bodyScope: BODY_SCOPE });
+    if (conversationId) {
+      lastRequestAt = saved.lastRequestAt;
+      contextTokens = saved.contextTokens;
+      info(`接着上次的会话 ${conversationId}（${Math.round((Date.now() - lastRequestAt) / 60000)} 分钟前，上下文 ${Math.round(contextTokens / 1000)}k）`);
+      resumeNote = '托管刚重启过（一般是开发那边更新了程序）';
+      startAgent();
+    } else {
+      startAgent();
+      sendTurn(STARTUP_PROMPT, 'startup');
+    }
   }
+  // 死掉的角色接管不了（claim 会拒绝 DEAD_BODY），先走原生重生再启动 agent
+  if (args.body === 'server') {
+    void respawnIfDead(BODY_SCOPE).then((outcome) => {
+      if (outcome === 'respawned') {
+        info('角色之前死了，已经原生重生（有床就在床边，没有就在世界出生点）');
+        respawnNote = '【角色重生】你之前死了，托管启动时已在重生点复活。身上的东西可能掉在死的地方；先看看自己在哪、还剩什么。';
+      } else if (outcome !== 'alive') info(`启动时没能检查角色是不是死了：${outcome}`);
+      if (!shuttingDown) startSession();
+    });
+  } else startSession();
   // 跳过驱动器启动前留下的旧事件；新的 MCP 服务端启动时会清空文件，届时从头读取
   try {
     const stat = fs.statSync(F.events);

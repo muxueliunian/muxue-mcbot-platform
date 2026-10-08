@@ -22,6 +22,35 @@ export function serverConnection(connectionFile, scope) {
   return { endpoint: endpoint.href, token: value.token };
 }
 
+async function rpc(connection, method, params, timeoutMs) {
+  let response;
+  try {
+    response = await fetch(connection.endpoint, { method: 'POST', redirect: 'error',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(timeoutMs) });
+  } catch { throw failure('CONTROL_UNREACHABLE'); }
+  let value;
+  try { value = await response.json(); } catch { throw failure('INVALID_RESPONSE'); }
+  if (!response.ok || value?.ok !== true) throw failure(value?.error?.code || 'CONTROL_REJECTED');
+  return value.result;
+}
+
+// Hosting start: a body that died while nobody hosted it is brought back through the native respawn (bed or world
+// spawn, vanilla drop rules) so the agent can claim it. Never claims; the server refuses this for a living body
+// with INVALID_ARGUMENT, which just means there is nothing to do. Resolves to 'respawned', 'alive' or an error code.
+export async function respawnIfDead(scope, { timeoutMs = 10000 } = {}) {
+  try {
+    const connection = serverConnection(scope.connectionFile, scope);
+    const hello = await rpc(connection, 'hello', {}, timeoutMs);
+    if (hello?.protocol !== 2 || hello.backend !== 'server' || hello.worldId !== scope.worldId || hello.username !== scope.username) return 'CONTROL_IDENTITY_CHANGED';
+    const result = await rpc(connection, 'respawn', { instanceId: hello.instanceId, worldId: scope.worldId,
+      username: scope.username, sessionId: hello.sessionId ?? null }, timeoutMs);
+    return result?.respawned === true ? 'respawned' : 'RESPAWN_NOT_CONFIRMED';
+  } catch (error) {
+    return error.code === 'INVALID_ARGUMENT' ? 'alive' : error.code || 'CONTROL_ERROR';
+  }
+}
+
 export function createServerBodyControl({ scope, runtimeDir, controllerId, isStop, isNewTask,
   onStop, onNewTask, botPlayers = [], log = () => {}, intervalMs = 500, requestTimeoutMs = 1800 }) {
   const file = path.join(runtimeDir, `server-control-${scope.username}.json`);
@@ -45,18 +74,7 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
     return cached;
   }
 
-  async function call(connection, method, params) {
-    let response;
-    try {
-      response = await fetch(connection.endpoint, { method: 'POST', redirect: 'error',
-        headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(requestTimeoutMs) });
-    } catch { throw failure('CONTROL_UNREACHABLE'); }
-    let value;
-    try { value = await response.json(); } catch { throw failure('INVALID_RESPONSE'); }
-    if (!response.ok || value?.ok !== true) throw failure(value?.error?.code || 'CONTROL_REJECTED');
-    return value.result;
-  }
+  const call = (connection, method, params) => rpc(connection, method, params, requestTimeoutMs);
 
   // sameSession false: revoking a session the body already left (it died and respawned) is still allowed; the server
   // only accepts it for its own retired lease and never lets it touch a newer controller's lease.

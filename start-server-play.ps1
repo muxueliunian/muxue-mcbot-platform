@@ -14,6 +14,12 @@ param(
     [ValidateRange(-1, 1440)][int]$ResumeWindowMin = -1,
     [ValidateRange(-1, 2000000)][int]$RotateTokens = -1,
     [ValidateRange(-1, 100)][int]$MaxRestarts = -1,
+    # 保护玩家（8h）：跟随时打靠近玩家的怪；半径 3..12（0 表示用默认 8）、撤退血量 4..16（0 表示默认 8）
+    [ValidateSet('on', 'off')][string]$Guard = 'on',
+    [ValidateRange(0, 12)][int]$GuardRadius = 0,
+    [ValidateRange(0, 16)][int]$GuardLowHealth = 0,
+    [ValidateSet('on', 'off')][string]$GuardBow = 'on',
+    [ValidateSet('on', 'off')][string]$GuardShield = 'on',
     [switch]$Headless,
     [switch]$PrepareOnly
 )
@@ -52,8 +58,13 @@ New-Item -ItemType Directory -Path $playDir -Force | Out-Null
 $config = @{ mcpServers = @{ minecraft = @{
     command = $NodePath
     args = @($entry, '--body', 'server', '--connection-file', $connectionPath,
-        '--username', $Name, '--nickname', $Nickname, '--world-id', $WorldId)
+        '--username', $Name, '--nickname', $Nickname, '--world-id', $WorldId,
+        '--guard', $Guard, '--guard-bow', $GuardBow, '--guard-shield', $GuardShield)
 } } }
+if ($GuardRadius -gt 0 -and $GuardRadius -lt 3) { throw 'GuardRadius 应为 3..12（0 表示默认）' }
+if ($GuardLowHealth -gt 0 -and $GuardLowHealth -lt 4) { throw 'GuardLowHealth 应为 4..16（0 表示默认）' }
+if ($GuardRadius -gt 0) { $config.mcpServers.minecraft.args += @('--guard-radius', [string]$GuardRadius) }
+if ($GuardLowHealth -gt 0) { $config.mcpServers.minecraft.args += @('--guard-low-health', [string]$GuardLowHealth) }
 $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configFile -Encoding utf8
 Write-Host "ServerBody 配置：$configFile"
 Write-Host "角色：$Name；世界：$WorldId；Agent：$Agent；思考：$Effort"

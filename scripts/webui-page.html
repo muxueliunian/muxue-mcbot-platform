@@ -121,6 +121,7 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .bar{display:flex;flex-wrap:wrap;gap:16px;padding:12px 16px;color:var(--muted);font-size:12px;align-items:center;border-bottom:1px solid var(--line)}
 #title{font-size:14px;font-weight:600;color:var(--text)}
 .bar label{display:flex;gap:8px;align-items:center;cursor:pointer;transition:color .2s}.bar label:hover{color:var(--text)}
+.switches{display:flex;flex-wrap:wrap;gap:8px 18px;min-height:36px;align-items:center}.switches label{display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--text);transition:opacity .2s}.switches label.off{opacity:.45;pointer-events:none}
 #now{background:var(--fill)}#now:empty{display:none}
 #rows{overflow:auto;padding:8px 6px;flex:1;min-height:300px}
 .row{display:grid;grid-template-columns:62px 48px 1fr;gap:10px;padding:4px 10px;align-items:baseline;border-radius:10px;transition:background .2s}
@@ -262,6 +263,13 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
   <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="服务器的 config/mcbot-server-control/connection.json" required><button type="button" id="c-check">检查</button></div><span class="hint" id="h-conn">游戏里的角色名和世界从这个文件读</span></div>
   <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家可以用昵称叫它</span></div>
   <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空就不带人设"><span class="hint">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
+</div>
+<h3>保护玩家</h3>
+<div class="fields">
+  <div class="f"><span class="lb">跟随时</span><div class="switches"><label><input type="checkbox" class="sw" id="c-guard" checked>主动打靠近玩家的怪</label></div><span class="hint">关掉就只在自己挨打时还手</span></div>
+  <div class="f"><span class="lb">装备</span><div class="switches" id="c-guard-gear"><label><input type="checkbox" class="sw" id="c-guardBow" checked>用弓</label><label><input type="checkbox" class="sw" id="c-guardShield" checked>举盾</label></div><span class="hint">弓要有箭，射之前确认弹道上没有玩家和宠物；盾放副手</span></div>
+  <div class="f"><label for="c-guardRadius">保护范围（格）</label><input id="c-guardRadius" type="number" min="3" max="12" placeholder="8"><span class="hint">玩家身边多远的怪会去打，最多追出范围 4 格</span></div>
+  <div class="f"><label for="c-guardLowHealth">撤退血量</label><input id="c-guardLowHealth" type="number" min="4" max="16" placeholder="8"><span class="hint">满血 20，低于它就往玩家那边撤，回血后再上</span></div>
 </div>
 <button type="button" class="ghost adv-btn" id="c-adv">高级选项<svg class="i chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
 <div class="collapse" id="c-adv-box"><div>
@@ -482,7 +490,8 @@ poll(); setInterval(poll, 1500);
 
 // ---- 配置页 ----
 let cfg = null, cur = null, cfgTimer = 0, models = null, modelsKey = '', modelsLoading = false;
-const NUMS = ['idleMinutes', 'resumeWindowMin', 'rotateTokens', 'maxRestarts'];
+const NUMS = ['idleMinutes', 'resumeWindowMin', 'rotateTokens', 'maxRestarts', 'guardRadius', 'guardLowHealth'];
+const SWITCHES = ['guard', 'guardBow', 'guardShield'];
 const TEXTS = ['label', 'configDir', 'model', 'connectionFile', 'nickname', 'memoryDir', 'nodePath'];
 const EFFORT_DESC = { low: '快、省额度', medium: '均衡', high: '更仔细', xhigh: '很仔细', max: '最强', ultra: '最强，最慢' };
 function say(t, err) { const m = $('#c-msg'); m.textContent = t || ''; m.className = err ? 'err' : ''; if (t) { void m.offsetWidth; m.classList.add('show'); } }
@@ -561,6 +570,8 @@ function fill(p) {
   $('#cform').dataset.filled = '1'; $('#c-title').textContent = p.id ? '编辑：' + p.label : '新配置';
   for (const k of TEXTS) $('#c-' + k).value = p[k] || '';
   for (const k of NUMS) $('#c-' + k).value = p[k] ?? '';
+  for (const k of SWITCHES) $('#c-' + k).checked = p[k] !== false;
+  guardGear();
   $('#c-agent').value = p.agent || 'claude'; agentDD.sync();
   onAgent(p.effort);
   const h = $('#h-conn');
@@ -568,6 +579,8 @@ function fill(p) {
   h.className = 'hint' + (p.connection ? (p.connection.ok ? ' okc' : ' errc') : '');
   $('#c-del').disabled = !p.id; say('');
 }
+/** Bow and shield only matter while guarding. */
+function guardGear() { const on = $('#c-guard').checked; for (const l of document.querySelectorAll('#c-guard-gear label')) l.classList.toggle('off', !on); for (const id of ['#c-guardRadius', '#c-guardLowHealth']) $(id).disabled = !on; }
 function onAgent(effort) {
   const a = cfg.agents[$('#c-agent').value];
   $('#h-account').textContent = a.accountHint; $('#c-nickname').placeholder = a.defaultNickname;
@@ -578,6 +591,7 @@ function collect() {
   if (cur && cur.id) o.id = cur.id;
   for (const k of TEXTS) o[k] = $('#c-' + k).value.trim();
   for (const k of NUMS) { const v = $('#c-' + k).value.trim(); o[k] = v === '' ? null : Number(v); }
+  for (const k of SWITCHES) o[k] = $('#c-' + k).checked;
   return o;
 }
 async function save() { const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); say('已保存'); return cur; }
@@ -623,6 +637,7 @@ $('#c-del').onclick = async () => {
   if (!cur || !cur.id || !confirm('删除配置「' + cur.label + '」？不影响正在托管的 Bot')) return;
   const r = await post('/api/profiles/delete', { id: cur.id }); if (!r.ok) { say(r.error || '删除失败', true); return; } cur = null; loadCfg(true);
 };
+$('#c-guard').onchange = guardGear;
 $('#c-adv').onclick = () => { const o = $('#c-adv-box').classList.toggle('open'); $('#c-adv').classList.toggle('open', o); store.set('mcbot.adv', o ? '1' : ''); };
 if (store.get('mcbot.adv', '')) { $('#c-adv-box').classList.add('open'); $('#c-adv').classList.add('open'); }
 // 分段选择的滑块

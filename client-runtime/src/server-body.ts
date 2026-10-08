@@ -9,6 +9,7 @@ const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const operationBudget = z.object({ used: generation, remaining: generation, limit: generation.refine(value => value > 0), exhausted: z.boolean() })
   .refine(value => value.used <= value.limit && value.remaining === value.limit - value.used && value.exhausted === (value.remaining === 0), 'Inconsistent operation budget');
 const components = z.record(z.unknown());
+const guardOptions = z.object({ radius: z.number().finite().min(3).max(12).optional(), lowHealth: z.number().finite().min(4).max(16).optional(), bow: z.boolean().optional(), shield: z.boolean().optional() }).strict();
 const maxStackSize = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional();
 const position = z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() });
 const observedStackShape = { slot: z.number().int().nonnegative(), id: z.string(), count: z.number().int().nonnegative(), components: components.optional(), componentsComplete: z.boolean().optional(), componentError: z.string().optional(), maxStackSize, source: z.enum(['container', 'player', 'unknown']).optional(), playerSlot: z.number().int().nonnegative().optional(), active: z.boolean().optional(), mayPickup: z.boolean().optional() };
@@ -135,7 +136,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -358,7 +359,7 @@ export class ServerBody implements Body {
     const schemas: Partial<Record<ActionName, z.ZodTypeAny>> = {
       'approach-resource': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'pickup-item': z.object({ entityId: z.string().uuid(), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components, expectedMaxStackSize: maxStackSize, companionGuard: z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), maxDistance: z.number().finite().min(1.5).max(4) }).optional(), resourceTargetToken: z.string().uuid().optional(), timeoutMs: z.number().int().min(500).max(30000).optional() }),
-      'follow-companion': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), distance: z.number().finite().min(1.5).max(6).optional(), wander: z.boolean().optional() }).strict(),
+      'follow-companion': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid(), distance: z.number().finite().min(1.5).max(6).optional(), wander: z.boolean().optional(), guard: guardOptions.optional() }).strict(),
       'approach-container': z.object({ targetToken: z.string().uuid(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'approach-player': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid().optional(), distance: z.number().finite().min(1).max(1.5).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }),
       'dig-block': z.object({ ...guardedBlock, targetToken: z.string().uuid().optional() }), 'open-container': z.object({ ...guardedBlock, targetToken: z.string().uuid().optional() }),

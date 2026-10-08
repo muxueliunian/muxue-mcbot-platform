@@ -32,7 +32,7 @@ import static com.mcbot.servercontrol.Protocol.*;
 
 /** Ordinary player packet entry points, with authoritative preconditions and no client prediction. */
 final class SurvivalActions {
-    private static final Map<ServerPlayer,NativeDefenseUse> NATIVE_ATTACKS=new IdentityHashMap<>();
+    private static final Map<ServerPlayer,NativeAttackScope> NATIVE_ATTACKS=new IdentityHashMap<>();
     static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","defend-entity","use-bucket");
     private final ServerPlayer player;
     private final ControlSession session;
@@ -728,17 +728,23 @@ final class SurvivalActions {
         defense=use;lastDefenseTick=player.getServer().getTickCount();use.tick();if(!use.alive())defense=null;
     }
     void receiveDamage(LivingDamageEvent.Post event) {
-        NativeDefenseUse use=NATIVE_ATTACKS.get(player);
+        NativeAttackScope use=NATIVE_ATTACKS.get(player);
         if(use!=null&&event.getSource().getDirectEntity()==player&&event.getSource().getEntity()==player&&event.getSource().is(DamageTypes.PLAYER_ATTACK))
             use.receipt(event.getEntity().getUUID().toString(),event.getNewDamage());
     }
     static boolean nativeWriteInProgress(ServerPlayer player) {return player!=null&&NATIVE_ATTACKS.containsKey(player);}
+    /** One guard attack inside its own scope, so the same attack, damage and sweep guards apply to it as to defense. */
+    static void scopedAttack(ServerPlayer player,NativeAttackScope scope,Runnable attack) {
+        if(NATIVE_ATTACKS.containsKey(player))throw error("BUSY","Another native attack is in progress");
+        NATIVE_ATTACKS.put(player,scope);
+        try {attack.run();} finally {NATIVE_ATTACKS.remove(player,scope);}
+    }
     static void guardNativeAttack(AttackEntityEvent event) {
-        NativeDefenseUse scope=NATIVE_ATTACKS.get(event.getEntity());
+        NativeAttackScope scope=NATIVE_ATTACKS.get(event.getEntity());
         if(scope!=null&&!scope.allowNativeTarget(event.getTarget().getUUID().toString()))event.setCanceled(true);
     }
     static void guardNativeIncomingDamage(LivingIncomingDamageEvent event) {
-        NativeDefenseUse scope=NATIVE_ATTACKS.get(event.getSource().getDirectEntity());
+        NativeAttackScope scope=NATIVE_ATTACKS.get(event.getSource().getDirectEntity());
         if(scope==null)return;
         boolean authorized=event.getSource().getEntity()==event.getSource().getDirectEntity()&&event.getSource().is(DamageTypes.PLAYER_ATTACK);
         if(!authorized)scope.refuseNative(error("DEFENSE_EFFECT_UNKNOWN","Unexpected native damage source inside defense"));

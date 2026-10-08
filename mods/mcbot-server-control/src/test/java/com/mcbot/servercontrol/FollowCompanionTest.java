@@ -53,6 +53,9 @@ final class FollowCompanionTest {
         }
         public void move(Vec3 delta) {moves++;input=delta;}
         public void stop() {stops++;input=null;}
+        GuardCombat guard;int resets;
+        public GuardCombat guard() {return guard;}
+        public void resetNavigation() {resets++;}
         void physics() {if(input!=null)feet=feet.add(new Vec3(input.x,0,input.z).normalize().scale(Math.min(0.22,input.horizontalDistance())));}
         static FlatRoute.Cell cell(Vec3 point) {return new FlatRoute.Cell((int)Math.floor(point.x),(int)Math.floor(point.z));}
         static Vec3 point(FlatRoute.Cell cell) {return new Vec3(cell.x()+0.5,1,cell.z()+0.5);}
@@ -188,7 +191,25 @@ final class FollowCompanionTest {
             check(response.get("status").getAsString().equals("running"),"distance boundary accepted "+distance);
         }
         stroll();
+        guarding();
         System.out.println("FollowCompanionTest: "+checks+" checks passed");
+    }
+    /** Guarding follow: damage no longer ends it, the guard takes the tick while it fights, then the follow resumes from a fresh route. */
+    private static void guarding() {
+        NativeTerrain terrain=new NativeTerrain();
+        GuardCombatTest.FakeView fake=new GuardCombatTest.FakeView();
+        terrain.guard=new GuardCombat(fake,GuardCombat.Options.parse(com.google.gson.JsonParser.parseString("true")));
+        Fixture guarded=new Fixture(terrain);guarded.start(obj("guard",true));
+        check(guarded.state().equals("following")&&guarded.operation.result.getAsJsonObject().getAsJsonObject("guard").get("state").getAsString().equals("idle"),"guarding follow starts as an ordinary follow and reports the guard");
+        fake.foes.add(GuardCombatTest.foe("zombie","minecraft:zombie",4,3));terrain.health=14;
+        int moves=terrain.moves;guarded.tick(50);
+        check(guarded.operation.status.equals("running")&&guarded.state().equals("guarding")&&fake.approaches==1&&terrain.moves==moves,"hit while guarding: the follow keeps running and the guard drives");
+        check(guarded.operation.summary.equals("Guarding companion")&&guarded.operation.result.getAsJsonObject().getAsJsonObject("guard").get("state").getAsString().equals("approaching"),"the result says what the guard is doing");
+        fake.dead.add("zombie");int resets=terrain.resets;guarded.tick(50);
+        check(guarded.operation.status.equals("running")&&!guarded.state().equals("guarding")&&terrain.resets==resets+1,"fight over: the follow resumes with a fresh route");
+        guarded.stop();
+        Fixture plain=new Fixture(new NativeTerrain());plain.start();plain.terrain.health=14;plain.tick(50);
+        plain.failed("BLOCKED");
     }
     /** Idle stroll while waiting on native navigation: late, short, stays put until the player moves. */
     private static void stroll() {

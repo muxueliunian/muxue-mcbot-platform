@@ -36,6 +36,11 @@ final class ThreatSense {
         if(hostile)return new Verdict("hostile","vanilla_hostile_allowlist",false,true,null);
         return new Verdict(vanilla?"neutral":"unknown",vanilla?"none":"unknown",false,false,vanilla?"NOT_ATTACKING_SELF":"UNVERIFIED_HOSTILITY");
     }
+    /** On the vanilla hostile allowlist, implemented by the vanilla class itself (a Mod subclass does not qualify). */
+    static boolean vanillaHostile(LivingEntity target) {
+        var key=BuiltInRegistries.ENTITY_TYPE.getKey(target.getType());
+        return key.getNamespace().equals("minecraft")&&target.getClass().getName().startsWith("net.minecraft.")&&HOSTILE.contains(key.getPath());
+    }
     static void requireEligible(ServerPlayer player,LivingEntity target) {
         Verdict verdict=assess(player,target);if(!verdict.eligible())throw error("FORBIDDEN",verdict.reason());
     }

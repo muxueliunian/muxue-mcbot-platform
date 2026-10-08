@@ -40,7 +40,7 @@ function spawnSleeper() {
 }
 
 test('WAKE_TYPES 包含新事件，presence 不唤醒', () => {
-  for (const t of ['player_death', 'advancement', 'player_sleep', 'woke', 'chat', 'spawn', 'player_joined', 'teleport', 'task']) assert.ok(WAKE_TYPES.has(t), t);
+  for (const t of ['player_death', 'advancement', 'player_sleep', 'woke', 'chat', 'spawn', 'player_joined', 'teleport', 'task', 'guard']) assert.ok(WAKE_TYPES.has(t), t);
   assert.equal(isWakeEvent({ type: 'presence' }), false);
   assert.equal(isWakeEvent({ type: 'reflex' }), false);
   assert.equal(isWakeEvent({ type: 'player_sleep' }), true);

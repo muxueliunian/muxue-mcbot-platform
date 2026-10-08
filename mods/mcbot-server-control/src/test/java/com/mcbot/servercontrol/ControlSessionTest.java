@@ -207,7 +207,7 @@ public final class ControlSessionTest {
         ToolAssessmentTest.run();
         SurvivalAlphaTest.run();
         NavigationTest.run();IdleGazeTest.run();LookAroundTest.run();
-        DefenseAlphaTest.run();
+        DefenseAlphaTest.run();GuardCombatTest.run();
         ItemInteractionsTest.run();HostingRulesTest.run();ModAdaptersTest.run();WorkstationCoreTest.run();
     }
 }

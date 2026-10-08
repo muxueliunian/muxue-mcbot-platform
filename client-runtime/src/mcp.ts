@@ -7,7 +7,7 @@ import { CompanionMode } from './companion-mode.js';
 import { GatherTasks } from './gather-tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
-import { createActionStop } from './action-stop.js';
+import { createActionStop, companionReflexHooks } from './action-stop.js';
 import { PillarTasks } from './pillar.js';
 import { interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
@@ -28,7 +28,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   const companion = body.hello.capabilities.includes('follow-companion') ? options.companion ?? new CompanionMode(body, events, gather) : undefined;
   const survival = options.survival ?? (['survival-state', 'swap-inventory', 'eat-item'].every(cap => body.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events.recordOperation(operation)) : undefined);
   const stopCurrent = options.stopCurrent ?? createActionStop(body, tasks, gather, companion, survival);
-  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ordinaryBusy: () => {
+  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ...companionReflexHooks(tasks, gather, companion), ordinaryBusy: () => {
     try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); } catch { return true; }
     return body.isBusy?.() === true || body.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
   } }) : undefined);
@@ -106,6 +106,8 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
       action: z.enum(['follow', 'wait', 'pause', 'resume']), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(),
       distance: z.number().finite().min(1.5).max(6).optional(), say: z.string().min(1).max(256).optional(),
       wander: z.boolean().optional().describe('Default true: while the followed player stands still, now and then stroll a few steps nearby and stay there until they move. Always off with pickup or mining.'),
+      ...(body.hello.capabilities.includes('companion-guard') ? { guard: z.union([z.boolean(), z.object({ radius: z.number().finite().min(3).max(12).optional(), lowHealth: z.number().finite().min(4).max(16).optional(), bow: z.boolean().optional(), shield: z.boolean().optional() }).strict()]).optional()
+        .describe('Protect the followed player (on by default, settings from the WebUI): the game fights hostiles within radius of the player by itself, sword in reach, bow at range, shield up, backs off toward the player at lowHealth, never hits players, pets, villagers or named mobs, never chases beyond the leash. guard events report fights; no tool calls are needed for fighting. false only when the player asks not to fight.') } : {}),
       ...(body.hello.capabilities.includes('companion-pickup') ? { pickup: z.object({ items: z.array(registryId).min(1).max(8), radius: z.number().finite().min(1.5).max(4).default(3) }).optional() } : {}),
       mining: z.object({
         blockIds: z.array(resourceSelector).min(1).max(8).describe('Ores to mine: block IDs or tags, e.g. ["#c:ores"] for every ore (modded too) or ["#c:ores/iron","#c:ores/diamond"]. Non-ores are skipped.'),

@@ -243,6 +243,20 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 
 `set-reflexes`新增autoDefend、defenseRadius（1–3，默认3）、lowHealth（1–20，默认8）、excludedEntityIds（最多64个UUID）、maxAttacks（1–3，默认2）和defenseTimeoutMs（500–5000，默认3000）。有效策略公开defenseSupported；旧身体没有该能力时autoDefend为false。变更仍带expectedRevision，先确认旧活动动作停止，再应用新策略，不恢复旧任务。
 
+### 保护玩家（8h，2026-10-08）
+
+能力标记`companion-guard`。`follow-companion`多一个可选参数`guard:{radius:3..12,lowHealth:4..16,bow,shield}`（都可省，默认 8、8、开、开），跟随运行中每个游戏刻由服务端判断，不经过模型：
+
+- **打谁**：玩家身边`radius`格内的原版明确敌对生物，或者正在打玩家、打 Bot 的生物（Mod 生物只在后一种情况下算）；先打正在打玩家的，其次打 Bot 的，再按离玩家远近。玩家、有主人的动物、起了名字的、拴着的、村民和商人、不是怪物的傀儡、悦灵、盔甲架一律不算目标。
+- **怎么打**：够得着（原生交互距离加视线）就用热栏里最好的原版剑或斧挥，冷却满了才挥，挥击在自己的原生攻击 scope 里，伤害只按原生事件记账，横扫照旧关闭；够不着就走过去，路线不出玩家身边`radius+4`格（最多 16）。远处的远程怪、苦力怕、飞行怪，或者走不到的，有弓有箭就拉满弓射（按原版箭的速度、阻力和重力算仰角，按目标速度提前量），弹道上 1.2 格内有玩家、宠物、村民就不放箭，一直拉着等。武器只认原版物品、原版附魔、已知数据组件；带火矢的弓不用。剑、弓在背包主栏时先换到热栏，盾在副手空着时换进副手。
+- **盾**：等冷却时对着正在打 Bot 的怪举盾；撤退时也举。挥击前放下。
+- **撤**：血量不高于`lowHealth`且 8 格内有怪时往外撤（玩家在怪的另一边就撤到玩家身边，否则背离怪走 5 格，都不出范围），回到`lowHealth+4`以上才再打；苦力怕点燃且在 5 格内时也先躲。
+- 打不到的目标 5 秒内不再追；一场打了 15 秒没打中就放下。没事可做时交还给普通跟随，跟随路线重新算；保护跟随挨打不再结束跟随。
+- 回执：`follow-companion`运行中的结果多一个`guard:{state,target,targetId,hits,damage,shots,kills,retreats,options}`，`state`是 idle／approaching／fighting／aiming／shooting／retreating／evading；跟随本身的`state`多一个`guarding`。
+- 兜底：Bot 造成的任何伤害（挥击、箭、其他）落到上面那些不算目标的实体上时，服务端直接取消这次伤害。
+
+运行端：`companion-mode follow`默认带保护（`--guard on|off`、`--guard-radius`、`--guard-low-health`、`--guard-bow`、`--guard-shield`给默认值，WebUI「配置」页的「保护玩家」一栏和`start-server-play.ps1`的`-Guard*`参数转过来），请求里`guard:false`关掉、对象逐项覆盖；身体没有该能力时不带，明确要求就拒绝。保护时运行端只把「开打（20 秒内只报一次）」「打完了，打倒几只」「血少在撤」「躲苦力怕」作为`guard`事件唤醒模型，`companion-mode`状态仍是 following／waiting，另带`guard`。保护进行时 3 格近身自卫不插手；自动进食和近身自卫遇到普通跟随／等待时改为先暂停、处理完再恢复同一个意图（以前是取消）。
+
 同一仲裁器在普通观察之外独立采样紧凑生存状态；模式切换、慢普通观察与原生战斗等待不能挤掉感知。防卫抢占前阻断新普通写入，撤销容器／采集／陪伴／进食后等待身体停止确认，再获得写锁；不新增第二个控制者或偷偷接纳外部generation。人工停止解除armed，读状态与危险仍存在都不能重新授权。危险事件只按有意义的状态变化生成，不因距离微调、每次挥击、空气补回或跳跃下落数值变化反复唤醒模型。
 
 分段时间字段sensedAt、stopRequestedAt、stopConfirmedAt、actionRequestedAt、actionAcceptedAt记录运行端时间；actionAcceptedAt是收到回执的时刻，不是服务器最后实际写入tick。真实反应延迟与更长运行的结果须看本批验收，工具数量不代表通用Mod、任意武器或全地形支持。

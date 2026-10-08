@@ -80,12 +80,14 @@ export interface BodyHello {
 }
 /** What modify-item does to the referenced item; see the MCP tool for the fields each kind takes. */
 export type ModifyAction = { kind: 'enchant' | 'anvil' | 'grind' | 'smith' | 'loom' | 'cartography'; option?: number; with?: string; rename?: string; template?: string; addition?: string; dye?: string; pattern?: string; patternItem?: string };
+/** Companion guard: fight hostiles within `radius` of the followed player; back off at `lowHealth`. */
+export interface GuardOptions { radius?: number; lowHealth?: number; bow?: boolean; shield?: boolean }
 export interface ActionArguments {
   'send-chat': { message: string };
   'look-at': Position;
   'move-to-position': Position & { tolerance?: number; timeoutMs?: number };
   'follow-player': { player: string; distance?: number; timeoutMs?: number };
-  'follow-companion': { player: string; expectedEntityId: string; distance?: number; wander?: boolean };
+  'follow-companion': { player: string; expectedEntityId: string; distance?: number; wander?: boolean; guard?: GuardOptions };
   'approach-container': { targetToken: string; timeoutMs?: number };
   'approach-player': { player: string; expectedEntityId?: string; distance?: number; timeoutMs?: number };
   'approach-resource': { targetToken: string; timeoutMs?: number };

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { BodyError, type Body, type Observation, type Operation, type GroundItem, type Components, type PickupReceipt } from './body.js';
+import { BodyError, type Body, type Observation, type Operation, type GroundItem, type Components, type PickupReceipt, type GuardOptions } from './body.js';
 import type { EventJournal } from './events.js';
 import { GatherTasks, type BorrowedMining } from './gather-tasks.js';
 
@@ -13,14 +13,17 @@ type MiningTracker = { state: MiningState; lastScanAt: number; attempted: Set<st
 // Ores by block ID or tag (#c:ores, modded too); the body scans only ores whatever else is named.
 const miningSelector = /^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/;
 type PickupTracker = { state: PickupState; cursor: number; generations: Set<number>; count: number; variants: Array<{ item: string; count: number; maxStackSize: number; components: Components; storedIn?: string }>; attempted: Set<string>; pending?: { item: GroundItem; cursor: number; receipts: PickupReceipt[] } };
-type Intent = { action: 'follow' | 'wait'; player?: string; expectedEntityId?: string; distance?: number; wander?: boolean; context: Context; pickup?: { items: string[]; radius: number } };
+type Intent = { action: 'follow' | 'wait'; player?: string; expectedEntityId?: string; distance?: number; wander?: boolean; guard?: GuardOptions; context: Context; pickup?: { items: string[]; radius: number } };
+/** What the server's guard reports inside the running follow result. */
+export interface GuardState { state: string; target?: string; targetId?: string; hits: number; kills: number; shots: number; retreats: number; damage: number }
 export interface CompanionState {
   state: 'idle' | 'following' | 'waiting' | 'paused' | 'blocked' | 'stopped';
   intent?: 'follow' | 'wait'; player?: string; distance?: number; operationId?: string;
   stage?: 'starting' | 'active'; code?: string; reason?: string;
   activity?: 'following' | 'picking-up' | 'mining' | 'switching'; pickup?: PickupState; mining?: MiningState;
+  guard?: GuardState;
 }
-export interface CompanionRequest { action: 'follow' | 'wait' | 'pause' | 'resume'; player?: string; distance?: number; wander?: boolean; pickup?: PickupOptions; mining?: MiningOptions; say?: string }
+export interface CompanionRequest { action: 'follow' | 'wait' | 'pause' | 'resume'; player?: string; distance?: number; wander?: boolean; guard?: GuardOptions | boolean; pickup?: PickupOptions; mining?: MiningOptions; say?: string }
 const terminalControl = new Set(['CANCELLED', 'WORLD_CHANGED', 'WRONG_INSTANCE', 'STALE_CONTROL', 'LEASE_LOST', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED', 'HOST_LOST', 'CLOSED']);
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 
@@ -39,6 +42,11 @@ export class CompanionMode {
   private mining?: MiningTracker;
   private childActive = false;
   private readonly gather: GatherTasks;
+  /** Guard used by follow when the request does not say: the runtime's setting (on by default), false turns it off. */
+  guardDefaults: GuardOptions | false = {};
+  private lastGuard?: GuardState;
+  private fight?: { kills: number; targets: Set<string> };
+  private fightNotedAt = -Infinity;
   constructor(private readonly body: Body, private readonly events: EventJournal, gather?: GatherTasks, private readonly now = Date.now) { this.gather = gather ?? new GatherTasks(body, events, now); }
   snapshot(): CompanionState { return structuredClone({ ...this.value, ...(this.pickup ? { pickup: this.pickupState() } : {}), ...(this.mining ? { mining: this.miningState() } : {}) }); }
   private miningState(): MiningState {
@@ -163,7 +171,8 @@ export class CompanionMode {
   async request(request: CompanionRequest): Promise<CompanionState> {
     if (this.changing || this.stopping || this.stopUnconfirmed) throw new BodyError('BUSY', '陪伴模式正在切换或停止尚未确认，请等待或明确叫停');
     if (request.action === 'follow' && (!request.player || !/^[A-Za-z0-9_]{1,16}$/.test(request.player) || (request.distance !== undefined && (!Number.isFinite(request.distance) || request.distance < 1.5 || request.distance > 6)))) throw new BodyError('INVALID_ARGUMENT', '跟随需要明确玩家；距离范围为1.5..6');
-    if (request.action !== 'follow' && (request.player !== undefined || request.distance !== undefined || request.wander !== undefined || request.pickup !== undefined || request.mining !== undefined)) throw new BodyError('INVALID_ARGUMENT', '只有新的follow指令可指定玩家、距离和拾取／陪挖配置');
+    if (request.action !== 'follow' && (request.player !== undefined || request.distance !== undefined || request.wander !== undefined || request.guard !== undefined || request.pickup !== undefined || request.mining !== undefined)) throw new BodyError('INVALID_ARGUMENT', '只有新的follow指令可指定玩家、距离、保护和拾取／陪挖配置');
+    const guard = request.action === 'follow' ? this.guardFor(request.guard) : undefined;
     if (request.pickup && request.mining) throw new BodyError('INVALID_ARGUMENT', '首版持续拾取与陪挖配置互斥；陪挖自行收取新观察的掉落');
     if (request.mining) {
       if (!['companion-mining', 'nearby-resources', 'approach-resource', 'dig-block', 'pickup-item', 'select-slot', 'assess-tool'].every(cap => this.body.hello.capabilities.includes(cap))) throw new BodyError('UNSUPPORTED', '游戏端没有完整持续陪挖／工具及玩家边界保护能力');
@@ -199,9 +208,10 @@ export class CompanionMode {
         this.publish(this.base('paused')); return this.snapshot();
       }
       if (request.action === 'follow') {
-        this.intent = { action: 'follow', player: request.player!, expectedEntityId: this.identity(initial, request.player!), distance: request.distance ?? 2.5, wander: request.wander !== false && !request.pickup && !request.mining, context: contextOf(initial), ...(request.pickup ? { pickup: { items: [...request.pickup.items], radius: request.pickup.radius ?? 3 } } : {}) };
+        this.intent = { action: 'follow', player: request.player!, expectedEntityId: this.identity(initial, request.player!), distance: request.distance ?? 2.5, wander: request.wander !== false && !request.pickup && !request.mining, ...(guard ? { guard } : {}), context: contextOf(initial), ...(request.pickup ? { pickup: { items: [...request.pickup.items], radius: request.pickup.radius ?? 3 } } : {}) };
         this.initPickup(initial, request.pickup);
         this.initMining(initial, request.mining);
+        this.lastGuard = undefined; this.fight = undefined;
       } else if (request.action === 'wait') { this.intent = { action: 'wait', context: contextOf(initial) }; this.pickup = undefined; this.mining = undefined; }
       else if (this.intent!.action === 'follow') {
         this.identity(initial, this.intent!.player!, this.intent!.expectedEntityId);
@@ -225,7 +235,7 @@ export class CompanionMode {
     try {
       // Reobserve after chat/setup, not a stale target from the beginning of a request.
       const state = await this.observe(epoch, intent.context); this.identity(state, intent.player!, intent.expectedEntityId); this.check(epoch);
-      const op = await this.body.act('follow-companion', { player: intent.player!, expectedEntityId: intent.expectedEntityId!, distance: intent.distance, ...(intent.wander === false ? { wander: false } : {}) }, token);
+      const op = await this.body.act('follow-companion', { player: intent.player!, expectedEntityId: intent.expectedEntityId!, distance: intent.distance, ...(intent.wander === false ? { wander: false } : {}), ...(intent.guard ? { guard: intent.guard } : {}) }, token);
       this.check(epoch); this.accept(op, intent);
     } catch (error) { if (epoch === this.epoch) this.fail(error as Error); }
   }
@@ -235,9 +245,47 @@ export class CompanionMode {
       const code = (op.result as { code?: string } | undefined)?.code;
       this.fail(new BodyError(op.status === 'unknown' ? 'INVALID_RESPONSE' : op.status === 'cancelled' ? 'CANCELLED' : code ?? 'FOLLOW_FAILED', op.summary), op); return;
     }
-    const result = op.result as { state?: string; player?: string; expectedEntityId?: string; distance?: number } | undefined;
-    if (!result || !['following', 'waiting'].includes(result.state ?? '') || result.player !== intent.player || result.expectedEntityId !== intent.expectedEntityId || result.distance !== intent.distance) throw new BodyError('INVALID_RESPONSE', '持续跟随回执缺少完整状态或目标身份');
-    this.publish({ ...this.base(result.state as 'following' | 'waiting', 'active'), ...(this.pickup || this.mining ? { activity: 'following' as const } : {}), operationId: op.operationId }, false);
+    const result = op.result as { state?: string; player?: string; expectedEntityId?: string; distance?: number; guard?: GuardState } | undefined;
+    if (!result || !['following', 'waiting', 'guarding'].includes(result.state ?? '') || result.player !== intent.player || result.expectedEntityId !== intent.expectedEntityId || result.distance !== intent.distance) throw new BodyError('INVALID_RESPONSE', '持续跟随回执缺少完整状态或目标身份');
+    if (intent.guard && !result.guard) throw new BodyError('INVALID_RESPONSE', '保护跟随的回执缺少保护状态');
+    // Guarding is part of following: the body is still bound to the same player and intent.
+    const state = result.state === 'waiting' ? 'waiting' : 'following';
+    this.publish({ ...this.base(state, 'active'), ...(this.pickup || this.mining ? { activity: 'following' as const } : {}), ...(result.guard ? { guard: structuredClone(result.guard) } : {}), operationId: op.operationId }, false);
+    if (result.guard) this.noteGuard(result.guard, intent.player!);
+  }
+  /** A guarding follow is running: the server fights for the player. */
+  guarding(): boolean { return !!this.intent?.guard && ['following', 'waiting'].includes(this.value.state) && !this.childActive; }
+  private guardFor(request?: GuardOptions | boolean): GuardOptions | undefined {
+    if (request === false) return undefined;
+    if (!this.body.hello.capabilities.includes('companion-guard')) {
+      if (request) throw new BodyError('UNSUPPORTED', '游戏端没有保护玩家能力（companion-guard），未降级为普通跟随');
+      return undefined;
+    }
+    if (request === undefined && this.guardDefaults === false) return undefined;
+    const guard = { ...(this.guardDefaults || {}), ...(typeof request === 'object' ? request : {}) };
+    if ((guard.radius !== undefined && (!Number.isFinite(guard.radius) || guard.radius < 3 || guard.radius > 12)) || (guard.lowHealth !== undefined && (!Number.isFinite(guard.lowHealth) || guard.lowHealth < 4 || guard.lowHealth > 16))
+      || (guard.bow !== undefined && typeof guard.bow !== 'boolean') || (guard.shield !== undefined && typeof guard.shield !== 'boolean')) throw new BodyError('INVALID_ARGUMENT', '保护范围 3..12、撤退血量 4..16，bow／shield 为布尔值');
+    return guard;
+  }
+  /** Fights start, end and retreats become events; distance changes and each swing do not wake the model. */
+  private noteGuard(guard: GuardState, player: string): void {
+    const before = this.lastGuard; this.lastGuard = structuredClone(guard);
+    const busy = (state?: string) => !!state && state !== 'idle';
+    if (guard.state === 'retreating' && before?.state !== 'retreating') this.events.add('guard', `血量低（打不过），正在往 ${player} 那边撤，回血后再上。`);
+    else if (guard.state === 'evading' && before?.state !== 'evading') this.events.add('guard', '苦力怕要炸了，先躲开。');
+    if (busy(guard.state) && !this.fight) {
+      this.fight = { kills: before?.kills ?? guard.kills, targets: new Set() };
+      if (guard.state !== 'retreating' && guard.state !== 'evading' && this.now() - this.fightNotedAt >= 20000) {
+        this.fightNotedAt = this.now();
+        this.events.add('guard', `有 ${guard.target ?? '敌对生物'} 靠近 ${player}，${guard.state === 'shooting' || guard.state === 'aiming' ? '正在用弓射' : '正在过去打'}；程序自己打，不用发工具。`);
+      }
+    }
+    if (this.fight && guard.target) this.fight.targets.add(guard.target);
+    if (this.fight && !busy(guard.state)) {
+      const kills = guard.kills - this.fight.kills;
+      if (kills > 0) this.events.add('guard', `打完了：打倒 ${kills} 只（${[...this.fight.targets].join('、') || '敌对生物'}），接着跟着 ${player}。`);
+      this.fight = undefined;
+    }
   }
   /** RuntimeMonitor refreshes state in the background; near/far transitions never wake the model. */
   async update(state: Observation, observedEpoch: number | null = this.observationRevision): Promise<void> {

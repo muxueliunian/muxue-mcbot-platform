@@ -51,7 +51,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // 需要叫醒 agent 的事件；reflex（自动进食/反击）、presence（上下线说明）等只在下次一起带上
 export const WAKE_TYPES = new Set(['chat', 'whisper', 'hurt', 'low_health', 'death', 'player_joined', 'player_left',
-  'time', 'spawn', 'danger', 'follow', 'player_death', 'advancement', 'player_sleep', 'woke', 'teleport', 'task', 'companion', 'survival']);
+  'time', 'spawn', 'danger', 'follow', 'player_death', 'advancement', 'player_sleep', 'woke', 'teleport', 'task', 'companion', 'survival', 'guard']);
 const BATCH_DELAY_MS = 1500;
 const SERVER_CHAT_QUIET_MS = 120;
 const SERVER_CHAT_MAX_MS = 350;
@@ -607,7 +607,8 @@ export function startupPrompt(args, memoryOn) {
 - 切石机、酿药水用 produce-item；附魔、铁砧、砂轮、锻造台、织布机、制图台用 modify-item：先 workstation-options 拿物品的 ref，再 preview:true 看结果和花多少级，告诉玩家、玩家同意了再正式做（maxLevels 填要花的级数，expect 填预览的结果）。不知道怎么做一个东西就先 workstation-options 查。
 - 种地用 tend-crops（收熟的、捡掉落、补种；问熟没熟用 survey:true），玩家说“我的地”时 player 填玩家；繁殖用 breed-animals（animal 填动物 ID）。骨粉、播新种子要玩家说了才用。开新地：挖坑后 use-bucket 倒水，再 tend-crops 填 till（要锄头，可同时填 plant 播种）。
 - 地点：玩家说“这里是家／记住这里”用 remember-place（player 填玩家）；去记过的地方用 go-to-place，远处坐标用 travel-to，都会先暂停陪伴，到了有事件通知。收到 bedtime（天黑且在家附近）时先跟玩家说一声，再 sleep-in-bed。
-- 程序会自动进食和近身自卫，紧急时可能取消正在做的任务；之后先核对还差多少再发新任务。
+- 保护：follow 默认保护玩家（范围和用不用弓、盾在 WebUI 里设），程序自己打靠近玩家的怪、血少了往玩家那边撤，不用你发攻击工具；收到 guard 事件可以简短说一句（不用每次都说），不要因此停止或重发跟随。玩家说别打了才用 guard:false 重新 follow。
+- 程序会自动进食和近身自卫：跟随时先暂停、处理完接着跟；在做别的任务时可能取消它，之后先核对还差多少再发新任务。
 - running 用 get-operation 查；unknown 先核查现状，不重试、不重复丢东西。stop-action 或宿主叫停后，旧任务和陪伴意图都不恢复，只接新的明确任务。死亡后不自动复活或重接，重生由宿主之外单独处理。
 - 长期记忆和视觉还没接入：不调用不存在的工具，不修改人设或记忆文件。`;
   if (args.body === 'client') return `【托管模式启动】你是 ${args.nickname}（游戏名 ${args.name}），通过 ClientBody 控制一个独立的真实 Minecraft 客户端。

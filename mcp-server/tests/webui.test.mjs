@@ -173,6 +173,24 @@ test('启动参数：每个值单独一项，带 -Headless；没填的会话选�
     assert.ok(a.includes('-Headless')); assert.ok(!a.includes('-IdleMinutes')); assert.ok(!a.includes('-ConfigDir'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+test('保护玩家：默认开、弓和盾都开；开关和数值原样转给启动脚本，超出范围拒绝', () => {
+  const dir = tmp();
+  try {
+    const plain = normalizeProfile(profile(dir));
+    assert.equal(plain.guard, true); assert.equal(plain.guardBow, true); assert.equal(plain.guardShield, true); assert.equal(plain.guardRadius, null);
+    const after = (a, flag) => a[a.indexOf(flag) + 1];
+    const d = launchArgs(plain, 'S.ps1');
+    assert.equal(after(d, '-Guard'), 'on'); assert.equal(after(d, '-GuardBow'), 'on'); assert.ok(!d.includes('-GuardRadius'), '没填的数值用脚本默认');
+    const p = normalizeProfile(profile(dir, { guard: true, guardBow: false, guardRadius: '10', guardLowHealth: 6 }));
+    const a = launchArgs(p, 'S.ps1');
+    assert.equal(after(a, '-GuardBow'), 'off'); assert.equal(after(a, '-GuardShield'), 'on');
+    assert.equal(after(a, '-GuardRadius'), '10'); assert.equal(after(a, '-GuardLowHealth'), '6');
+    assert.equal(after(launchArgs(normalizeProfile(profile(dir, { guard: false })), 'S.ps1'), '-Guard'), 'off');
+    assert.throws(() => normalizeProfile(profile(dir, { guardRadius: 20 })), /guardRadius/);
+    assert.throws(() => normalizeProfile(profile(dir, { guardLowHealth: 2 })), /guardLowHealth/);
+    assert.throws(() => normalizeProfile(profile(dir, { guard: 'yes' })), /guard 要是开或关/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('启动：在线的不再启动；脚本退出后能看到退出码和输出', async () => {
   const dir = tmp();

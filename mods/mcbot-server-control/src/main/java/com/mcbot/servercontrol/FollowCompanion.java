@@ -36,6 +36,10 @@ final class FollowCompanion {
         /** Walk one tick toward a stroll spot, never leaving the stroll area around the centre; true once there. */
         default boolean stroll(Vec3 point,Vec3 centre){throw new UnsupportedOperationException();}
         default void endStroll(){}
+        /** The companion guard for this follow, or null when the follow does not guard. */
+        default GuardCombat guard(){return null;}
+        /** The guard drove the body elsewhere: the follow route is stale. */
+        default void resetNavigation(){}
     }
     private final ControlSession.Operation operation;
     private final View view;
@@ -63,6 +67,8 @@ final class FollowCompanion {
     private final Random random;
     private Vec3 waitAnchor,strollAnchor,stroll;
     private long nextStroll,strollDeadline;
+    private final GuardCombat guard;
+    private boolean guarded;
 
     FollowCompanion(ControlSession.Operation operation,View view,LongSupplier clock) {this(operation,view,clock,new Random());}
     FollowCompanion(ControlSession.Operation operation,View view,LongSupplier clock,Random random) {
@@ -79,6 +85,7 @@ final class FollowCompanion {
         if(!view.mayDrive()) throw error("LEASE_LOST","Control expired before continuous follow");
         bound=view.target(name);
         health=view.health();progress=view.position();lastProgress=clock.getAsLong();
+        guard=view.guard();
     }
     private void validate(Target actual) {
         if(bound==null||actual==null||!actual.available()||!expected.equals(actual.uuid())||
@@ -93,8 +100,16 @@ final class FollowCompanion {
         try {
             view.refresh();
             Target actual=view.target(name);validate(actual);
-            if(view.health()<health) throw error("BLOCKED","Body took damage during continuous follow");
+            // A guarding follow expects to be hit; the guard decides whether to fight or back off.
+            if(guard==null&&view.health()<health) throw error("BLOCKED","Body took damage during continuous follow");
             health=view.health();
+            if(guard!=null) {
+                if(guard.tick(actual.position())) {
+                    if(stroll!=null||strollAnchor!=null)endStroll(clock.getAsLong(),false);
+                    waitAnchor=null;unreachableTarget=null;guarded=true;publish("guarding");return;
+                }
+                if(guarded){guarded=false;view.resetNavigation();route=null;}
+            }
             Vec3 feet=view.position();
             if(view.nativeNavigation()){
                 // The player may stand where no walking route reaches (a roof, a pillar). Wait in place and
@@ -186,11 +201,12 @@ final class FollowCompanion {
             "distance",distance,"position",obj("x",feet.x,"y",feet.y,"z",feet.z));
         if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());
         if(stroll!=null)result.addProperty("strolling",true);
+        if(guard!=null)result.add("guard",guard.json());
         if(code!=null) result.addProperty("code",code);
         return result;
     }
     private void publish(String next) {
-        if(!Objects.equals(state,next)) operation.summary=next.equals("waiting")?"Waiting near companion":"Following companion";
+        if(!Objects.equals(state,next)) operation.summary=switch(next){case "waiting"->"Waiting near companion";case "guarding"->"Guarding companion";default->"Following companion";};
         state=next;operation.result=result(null);
     }
     private void startStroll(long now,Vec3 centre){
@@ -208,12 +224,19 @@ final class FollowCompanion {
     void holdStroll(){if(stroll!=null||strollAnchor!=null||waitAnchor!=null)endStroll(clock.getAsLong(),true);}
     boolean strolling(){return stroll!=null;}
     boolean waiting(){return "waiting".equals(state)&&stroll==null;}
-    void stop() {stopped=true;route=null;if(stroll!=null)view.endStroll();stroll=null;view.cancelNavigation();view.stop();}
+    void stop() {
+        stopped=true;route=null;if(stroll!=null)view.endStroll();stroll=null;
+        try {if(guard!=null)guard.stop();} finally {view.cancelNavigation();view.stop();}
+    }
 
     static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server) {
+        GuardCombat.Options guardOptions=GuardCombat.Options.parse(operation.args.get("guard"));
+        GuardCombat guard=guardOptions==null?null:GuardCombat.create(body,session,operation,server,string(operation.args,"player"),guardOptions);
         View view=new View() {
             FlatApproach geometry;
-            final NativeNavigation navigation=new NativeNavigation(body,session,operation);
+            final NativeNavigation navigation=guard==null?new NativeNavigation(body,session,operation):new NativeNavigation(body,session,operation).tolerateDamage();
+            public GuardCombat guard(){return guard;}
+            public void resetNavigation(){navigation.reset();endStroll();}
             public boolean mayDrive() {return session.mayDrive(operation);}
             public void refresh() {NativeNavigation.conditions(body);geometry=new FlatApproach(body);}
             public boolean nativeNavigation(){return true;}

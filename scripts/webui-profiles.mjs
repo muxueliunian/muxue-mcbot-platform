@@ -37,8 +37,17 @@ export const SESSION_OPTIONS = Object.freeze({
   maxRestarts: { flag: '-MaxRestarts', min: 0, max: 100 },
 });
 
+/** 保护玩家（8h）：开关是布尔（默认开），数值 null 表示用默认值。 */
+export const GUARD_OPTIONS = Object.freeze({
+  guard: { flag: '-Guard', kind: 'switch' },
+  guardRadius: { flag: '-GuardRadius', min: 3, max: 12 },
+  guardLowHealth: { flag: '-GuardLowHealth', min: 4, max: 16 },
+  guardBow: { flag: '-GuardBow', kind: 'switch' },
+  guardShield: { flag: '-GuardShield', kind: 'switch' },
+});
+
 const KEYS = new Set(['id', 'label', 'agent', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'nodePath',
-  'credential', 'updatedAt', ...Object.keys(SESSION_OPTIONS)]);
+  'credential', 'updatedAt', ...Object.keys(SESSION_OPTIONS), ...Object.keys(GUARD_OPTIONS)]);
 
 const plainText = (v) => typeof v === 'string' && !/[\u0000-\u001f\u007f]/.test(v);
 export const expandHome = (v) => /^~(?=$|[\\/])/.test(v) ? path.join(os.homedir(), v.slice(1)) : v;
@@ -82,6 +91,17 @@ export function normalizeProfile(input) {
   };
   for (const [k, o] of Object.entries(SESSION_OPTIONS)) {
     const v = input[k];
+    if (v === undefined || v === null || v === '') { out[k] = null; continue; }
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < o.min || n > o.max) throw new Error(`${k} 要是 ${o.min}～${o.max} 的整数`);
+    out[k] = n;
+  }
+  for (const [k, o] of Object.entries(GUARD_OPTIONS)) {
+    const v = input[k];
+    if (o.kind === 'switch') {
+      if (v !== undefined && v !== null && typeof v !== 'boolean') throw new Error(`${k} 要是开或关`);
+      out[k] = v !== false; continue;
+    }
     if (v === undefined || v === null || v === '') { out[k] = null; continue; }
     const n = Number(v);
     if (!Number.isInteger(n) || n < o.min || n > o.max) throw new Error(`${k} 要是 ${o.min}～${o.max} 的整数`);
@@ -153,6 +173,10 @@ export function launchArgs(profile, script = path.join(ROOT, 'start-server-play.
   if (profile.model) a.push('-Model', profile.model);
   if (profile.nodePath) a.push('-NodePath', profile.nodePath);
   for (const [k, o] of Object.entries(SESSION_OPTIONS)) if (profile[k] !== null && profile[k] !== undefined) a.push(o.flag, String(profile[k]));
+  for (const [k, o] of Object.entries(GUARD_OPTIONS)) {
+    if (o.kind === 'switch') a.push(o.flag, profile[k] === false ? 'off' : 'on');
+    else if (profile[k] !== null && profile[k] !== undefined) a.push(o.flag, String(profile[k]));
+  }
   return a;
 }
 

@@ -13,8 +13,8 @@ import { GatherTasks } from './gather-tasks.js';
 import { ContainerTasks } from './tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
-import { createActionStop } from './action-stop.js';
-import { BodyError, type Body } from './body.js';
+import { createActionStop, companionReflexHooks } from './action-stop.js';
+import { BodyError, type Body, type GuardOptions } from './body.js';
 import { PlaceBook } from './places.js';
 
 async function main(): Promise<void> {
@@ -24,7 +24,9 @@ async function main(): Promise<void> {
     'connection-file': { type: 'string' }, username: { type: 'string' }, 'world-id': { type: 'string' },
     nickname: { type: 'string' }, 'runtime-dir': { type: 'string', default: 'runtime' }, 'bot-players': { type: 'string', default: '' },
     'memory-dir': { type: 'string' }, 'memory-agent': { type: 'string' }, hosted: { type: 'boolean', default: false },
+    guard: { type: 'string', default: 'on' }, 'guard-radius': { type: 'string' }, 'guard-low-health': { type: 'string' }, 'guard-bow': { type: 'string', default: 'on' }, 'guard-shield': { type: 'string', default: 'on' },
   } });
+  const guardDefaults = guardSetting(values);
   if (!['client', 'server'].includes(values.body!)) throw new Error('--body 只允许 client 或 server');
   const bodyLabel = values.body === 'server' ? 'ServerBody' : 'ClientBody';
   if (!values['connection-file'] || !values.username || !values['world-id']) throw new Error('必填参数：--connection-file <文件> --username <角色名> --world-id <资料标识>');
@@ -97,11 +99,11 @@ async function main(): Promise<void> {
     events.useHome(() => places.home());
     events.ingest(await body.observe());
     const gather = new GatherTasks(body, events);
-    if (body.hello.capabilities.includes('follow-companion')) companion = new CompanionMode(body, events, gather);
+    if (body.hello.capabilities.includes('follow-companion')) { companion = new CompanionMode(body, events, gather); companion.guardDefaults = guardDefaults; }
     const tasks = new ContainerTasks(body, Date.now, operation => events!.deliverOperation(operation));
     const survival = ['survival-state', 'swap-inventory', 'eat-item'].every(cap => body!.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events!.recordOperation(operation)) : undefined;
     const stopCurrent = createActionStop(body, tasks, gather, companion, survival);
-    const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ordinaryBusy: () => {
+    const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ...companionReflexHooks(tasks, gather, companion), ordinaryBusy: () => {
       try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); }
       catch { return true; }
       return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
@@ -122,5 +124,16 @@ async function main(): Promise<void> {
     await server.connect(transport);
     monitor.start();
   } catch (error) { await shutdown(error as Error); }
+}
+/** Companion guard defaults from the command line (the WebUI passes them through start-server-play.ps1). */
+function guardSetting(values: Record<string, unknown>): GuardOptions | false {
+  const flag = (name: string) => { const value = values[name]; if (value !== 'on' && value !== 'off') throw new Error(`--${name} 只允许 on 或 off`); return value === 'on'; };
+  const number = (name: string, min: number, max: number) => {
+    if (values[name] === undefined) return undefined;
+    const value = Number(values[name]); if (!Number.isFinite(value) || value < min || value > max) throw new Error(`--${name} 应在 ${min}..${max}`); return value;
+  };
+  if (!flag('guard')) return false;
+  const radius = number('guard-radius', 3, 12), lowHealth = number('guard-low-health', 4, 16);
+  return { ...(radius !== undefined ? { radius } : {}), ...(lowHealth !== undefined ? { lowHealth } : {}), bow: flag('guard-bow'), shield: flag('guard-shield') };
 }
 void main().catch(error => { process.stderr.write(`Body 启动失败：${error.message}\n`); process.exitCode = 1; });

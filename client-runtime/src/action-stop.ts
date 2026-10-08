@@ -20,3 +20,16 @@ export function createActionStop(body: Body, tasks: ContainerTasks, gather: Gath
     return result;
   };
 }
+/** Reflex hooks around a follow: the server guard owns fighting, and a short reflex pauses the follow instead of discarding it. */
+export function companionReflexHooks(tasks: ContainerTasks, gather: GatherTasks, companion?: CompanionMode) {
+  return {
+    guarding: () => companion?.guarding() === true,
+    pauseCompanion: async () => {
+      if (!companion || !['following', 'waiting'].includes(companion.snapshot().state)) return undefined;
+      // Only a plain follow is paused; a container or gathering task still needs the full stop barrier.
+      try { tasks.assertIdle(); gather.assertIdle(); } catch { return undefined; }
+      await companion.request({ action: 'pause' });
+      return async () => { if (companion.snapshot().state === 'paused') await companion.request({ action: 'resume' }); };
+    },
+  };
+}

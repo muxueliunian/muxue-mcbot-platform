@@ -5,7 +5,7 @@ import java.util.function.LongSupplier;
 import static com.mcbot.servercontrol.Protocol.*;
 
 /** One finite stationary action; native post-damage receipts are scoped to the synchronous attack call. */
-final class NativeDefenseUse {
+final class NativeDefenseUse implements NativeAttackScope {
     interface View {void guard();String termination();boolean cooledDown();void attack();boolean targetAlive();}
     final ControlSession.Operation operation;
     private final View view;
@@ -23,15 +23,15 @@ final class NativeDefenseUse {
     }
     boolean alive(){return alive;}
     boolean nativeWriteInProgress(){return nativeCall;}
-    boolean allowNativeTarget(String targetId) {
+    public boolean allowNativeTarget(String targetId) {
         if(!nativeCall)return false;
         if(!operation.status.equals("running")||!entityId.equals(targetId)){refuseNative(error("LEASE_LOST","Native defense scope or target is no longer authorized"));return false;}
         try {view.guard();if(view.termination()!=null){refuseNative(error("STALE_TARGET","Native threat changed before damage"));return false;}return true;}
         catch(RuntimeException failure){refuseNative(failure);return false;}
     }
-    void refuseNative(RuntimeException failure){if(nativeRefusal==null)nativeRefusal=failure;}
+    public void refuseNative(RuntimeException failure){if(nativeRefusal==null)nativeRefusal=failure;}
     void requireNativeAuthorized(){if(nativeRefusal!=null)throw nativeRefusal;if(!operation.status.equals("running"))throw error("LEASE_LOST","Native operation was cancelled inside its call");}
-    void receipt(String targetId,float amount) {
+    public void receipt(String targetId,float amount) {
         // A prior Post listener may stop intent after damage was applied. Preserve this same-call read-only receipt.
         if(!nativeCall)return;
         if(!entityId.equals(targetId)||!Float.isFinite(amount)||amount<0){collateral=true;return;}

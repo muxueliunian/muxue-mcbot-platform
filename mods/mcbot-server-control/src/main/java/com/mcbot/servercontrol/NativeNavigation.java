@@ -50,7 +50,7 @@ final class NativeNavigation {
     private long searchNanos,maxSearchNanos;
     private Vec3 target,progress,replanAnchor;
     private long lastProgress,lastPlan;
-    private boolean stopped,jumped,backing;
+    private boolean stopped,jumped,backing,damageTolerated;
     private int leaps;
     private int lastTick=Integer.MIN_VALUE;
     private boolean arrivedThisTick;
@@ -68,7 +68,7 @@ final class NativeNavigation {
     boolean tick(Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed){
         if(stopped||!session.mayDrive(operation)){stop();return false;}
         conditions(body);if(body.serverLevel()!=dimension)throw error("STALE_TARGET","Navigation dimension changed");
-        if(body.getHealth()<initialHealth)throw error("BLOCKED","Body took damage during navigation; safe movement was not confirmed");
+        if(!damageTolerated&&body.getHealth()<initialHealth)throw error("BLOCKED","Body took damage during navigation; safe movement was not confirmed");
         int tick=body.getServer().getTickCount();if(lastTick==tick)return arrivedThisTick;
         lastTick=tick;arrivedThisTick=false;
         Vec3 feet=body.position();long now=clock();
@@ -237,6 +237,10 @@ final class NativeNavigation {
         route=null;lastPlan=now;
     }
     void stop(){stopped=true;route=null;body.stopInput();}
+    /** A guarding body fights while it walks: damage is expected, not a sign of an unsafe route. */
+    NativeNavigation tolerateDamage(){damageTolerated=true;return this;}
+    /** Someone else drove the body meanwhile: forget the old route and start fresh from where it stands now. */
+    void reset(){route=null;replans=0;progress=replanAnchor=body.position();lastProgress=clock();body.stopInput();}
     private final NavigationDoors doors=new NavigationDoors(this::bodyRef);
     private BodyPlayer bodyRef(){return body;}
     /** The caller decided the walk is over: shut the doors opened on the way that the body is out of. */

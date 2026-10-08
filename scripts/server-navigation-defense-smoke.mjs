@@ -14,7 +14,7 @@ import { writeHeartbeat } from './companion.mjs';
 
 if (process.argv.includes('--help')) {
   console.log('node scripts/server-navigation-defense-smoke.mjs --allow-fixture [--navigation-only [--case=raised-resource-gather] | --defense-only]');
-  console.log('MC_SERVER_DIR 可指定本批已备份的新副本；需要 output/serverbody-navigation-defense-backup.json。固定25568/25578/8766，不启停服务，不用模型。');
+  console.log('MC_SERVER_DIR 可指定本批已备份的新副本；需要 output/serverbody-navigation-defense-backup.json。固定25568/25578，控制口8766或8767，不启停服务，不用模型。');
   process.exit(0);
 }
 assert(process.argv.includes('--allow-fixture'), '需要 --allow-fixture 及停服实际字节备份');
@@ -31,7 +31,7 @@ assert(!serverDir.toLowerCase().startsWith('g:\\mc\\mcbot\\'), '拒绝修改旧�
 assert((await fs.stat(backup.backup)).isDirectory());
 const props = readServerProps(serverDir); assert.equal(props['server-port'], '25568'); assert.equal(props['rcon.port'], '25578');
 const connection = await readJson(path.join(serverDir, 'config/mcbot-server-control/connection.json'));
-assert.equal(connection.endpoint, 'http://127.0.0.1:8766/v2'); assert.equal(connection.username, 'Claude');
+assert(['http://127.0.0.1:8766/v2', 'http://127.0.0.1:8767/v2'].includes(connection.endpoint), 'control endpoint'); // 8767 since 10-07: the user's own client may hold 8766 assert.equal(connection.username, 'Claude');
 const dir = path.join(root, 'output', `server-navigation-defense-${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`);
 const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: true });
 const input = path.join(dir, 'peer-input.jsonl'), peerFile = path.join(dir, 'peer-events.jsonl'); await fs.writeFile(input, ''); await fs.writeFile(peerFile, '');
@@ -311,8 +311,10 @@ try {
       await policy({autoDefend:true,autoEat:false,armed:true});await tool('companion-mode',{action:'wait'});
       const floor=report.rpc.length;await enemy('husk');
       await until(()=>report.rpc.slice(floor),rows=>rows.some(r=>r.action==='defend-entity'&&r.ok),'自动防卫未实际受理',10000);
-      await until(()=>tool('get-companion-mode'),m=>m.state==='stopped'&&!m.intent,'防卫未撤销旧等待');
-      check('自动防卫实际抢占普通等待并无旧意图',true,{rpc:report.rpc.slice(floor),policy:(await state()).policy});
+      // 8h（10-08）起：自卫先暂停陪伴，打完恢复原来的等待，不再丢掉意图。
+      await until(()=>report.rpc.slice(floor),rows=>rows.some(r=>r.action==='follow-companion'||r.action==='defend-entity')&&rows.filter(r=>r.action==='defend-entity').length>=1,'自动防卫未完成',10000);
+      await until(()=>tool('get-companion-mode'),m=>m.intent==='wait'&&m.state==='waiting','防卫后没恢复原来的等待');
+      check('自动防卫暂停普通等待、打完恢复原来的等待',true,{rpc:report.rpc.slice(floor),policy:(await state()).policy});
       await tool('stop-action');const stopFloor=report.rpc.length;
       await wait(1300);check('人工叫停不会被残留威胁重新授权',!report.rpc.slice(stopFloor).some(r=>r.action==='defend-entity')&&(await state()).policy.armed===false);
       await fixture(`kill ${mob}`);const axe=(await inventory()).find(item=>item.id==='minecraft:diamond_axe');assert(axe);const fresh=await terminal('prepare-item',{slot:axe.slot,targetSlot:0});

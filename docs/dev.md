@@ -31,6 +31,8 @@ Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；`che
 
 先由服主准备获授权的MC1.21.1／NeoForge21.1.217隔离服务器，备份后安装自行构建的控制Mod；配置见模块README。控制Mod生成的`connection.json`只留本地。
 
+日常用法是在 [本地 WebUI](#本地-webui) 的「配置」页保存配置、点「保存并启动托管」（2026-10-08 起用户自己从 WebUI 启动托管）；下面的脚本是同一件事的命令行版本，WebUI 也是调用它。
+
 ```pwsh
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent codex -Effort low -PrepareOnly
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent codex -Effort low

@@ -48,7 +48,9 @@
 | 4 | R7 Agent 适配接口 | ✅ 完成 | 回归 | — |
 | 5 | dsh 接入 | ✅ 完成 | 真实模型（隔离服＋试玩） | — |
 | 6 | 本地 WebUI | ✅ 完成 | 本机实测 | — |
-| 6a | WebUI 配置页（Agent、账号、模型、思考强度等，保存后一键启动托管） | ✅ 完成（10-08） | 离线＋本机网页实测（用假 node，没开真托管） | API key 以后做 |
+| 6a | WebUI 配置页（Agent、账号、模型、思考强度等，保存后一键启动托管；模型列表从本机 CLI 读；仿 NapCat 风格） | ✅ 完成（10-08） | 离线＋本机网页实测（用假 node，没开真托管） | API key 以后做 |
+| 6b | WebUI 常态化：以后托管由用户自己在 WebUI 里启动；新功能同时在 WebUI 提供 | 持续进行 | — | 随各步一起做 |
+| 6c | WebUI 安装、更新模组（核心模组和示例附属模组） | 未开始（用户提出，以后做） | — | 约 2 天 |
 | 7 | R5 Mod 适配接口 | ✅ 完成 | 隔离服 13 项 | — |
 | 8 | 示例适配：森罗厨房、SB 背包 | ✅ 完成 | 隔离服 16＋18 项 | — |
 | 8a | 模组方块按标签认 | ✅ 完成 | 平坦服＋真模组（BOP、Mekanism） | — |
@@ -66,7 +68,7 @@
 | 9 | 打包和上手文档 | 未开始 | — | 约 1 天 |
 | 10 | 三家回归并发布 v0.1 | 未开始 | — | 约 1 天 |
 
-剩余约 **13～17 个工作日**（8h、8j、8k、8i、8b、8c、9、10），不含用户验收和配置凭据的时间。用户实例里的核心 jar 还是 `ecb74c8` 那版，下一轮在自己的实例里试玩前要换（先问）。
+剩余约 **13～17 个工作日**（8h、8j、8k、8i、8b、8c、9、10），不含用户验收和配置凭据的时间；6c（WebUI 装模组）排期未定，做的话再加约 2 天。用户实例里的核心 jar 还是 `ecb74c8` 那版，下一轮在自己的实例里试玩前要换（先问）。
 
 ## 下一步：测试版 v0.1
 
@@ -90,7 +92,9 @@
 | 4 | ✅ **R7：拆出 Agent 适配接口**（10-06，见 [Agent 接入计划](agent_integration_plan.md) 的 dsh 调研） | Claude Code、Codex 走同一个接口，任务执行策略不复制；现有回归通过 | 约 1 天 |
 | 5 | ✅ **dsh 接入**（[验收](archive/dsh_validation.md)） | 走 ACP（`dsh --profile acp`），锁定 `0.2.0-rc.2`，也能直接用 DeepSeek Harness 桌面版自带的 dsh；只留游戏工具；事件唤醒、回合结束、叫停、恢复会话都走驱动器同一套流程。10-06 在隔离服用真实模型实测通过 | 已完成 |
 | 6 | ✅ **本地 WebUI**（[说明](dev.md#本地-webui)） | `node scripts/webui.mjs`，只听 `127.0.0.1`、一次性令牌：Bot 状态、陪伴模式、游戏聊天和 AI 每轮回复、工具调用和错误、「叫停」「停止托管」按钮；三家 Agent 通用；不做桌面 GUI。（启动配置原定不放进网页，10-08 用户要求后加了 6a） | 已完成 |
-| 6a | ✅ **WebUI 配置页**（10-08 用户提出，排在 8h 前；[说明](dev.md#本地-webui)） | 同一个 WebUI 加「配置」页：按档案保存 Agent（claude／codex／dsh）、账号目录（列出用户目录下的 `.claude*`、`.codex*`、`.dsh`）、模型（给常用名，也能自己填）、思考强度（按 Agent 给可选值：Claude 到 max，Codex 到 xhigh，dsh 是 low／high／max）、连接文件（「检查」显示角色和世界，不回传令牌）、昵称、记忆目录，高级里有 Node 路径和会话选项（空闲提醒、接着旧会话、换新会话、最多重启）。档案存 `runtime/webui-profiles.json`（不进仓库）；「保存并启动托管」用 `start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出；已在线的不重复启动。`start-server-play.ps1` 加了 `-Effort max` 和四个会话选项参数。凭据只支持「用本机已有登录」：档案不认识的字段（比如 apiKey）直接拒绝，API key 留了位置以后做（打算用 Windows DPAPI 加密、只通过环境变量交给 Agent）。POST 另查 Origin、只收 JSON。Windows 上 detached 的 pwsh 没有控制台会直接退出，所以不 detached 启动；实测关掉 WebUI 后驱动器那层 node 还在。验证：WebUI 离线 12 项；真 pwsh＋启动脚本用假 node 跑通，参数逐项转给驱动器；本机网页填表、检查、保存、启动、看失败输出都实测过。没测：用真实 Agent 从网页启动托管 | 已完成（待真实托管） |
+| 6a | ✅ **WebUI 配置页**（10-08 用户提出，排在 8h 前；[说明](dev.md#本地-webui)） | 同一个 WebUI 加「配置」页：按档案保存 Agent（claude／codex／dsh）、账号目录（列出用户目录下的 `.claude*`、`.codex*`、`.dsh`）、模型（给常用名，也能自己填）、思考强度（按 Agent 给可选值：Claude 到 max，Codex 到 ultra，dsh 是 low／high／max）、连接文件（「检查」显示角色和世界，不回传令牌）、昵称、记忆目录，高级里有 Node 路径和会话选项（空闲提醒、接着旧会话、换新会话、最多重启）。档案存 `runtime/webui-profiles.json`（不进仓库）；「保存并启动托管」用 `start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出；已在线的不重复启动。`start-server-play.ps1` 加了 `-Effort max` 和四个会话选项参数。凭据只支持「用本机已有登录」：档案不认识的字段（比如 apiKey）直接拒绝，API key 留了位置以后做（打算用 Windows DPAPI 加密、只通过环境变量交给 Agent）。POST 另查 Origin、只收 JSON。Windows 上 detached 的 pwsh 没有控制台会直接退出，所以不 detached 启动；实测关掉 WebUI 后驱动器那层 node 还在。验证：WebUI 离线 12 项；真 pwsh＋启动脚本用假 node 跑通，参数逐项转给驱动器；本机网页填表、检查、保存、启动、看失败输出都实测过。**同日改版**（用户反馈）：页面仿 NapCat 风格（拆到 `scripts/webui-page.html`），下拉框自己写、带动画，表单两列，按钮、开关、折叠、列表都有动画，列表原地更新；模型列表改成从本机 CLI 读（`scripts/agent-models.mjs`：Claude 用 initialize 控制请求、Codex 用 `codex debug models`、dsh 开空 ACP 会话，都不发消息），思考强度跟着模型走（Codex 有的模型到 ultra，CLI 没列档位的模型给全部档位）；不同账号读到的模型不同（`.claude-r` 11 个，默认账号 4 个）。WebUI 离线 15 项。没测：用真实 Agent 从网页启动托管 | 已完成（待真实托管） |
+| 6b | **WebUI 常态化**（10-08 用户要求） | WebUI 是以后的主要入口：托管由用户自己在 WebUI 里启动，不再靠我跑脚本；之后每步加的能力，凡是要配置或操作的，同时在 WebUI 里提供 | 持续进行 |
+| 6c | **WebUI 安装、更新模组**（10-08 用户提出，以后做） | 在 WebUI 里给服务器或客户端实例装、更新核心模组和示例附属模组：先显示要改的目录和文件、自动备份、确认后再装；不下载来路不明的文件，只装本仓库构建出的 jar 或用户指定的本地文件 | 约 2 天，排期未定 |
 | 7 | ✅ **R5：Mod 适配接口**（[说明](mod_adapters.md)） | 公开包 `com.mcbot.servercontrol.api`：附属模组登记容器适配和右键交互；服主用 `interactions/*.json` 声明简单交互；所有分派走统一入口，未知 Mod 默认拒绝，适配器出错按拒绝或 unknown 处理；Iron Furnaces 和堆肥桶改用新接口。10-06 离线 42 项、隔离服 13 项通过 | 已完成 |
 | 8 | ✅ **示例适配**（10-06 完成：[森罗厨房](../mods/mcbot-kaleidoscope-cookery/README.md) 隔离服 16 项、[SB 背包](../mods/mcbot-sophisticated-backpacks/README.md) 隔离服 18 项通过；SB 选 3.25.77.2086 + Core 1.4.86.2259，因为更新的版本要求 NeoForge ≥ 21.1.229） | ①**森罗物语：厨房**：先跑通炒锅一道菜（放油、加料、翻炒、出锅），翻炒时机由程序盯，不逐次唤醒模型；反射调用、锁定版本；代码 BSD-3、素材 CC BY-NC-SA 4.0，适配器只调用接口、不带素材。②**Sophisticated Backpacks**：手持打开、可放置，处理它的拾取升级和我们拾取逻辑的冲突；顺带实测 `use-item` | 3～5 天 |
 | 8a | ✅ **模组方块按标签识别** | 原木、矿石、作物等按方块和物品标签认（`#minecraft:logs`、`#c:ores` 等），掉落按实际掉落表算，模组的树和矿能直接发现、采集、砍整棵；现有采集回归不退步。10-07 完成：原木 `#minecraft:logs`（去皮原木、六面树皮木不算）、矿石 `#c:ores`、石料 `#c:stones`＋原版五种；`discover-resources` 和陪挖的 blockIds 可以填标签（`#c:ores/iron`）；每个候选带 `kind` 和服务器按掉落表算的 `drops`（物品、精准采集要求、每块最少数量），客户端不再写死原版矿石和产物，钻石、金、青金石、红石、绿宝石等原版矿也都能采了；矿石仍只采普通产物。作物留给 8g。离线 304 项＋Java 检查、驱动 51 项通过；`scripts/server-resource-tags-smoke.mjs` 平坦服 14 项连续两轮通过（用临时数据包把紫水晶块加进 `#c:ores`、骨块加进 `#minecraft:logs` 冒充模组方块：认出全部矿和 6 节“模组树”，去皮原木和树皮木不算，钻石 1 块、青金石 1 块够 4 个、假模组矿、整棵假模组树垫高砍完）；回归：采集 27、原地砍树 7、垫高 17、陪挖 24、跟随拾取 24 通过（砍树和跟随拾取各有一次测试进程 Node 24.15 原生退出 0xC0000409，重跑通过，是已知的 Node 问题）。同日用户同意下载真模组实测（Modrinth：Biomes O' Plenty 21.1.0.14＋TerraBlender 4.1.0.8＋GlitchCore 2.1.0.2、Mekanism 10.7.19.85，放在 `runtime/mod-downloads`，只装测试服、测完拿掉）：`scripts/server-mod-resources-smoke.mjs` 发现了两个问题并修好——①工具评估对非原版方块和工具一律算“资格未知”，模组矿、模组树都挑不出工具：改成模组的也用原生的 isCorrectToolForDrops（模组靠标签声明等级），只有模组附魔的掉落效果仍算未知，模组的 HarvestCheck 钩子不评估、以挖掘和拾取回执为准；②砍完树干后天然树叶会腐烂、距离属性也会变，敲托着掉落的树叶时可能报 STALE_BLOCK：现在树叶没了就算清掉，属性变了按新状态重敲（最多 3 次）。修好后 11 项连续三轮通过（Mekanism 锇矿、深层锡矿、萤石矿按 `#c:ores` 认出，`#c:ores/osmium` 只找锇矿，萤石按掉落表每块至少 2 个、一块就够；BOP 冷杉 6 节带树叶整棵砍完，去皮冷杉原木和冷杉木不算；有一轮 1 个掉落卡在树叶上如实报告）；离线 305 项，拆掉模组后回归：标签 14、采集 27、原地砍树 7、垫高 17、陪挖 24、跟随拾取 24 通过。修复前有一轮萤石矿挖掉了但没捡到，之后加了诊断，四轮都没再出现，原因没查到 | 半天～1 天 |

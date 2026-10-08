@@ -24,8 +24,10 @@ test('auto meal reserves one writer, compact sensing does not wait for eating, h
   assert.equal(f.eats, 1); assert.deepEqual(f.reads, [{ details: false }]);
   assert.throws(() => f.reflexes.assertWritable(), { code: 'BUSY' });
   await f.reflexes.tick(); assert.equal(f.eats, 1);
-  await f.reflexes.stop(); assert.equal(f.reflexes.read().armed, false);
-  pending.resolve(result('unknown')); await turn();
+  await f.reflexes.stop(); assert.equal(f.reflexes.read().armed, true);
+  // The fenced meal's late unknown receipt reaches the task record, which switches the reflexes off again.
+  const late = result('unknown'); f.tasks.read = () => ({ state: 'idle', lastResult: late });
+  pending.resolve(late); await turn();
   assert.equal(f.reflexes.read().phase, 'idle');
   await f.reflexes.tick(); assert.equal(f.eats, 1);
 });
@@ -34,7 +36,7 @@ test('ordinary work waits for safe gap; urgent meal waits for authoritative stop
   f.setFacts(facts(5)); const pending = deferred(); f.options.stopCurrent = () => pending.promise;
   await f.reflexes.tick(); assert.equal(f.eats, 0); assert.equal(f.reflexes.read().phase, 'eating');
   const hard = f.reflexes.stop(); pending.resolve({ stopped: true }); await hard; await turn();
-  assert.equal(f.eats, 0); assert.equal(f.reflexes.read().armed, false);
+  assert.equal(f.eats, 0); assert.equal(f.reflexes.read().armed, true);
 });
 test('failed preemption cannot start meal or automatically retry on the next observation', async () => {
   const f = fixture(5); f.setBusy(true);

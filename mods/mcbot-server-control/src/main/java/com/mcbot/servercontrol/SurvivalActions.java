@@ -644,7 +644,8 @@ final class SurvivalActions {
         else operation.finish("unknown","Native swap produced other inventory effects; do not repeat",result);
     }
     /**
-     * Put a piece of armour (helmet, chestplate, elytra, leggings, boots, a mob head) from the inventory on, the way a
+     * Put a piece of armour (helmet, chestplate, elytra, leggings, boots, a mob head) from the inventory on, or a shield
+     * into the off hand, the way a
      * player does in their own inventory: shift-click it into an empty armour slot, or pick it up, click the worn piece
      * (they swap) and put the old piece back where the new one was. Vanilla decides what fits where.
      */
@@ -656,8 +657,9 @@ final class SurvivalActions {
         ItemStack stack=player.getInventory().getItem(slot);
         expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
         net.minecraft.world.entity.EquipmentSlot part=player.getEquipmentSlotForItem(stack);
-        if(stack.isEmpty()||part.getType()!=net.minecraft.world.entity.EquipmentSlot.Type.HUMANOID_ARMOR)throw error("UNSUPPORTED","Item is not worn in an armour slot");
-        int from=NativeWorkstation.menuSlot(menu,player.getInventory(),slot),worn=NativeWorkstation.menuSlot(menu,player.getInventory(),36+part.getIndex());
+        boolean offhand=part==net.minecraft.world.entity.EquipmentSlot.OFFHAND;
+        if(stack.isEmpty()||(!offhand&&part.getType()!=net.minecraft.world.entity.EquipmentSlot.Type.HUMANOID_ARMOR))throw error("UNSUPPORTED","Item is not worn in an armour slot or held in the off hand");
+        int from=NativeWorkstation.menuSlot(menu,player.getInventory(),slot),worn=NativeWorkstation.menuSlot(menu,player.getInventory(),offhand?net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND:36+part.getIndex());
         if(from<0||worn<0)throw error("UNSUPPORTED","Own inventory menu has no matching slots");
         Slot armour=menu.getSlot(worn);ItemStack old=armour.getItem().copy();
         if(!armour.mayPlace(stack)||(!old.isEmpty()&&!armour.mayPickup(player)))throw error("FORBIDDEN","The worn piece cannot be taken off (curse of binding) or the item does not fit");
@@ -739,13 +741,8 @@ final class SurvivalActions {
                 if(ThreatSense.retreatRequired(player,target,minHealth)||player.isInLava())throw error("RETREAT_REQUIRED","Low health or preparing explosion requires a separately bounded safe retreat");
                 if(player.distanceToSqr(target)>distance*distance||!player.canInteractWithEntity(target,0))return "target_left";
                 if(!player.hasLineOfSight(target))return "lost_line_of_sight";
-                // Native sweep hooks can enable sweeping even for an axe. Verify the native item-extension envelope first.
-                AABB sweep=player.getMainHandItem().getSweepHitBox(player,target);
-                if(!sweep.equals(target.getBoundingBox().inflate(1,0.25,1)))throw error("UNSUPPORTED","UNVERIFIED_SWEEP_ENVELOPE");
-                double reach=player.entityInteractionRange();
-                if(!Double.isFinite(reach)||reach<=0)throw error("UNSUPPORTED","UNVERIFIED_NATIVE_ENTITY_REACH");
-                for(LivingEntity other:player.serverLevel().getEntitiesOfClass(LivingEntity.class,sweep))
-                    if(other!=player&&other!=target&&other.isAlive()&&player.distanceToSqr(other)<reach*reach)throw error("COLLATERAL_RISK","Another living entity is inside the native sweep envelope");
+                // Someone standing next to the target is no reason to hold back: guardNativeSweep cancels the sweep and
+                // guardNativeIncomingDamage cancels damage to anything but the target, so only the target is hit.
                 return null;
             }
             public boolean cooledDown(){return player.getAttackStrengthScale(0.5f)>=1f;}

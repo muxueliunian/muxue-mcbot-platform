@@ -126,10 +126,21 @@ test('definite native combat danger termination follows with one finite safe ret
   assert.equal(new Set(writes.map(c => c.token)).size, 1); assert.equal(op.result.confirmedHits, 1);
 });
 
-test('failed safe retreat blocks automatic defense without repeat attempt', async () => {
+test('failed safe retreat leaves that threat alone for a moment but keeps defense armed', async () => {
   const f = fixture(); f.state.health = 8; f.body.afterAct = op => { op.status = 'failed'; op.result = { code: 'NO_PATH' }; };
-  await f.reflexes.tick(); await turn(); await turn(); assert.equal(f.reflexes.read().phase, 'blocked'); assert.equal(f.reflexes.read().armed, false);
-  await f.reflexes.tick(); assert.equal(f.calls.filter(c => c.name === 'retreat-from-entity').length, 1);
+  await f.reflexes.tick(); await until(() => f.reflexes.read().phase === 'idle'); assert.equal(f.reflexes.read().armed, true);
+  await wait(550); await f.reflexes.tick(); await turn(); assert.equal(f.calls.filter(c => c.name === 'retreat-from-entity').length, 1);
+  const other = hostile(); f.state.threats.nearby.push(other); await f.reflexes.tick(); await until(() => f.reflexes.read().phase === 'idle');
+  assert.equal(f.calls.filter(c => c.name === 'retreat-from-entity').at(-1).args.entityId, other.entityId, 'another threat is still handled');
+});
+
+test('a refused defense keeps automatic defense on and reports the same refusal once', async () => {
+  const f = fixture(); f.body.afterAct = op => { if (op.name === 'defend-entity') { op.status = 'failed'; op.summary = 'REFUSED: injected'; op.result = { code: 'REFUSED' }; } };
+  await f.reflexes.tick(); await until(() => f.reflexes.read().phase === 'idle');
+  assert.equal(f.reflexes.read().armed, true); assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 1);
+  const notes = f.events.since(0).filter(e => /REFUSED/.test(e.text)).length;
+  await wait(550); await f.reflexes.tick(); await turn(); assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 1, 'not retried every tick');
+  assert.equal(f.events.since(0).filter(e => /REFUSED/.test(e.text)).length, notes);
 });
 
 test('unknown native defense side effects preserve ownership and block all next writers', async () => {
@@ -146,10 +157,14 @@ test('automatic defense cancels container/gather/companion then waits stop confi
   assert.equal(f.reflexes.read().lastDefense.operation.result.stopRequestedAt <= f.reflexes.read().lastDefense.operation.result.stopConfirmedAt, true);
 });
 
-test('hard stop while preemption is pending fences defense and stays disarmed while hostile remains', async () => {
+test('hard stop while preemption is pending fences that defense; once confirmed the body defends itself again', async () => {
   const f = fixture(), stopped = gate(); f.setBusy(true); f.body.beforeStop = () => stopped.promise;
-  await f.reflexes.tick(); const hard = f.reflexes.stop(); stopped.resolve(); await hard; await turn(); await f.reflexes.tick();
-  assert.equal(f.reflexes.read().armed, false); assert.equal(f.reflexes.read().phase, 'idle'); assert.equal(f.reflexes.read().defendingEntityId, undefined); assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 0);
+  await f.reflexes.tick(); const hard = f.reflexes.stop(); stopped.resolve(); await hard; await turn();
+  assert.equal(f.reflexes.read().armed, true); assert.equal(f.reflexes.read().phase, 'idle'); assert.equal(f.reflexes.read().defendingEntityId, undefined); assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 0);
+  await wait(550); await f.reflexes.tick(); await turn();
+  assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 0, 'the fight it was stopped in pauses for a moment');
+  const other = hostile({ distance: 1.5 }); f.state.threats.nearby.push(other); await f.reflexes.tick(); await until(() => f.reflexes.read().phase === 'idle');
+  assert.deepEqual(f.calls.filter(c => c.name === 'defend-entity').map(c => c.args.entityId), [other.entityId], 'a stopped body still hits back');
 });
 
 test('failed preemption retains blocked intent and sensing without a second automatic stop or attack', async () => {

@@ -296,15 +296,13 @@ try {
       const zombie=await enemy('husk');const facts=await state();
       check('玩家与未激怒动物不列为可攻击目标',sheep.defenseEligible===false&&facts.threats.nearby.some(t=>t.classification==='player')&&facts.threats.nearby.filter(t=>t.classification==='player').every(t=>t.defenseEligible===false),facts.threats);
       check('明确敌对怪物有权威身份和判断来源',zombie.defenseEligible===true&&zombie.hostilitySource==='vanilla_hostile_allowlist',zombie);
-      const refused=await terminal('defend-self',{entityId:zombie.entityId});
-      check('潜在群伤范围有中立动物时拒绝攻击',refused.status==='failed'&&refused.result?.code==='COLLATERAL_RISK',refused);
-      await tool('stop-action');await fixture('tp @e[type=sheep,tag=mcbot_navdef_fixture,limit=1] 2610.5 201 2618.5');
+      // 10-08 起旁边有别的生物也照打：横扫和对目标以外的伤害都被拦掉，只会打中目标。
       const healthBefore=await command('data get entity @e[type=husk,tag=mcbot_navdef_fixture,limit=1] Health');
       const op=await terminal('defend-self',{entityId:zombie.entityId});
       check('显式防卫使用原生攻击并有伤害事件确认',op.status==='succeeded'&&op.result?.confirmedHits>=1&&op.result?.confirmedDamage>0,op);
       const healthAfter=await command('data get entity @e[type=husk,tag=mcbot_navdef_fixture,limit=1] Health');
       check('独立服务端实体健康变化与攻击回执分开核对',healthAfter!==healthBefore,{healthBefore,healthAfter});
-      check('未激怒动物未被群伤',/8\.0f\s*$/.test(await command('data get entity @e[type=sheep,tag=mcbot_navdef_fixture,limit=1] Health')));
+      check('紧挨目标的未激怒动物没被打到',/8\.0f\s*$/.test(await command('data get entity @e[type=sheep,tag=mcbot_navdef_fixture,limit=1] Health')));
     });
     await step('automatic-defense-preempts-wait',async()=>{
       await arena();await replace(10,'minecraft:diamond_axe');
@@ -316,8 +314,12 @@ try {
       await until(()=>tool('get-companion-mode'),m=>m.intent==='wait'&&m.state==='waiting','防卫后没恢复原来的等待');
       check('自动防卫暂停普通等待、打完恢复原来的等待',true,{rpc:report.rpc.slice(floor),policy:(await state()).policy});
       await tool('stop-action');const stopFloor=report.rpc.length;
-      await wait(1300);check('人工叫停不会被残留威胁重新授权',!report.rpc.slice(stopFloor).some(r=>r.action==='defend-entity')&&(await state()).policy.armed===false);
-      await fixture(`kill ${mob}`);const axe=(await inventory()).find(item=>item.id==='minecraft:diamond_axe');assert(axe);const fresh=await terminal('prepare-item',{slot:axe.slot,targetSlot:0});
+      // 10-08 起：叫停只停正在做的事，不关自卫（试玩里叫停后被僵尸打也不还手）。还在身边的怪会接着被打。
+      check('叫停之后自动自卫仍然开着',(await state()).policy.armed===true,(await state()).policy);
+      if(/Test passed/.test(await command(`execute if entity ${mob}`)))
+        await until(()=>report.rpc.slice(stopFloor),rows=>rows.some(r=>r.action==='defend-entity'),'叫停后身边的怪没再被打',8000);
+      check('叫停后还在身边的怪照样还手',true,{rpc:report.rpc.slice(stopFloor).filter(r=>r.action==='defend-entity')});
+      await fixture(`kill ${mob}`);await until(()=>state(),s=>s.policy.phase==='idle','怪没了自卫还没停下',8000);const axe=(await inventory()).find(item=>item.id==='minecraft:diamond_axe');assert(axe);const fresh=await terminal('prepare-item',{slot:axe.slot,targetSlot:0});
       check('防卫硬停止后首个新任务正常',fresh.status==='succeeded',fresh);
     });
     await step('defense-policy-off',async()=>{
@@ -359,7 +361,8 @@ try {
       await fixture('fill 2603 201 2613 2603 204 2615 stone');await fixture('fill 2607 201 2613 2607 204 2615 stone');
       await fixture('fill 2603 201 2613 2607 204 2613 stone');await fixture('fill 2603 201 2615 2607 204 2615 stone');
       const before=await position(),floor=report.rpc.length;await policy({autoDefend:true,autoEat:false,armed:true});
-      const blocked=await until(state,value=>value.policy.phase==='blocked','不可达退让没有明确停止报告',7000,80);
+      // 10-08 起明确失败不再关掉自卫：记下失败、暂时不理这只怪，过一会儿再试。
+      const blocked=await until(state,value=>value.policy.lastDefense?.operation?.status==='failed'&&value.policy.armed===true,'不可达退让没有明确的失败报告',7000,80);
       check('点燃苦力怕可见但无安全退路时明确失败',report.rpc.slice(floor).some(r=>r.action==='retreat-from-entity')&&!report.rpc.slice(floor).some(r=>r.action==='defend-entity'),blocked.policy);
       await tool('stop-action');await fixture(`kill ${mob}`);
       check('无安全退路时不会穿墙或攻击爆炸怪',near(before,await position(),0.2),{before,after:await position(),policy:blocked.policy});

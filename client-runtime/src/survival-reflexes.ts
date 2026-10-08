@@ -23,7 +23,9 @@ export class SurvivalReflexes {
   private dangerFacts?: unknown;
   private defenseTarget?: string;
   private lastDefense?: { entityId?: string; endedAt: number; operation: Operation };
-  private defenseEvent?: { entityId?: string; at: number };
+  private defenseEvent?: { entityId?: string; at: number; summary?: string };
+  /** Threats a defense just failed on, left alone until the time given so a refusal is not repeated every tick. */
+  private readonly cooling = new Map<string, number>();
   constructor(private readonly body: Body, private readonly tasks: SurvivalTasks, private readonly events: EventJournal, private readonly options: {
     stopCurrent: () => Promise<{ stopped: true }>; ordinaryBusy: () => boolean;
     /** The server guard is fighting for the followed player; the 3-block self-defense stays out of its way. */
@@ -44,10 +46,16 @@ export class SurvivalReflexes {
   authorizeAction(): void { this.assertWritable(); this.handledResult = this.tasks.read().lastResult?.operationId; if (!this.armed) { this.armed = true; this.revision++; } }
   disarm(reason: string): void { ++this.epoch; this.armed = false; this.defenseTarget = undefined; this.revision++; this.lastReason = reason; }
   async stop(): Promise<{ stopped: true }> {
+    const fighting = this.defenseTarget;
     this.disarm('explicit-stop'); const epoch = this.epoch; this.phase = 'stopping';
     try {
       const result = await this.options.stopCurrent();
-      if (epoch === this.epoch) this.phase = 'idle';
+      // Stop ends what is running, not the reflexes: a body that was told to stop walking still hits back when attacked.
+      // Only the fight it was stopped in pauses for a moment; if that mob keeps at it, defense picks it up again.
+      if (epoch === this.epoch) {
+        this.phase = 'idle'; this.armed = true; this.revision++; this.cooling.clear();
+        if (fighting) this.cooling.set(fighting, Date.now() + 3000);
+      }
       return result;
     } catch (error) { if (epoch === this.epoch) this.phase = 'blocked'; throw error; }
   }
@@ -97,7 +105,8 @@ export class SurvivalReflexes {
       if (defenseSupported && Date.now() - requestedAt > 1500) { this.lastReason = 'stale-survival-observation'; return; }
       if (!this.armed || ['blocked', 'stopping', 'defending'].includes(this.phase)) return;
       if (defenseSupported && this.policy.autoDefend && !this.options.guarding?.()) {
-        const threat = selectThreat(state, this.policy);
+        for (const [id, until] of this.cooling) if (until <= Date.now()) this.cooling.delete(id);
+        const threat = selectThreat(state, this.cooling.size ? { ...this.policy, excludedEntityIds: [...this.policy.excludedEntityIds, ...this.cooling.keys()] } : this.policy);
         if (threat && Date.now() - (this.lastDefense?.endedAt ?? 0) >= 500) {
           const busy = this.phase === 'eating' || this.options.ordinaryBusy();
           // Fence the old meal runner before cancel/stop, so a late result cannot change this defense.
@@ -175,12 +184,18 @@ export class SurvivalReflexes {
       const operation = await this.tasks.defend({ entityId: threat?.entityId ?? entityId, previouslyObserved: !!threat, policy: structuredClone(this.policy), check, sensedAt, stopRequestedAt, stopConfirmedAt });
       if (epoch !== this.epoch) return operation;
       this.handledResult = operation.operationId; this.lastDefense = { entityId: threat?.entityId ?? entityId, endedAt: Date.now(), operation };
-      if (!threat || operation.status !== 'succeeded' || this.defenseEvent?.entityId !== threat.entityId || Date.now() - this.defenseEvent.at >= 10000) {
-        this.events.notifyOperation(operation); this.defenseEvent = { entityId: threat?.entityId ?? entityId, at: Date.now() };
+      const repeated = this.defenseEvent?.entityId === (threat?.entityId ?? entityId) && Date.now() - this.defenseEvent!.at < 10000
+        && (operation.status === 'succeeded' || this.defenseEvent!.summary === operation.summary);
+      if (!threat || !repeated) {
+        this.events.notifyOperation(operation); this.defenseEvent = { entityId: threat?.entityId ?? entityId, at: Date.now(), summary: operation.summary };
       }
-      // Nothing in reach (NO_THREAT) means nothing was done: no reason to stop defending on our own from now on.
-      const idle = operation.status === 'failed' && (operation.result as { code?: string } | undefined)?.code === 'NO_THREAT';
-      if (idle) this.lastReason = operation.summary;
+      // A definite failure (nothing in reach, a refusal, a retreat with no way out) changed nothing it does not report:
+      // keep defending, only leave that one target alone for a moment. Only an unknown outcome switches defense off.
+      if (operation.status === 'failed') {
+        this.lastReason = operation.summary;
+        const failedOn = threat?.entityId ?? entityId;
+        if (failedOn && (operation.result as { code?: string } | undefined)?.code !== 'NO_THREAT') this.cooling.set(failedOn, Date.now() + 3000);
+      }
       else if (operation.status !== 'succeeded' && operation.status !== 'cancelled') { this.armed = false; this.revision++; this.phase = 'blocked'; this.lastReason = operation.summary; }
       else resumable = operation.status === 'succeeded';
       return operation;

@@ -31,7 +31,8 @@ import static com.mcbot.servercontrol.Protocol.*;
 /**
  * Companion guard, ticked by a running follow: fight hostiles that come near the companion player instead of
  * only hitting back. Melee in reach, a bow at range (never through a player or a pet), a raised shield while
- * waiting for the swing or backing off, and a retreat toward the player when health runs low. It never chases
+ * waiting for the swing or backing off, and a retreat toward the player when health runs low. It runs (sprints) to a
+ * foe and away from one, so a skeleton backing off cannot keep it at bow range. It never chases
  * beyond the leash around the player; when nothing needs fighting the follow carries on as before.
  */
 final class GuardCombat {
@@ -282,14 +283,14 @@ final class GuardCombat {
             public boolean dead(Foe foe){return !living(foe).isAlive();}
             public boolean inReach(Foe foe){LivingEntity e=living(foe);return body.canInteractWithEntity(e,0)&&body.hasLineOfSight(e);}
             public boolean approach(Foe foe,Vec3 centre,double leash) {
-                if(approaching!=foe.identity()||approach==null){if(approach!=null)approach.stop();approach=new NativeNavigation(body,session,operation).tolerateDamage();approaching=foe.identity();}
+                if(approaching!=foe.identity()||approach==null){if(approach!=null)approach.stop();approach=new NativeNavigation(body,session,operation).tolerateDamage().sprint();approaching=foe.identity();}
                 if(retreat!=null){retreat.stop();retreat=null;}
                 LivingEntity e=living(foe);
                 return approach.tick(e.position(),feet->feet.distanceTo(e.position())<=2.4,feet->feet.distanceTo(centre)<=leash);
             }
             public boolean retreat(Vec3 destination,Vec3 centre,double leash) {
                 if(approach!=null){approach.stop();approach=null;approaching=null;}
-                if(retreat==null)retreat=new NativeNavigation(body,session,operation).tolerateDamage();
+                if(retreat==null)retreat=new NativeNavigation(body,session,operation).tolerateDamage().sprint();
                 return retreat.tick(destination,feet->feet.distanceTo(destination)<=1.2,feet->feet.distanceTo(centre)<=leash+1);
             }
             public void stopMoving() {

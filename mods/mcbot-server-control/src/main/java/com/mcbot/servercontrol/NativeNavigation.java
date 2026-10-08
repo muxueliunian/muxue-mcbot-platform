@@ -40,6 +40,8 @@ final class NativeNavigation {
     static final int SHORE_RANGE=10;
     static final long SWIM_STUCK_MS=4000;
     private Vec3 shore;
+    private double shoreGap;
+    private long shoreSince;
     private final Set<BlockPos> badShores=new HashSet<>();
     private int swimTries,swims;
     private final BodyPlayer body;
@@ -87,7 +89,8 @@ final class NativeNavigation {
         // Real progress since the last replan earns the finite replan budget back.
         if(feet.distanceTo(replanAnchor)>2){replans=0;replanAnchor=feet;}
         if(body.isInWater()){swim(feet,destination,allowed,now);return false;}
-        if(shore!=null){shore=null;badShores.clear();swimTries=0;}
+        // Bobbing up out of the water for a moment is not landing: forget the tried shores only once on the ground.
+        if(shore!=null&&body.onGround()){shore=null;badShores.clear();swimTries=0;}
         if(route!=null&&now-lastProgress>STUCK_MS){
             if(!body.onGround())throw error("BLOCKED","Airborne navigation made no progress");
             replan(now);lastProgress=now;
@@ -151,6 +154,7 @@ final class NativeNavigation {
     private void leap(Vec3 feet,Vec3 from,Vec3 to){
         Vec3 dir=new Vec3(to.x-from.x,0,to.z-from.z).normalize();
         Vec3 toLanding=to.subtract(feet);
+        body.sprintInput(false);
         if(!body.onGround()){body.jumpInput(false);body.moveInput(toLanding.x,toLanding.z,1);return;} // keep heading for the landing in the air
         Vec3 motion=body.getDeltaMovement();
         double along=(feet.x-from.x)*dir.x+(feet.z-from.z)*dir.z,speed=motion.x*dir.x+motion.z*dir.z;
@@ -170,23 +174,29 @@ final class NativeNavigation {
      */
     private void swim(Vec3 feet,Vec3 destination,Predicate<Vec3> allowed,long now){
         route=null;
-        if(shore!=null&&now-lastProgress>SWIM_STUCK_MS){
-            badShores.add(BlockPos.containing(shore));shore=null;
-            if(++swimTries>MAX_REPLANS)throw error("BLOCKED","Could not swim out of the water");
+        if(shore!=null){
+            // Bobbing at the surface moves the body without getting anywhere: only closing in on the shore counts.
+            double gap=Math.hypot(shore.x-feet.x,shore.z-feet.z);
+            if(gap<shoreGap-0.3){shoreGap=gap;shoreSince=now;}
+            else if(now-shoreSince>SWIM_STUCK_MS){
+                badShores.add(BlockPos.containing(shore));shore=null;
+                if(++swimTries>MAX_REPLANS)throw error("BLOCKED","Could not swim out of the water");
+            }
         }
         if(shore==null){
             shore=shore(feet,destination,allowed);lastProgress=now;progress=feet;
-            if(shore==null)throw error("NO_PATH","No loaded shore within reach of the water");
-            swims++;
+            if(shore==null)throw error("NO_PATH","No shore level with the water within "+SHORE_RANGE+" blocks; a bank a block higher cannot be climbed from the water");
+            shoreGap=Math.hypot(shore.x-feet.x,shore.z-feet.z);shoreSince=now;swims++;
         }
         Vec3 delta=shore.subtract(feet);
-        body.jumpInput(true);jumped=true;
+        body.sprintInput(false);body.jumpInput(true);jumped=true;
         body.moveInput(delta.x,delta.z,(float)Math.min(1,delta.horizontalDistance()/0.4));
     }
     /**
      * The walkable spot (solid floor, room to stand, no water or danger) a swimmer can climb onto that is best on the
-     * way: closest to the body, with the remaining distance to the destination counting half. At most a block above
-     * the water, since a swimmer only climbs out over a low bank.
+     * way: closest to the body, with the remaining distance to the destination counting half. Only a bank level with
+     * the water surface: vanilla lifts a swimmer over a lip of a few tenths of a block, never over a bank a whole block
+     * higher (measured in game: the body bobbed up to 0.14 short of such a bank and stayed there).
      */
     private Vec3 shore(Vec3 feet,Vec3 destination,Predicate<Vec3> allowed){
         ensureModel();
@@ -197,14 +207,15 @@ final class NativeNavigation {
         while(surface<fy+SHORE_RANGE&&!body.serverLevel().getFluidState(new BlockPos(fx,surface,fz)).isEmpty())surface++;
         for(int dx=-SHORE_RANGE;dx<=SHORE_RANGE;dx++)for(int dz=-SHORE_RANGE;dz<=SHORE_RANGE;dz++){
             if(dx*dx+dz*dz>SHORE_RANGE*SHORE_RANGE)continue;
-            for(int y=surface+1;y>=fy-2;y--){
+            for(int y=surface;y>=fy-2;y--){
                 BlockPos pos=new BlockPos(fx+dx,y,fz+dz);
                 if(!body.serverLevel().isLoaded(pos))break;
                 PathType type=WalkNodeEvaluator.getPathTypeStatic(model,pos);
                 if(type==PathType.OPEN)continue;
                 // The first non-air from above decides: a bank to stand on, or water, a wall or danger (nothing here).
                 Vec3 spot=new Vec3(pos.getX()+0.5,pos.getY(),pos.getZ()+0.5);
-                if(type==PathType.WALKABLE&&!badShores.contains(pos)&&allowed.test(spot)){
+                // The bank right at the water's edge is WATER_BORDER to vanilla, not WALKABLE: it is the spot a swimmer climbs onto.
+                if((type==PathType.WALKABLE||type==PathType.WATER_BORDER)&&!badShores.contains(pos)&&allowed.test(spot)){
                     double s=spot.distanceTo(feet)+0.5*spot.distanceTo(destination);
                     if(s<score){score=s;best=spot;}
                 }
@@ -283,6 +294,7 @@ final class NativeNavigation {
         Input input=inputs(delta,body.onGround(),body.horizontalCollision,body.maxUpStep());
         body.jumpInput(input.jump());jumped|=input.jump();
         if(input.forward()>0)body.moveInput(delta.x,delta.z,input.forward());else{body.forwardInput=0;}
+        body.sprintInput(sprint);
     }
     record Input(float forward,boolean jump){}
     /** Vanilla MoveControl: jump when the next node is higher than a step and close, or when a wall stops a rising leg. */
@@ -298,6 +310,9 @@ final class NativeNavigation {
     void stop(){stopped=true;route=null;body.stopInput();}
     /** A guarding body fights while it walks: damage is expected, not a sign of an unsafe route. */
     NativeNavigation tolerateDamage(){damageTolerated=true;return this;}
+    /** Run instead of walk on ordinary legs (chasing or fleeing a mob); never on a gap leap, which is timed for walking speed. */
+    NativeNavigation sprint(){sprint=true;return this;}
+    private boolean sprint;
     /** Someone else drove the body meanwhile: forget the old route and start fresh from where it stands now. */
     void reset(){route=null;replans=0;shore=null;swimTries=0;badShores.clear();progress=replanAnchor=body.position();lastProgress=clock();body.stopInput();}
     private final NavigationDoors doors=new NavigationDoors(this::bodyRef);

@@ -129,7 +129,11 @@ try {
   const first = await follow();
   check('默认跟随带保护，起初没事可做', first.guard?.state === 'idle' && first.guard?.options?.radius === 8, first.guard);
   await summon('husk', P.x + 6, P.z, 'g1', ',NoAI:1b');
-  await until(async () => !(await exists('g1')), v => v, '玩家身边的尸壳没被打死', 30000);
+  // 追怪时疾跑（试玩里走着追，被骷髅风筝）：边打边查 Claude 的疾跑标记
+  const SPRINTING = 'execute as Claude if predicate {condition:"minecraft:entity_properties",entity:"this",predicate:{flags:{is_sprinting:true}}}';
+  let sprinted = false;
+  await until(async () => { if (!sprinted && /Test passed/.test(await command(SPRINTING))) sprinted = true; return !(await exists('g1')); }, v => v, '玩家身边的尸壳没被打死', 30000);
+  check('追过去打怪时在疾跑', sprinted);
   const after = await until(mode, value => value.state === 'waiting' && value.guard?.state === 'idle', '打完没回到玩家身边', 20000);
   report.runs.melee = after.guard;
   check('走过去打死玩家身边的尸壳，打完接着跟（同一个跟随操作）', after.operationId === first.operationId && after.guard.hits >= 1 && after.guard.kills >= 1, after.guard);

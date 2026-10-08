@@ -7,13 +7,15 @@ import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.*;
 import static com.mcbot.servercontrol.Protocol.*;
 
-/** First batch: ordinary vanilla Item food semantics, no effects or special consume implementations. */
+/** Ordinary vanilla food semantics (plain items and plantable crops), no effects or special consume implementations. */
 final class FoodSafety {
     record Profile(FoodProperties food,boolean safe,String reason) {}
     static Profile assess(ItemStack stack,ServerPlayer player) {
         FoodProperties food=stack.getFoodProperties(player);
         if(food==null) return new Profile(null,false,"NOT_FOOD");
-        String reason=reason(BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft"),stack.getItem().getClass()==Item.class,
+        // Plantable food (carrot, potato, sweet berries) is an ItemNameBlockItem; eaten from the hand it is plain Item food.
+        Class<?> kind=stack.getItem().getClass();
+        String reason=reason(BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft"),kind==Item.class||kind==ItemNameBlockItem.class,
             food.nutrition(),food.saturation(),food.eatDurationTicks(),!food.effects().isEmpty(),stack.is(Items.GOLDEN_APPLE)||stack.is(Items.ENCHANTED_GOLDEN_APPLE));
         if(reason==null&&food.usingConvertsTo().isPresent()) {
             ItemStack result=food.usingConvertsTo().get();

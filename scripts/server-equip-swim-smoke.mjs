@@ -104,7 +104,7 @@ try {
   await fixture(`tp Claude 4016.5 ${Y + 1} 4016.5`); await wait(600);
 
   // 1. 穿装备
-  for (const item of ['netherite_chestplate', 'diamond_chestplate', 'iron_helmet', 'stone']) await fixture(`give Claude ${item}`);
+  for (const item of ['netherite_chestplate', 'diamond_chestplate', 'iron_helmet', 'stone', 'shield']) await fixture(`give Claude ${item}`);
   await wait(300);
   let op = await finished('equip-item', { item: 'minecraft:netherite_chestplate' });
   check('下界合金胸甲穿上了', op.status === 'succeeded' && await worn(102, 'minecraft:netherite_chestplate'), op);
@@ -114,6 +114,8 @@ try {
   check('铁头盔戴上了', op.status === 'succeeded' && await worn(103, 'minecraft:iron_helmet'), op);
   op = await finished('equip-item', { item: 'minecraft:stone' });
   check('石头不是护甲，被拒绝且没动背包', op.status === 'failed' && /UNSUPPORTED/.test(JSON.stringify(op)) && await carries('minecraft:stone'), op);
+  op = await finished('equip-item', { item: 'minecraft:shield' });
+  check('盾牌放进副手', op.status === 'succeeded' && await worn(-106, 'minecraft:shield') && !await carries('minecraft:shield'), op);
 
   // 1b. 背包（服务器装了精妙背包和它的适配时）：潜行空手捡起放着的背包，背上，再换回钻石胸甲
   const PICKUP = 'sophisticatedbackpacks:backpack/take';
@@ -129,6 +131,11 @@ try {
     check('再换回钻石胸甲，背包回到背包栏', op.status === 'succeeded' && await worn(102, 'minecraft:diamond_chestplate') && await carries('sophisticatedbackpacks:backpack'), op);
   } else report.skipped = ['背包：服务器没有登记 ' + PICKUP];
 
+  // 2a. 没有任务时掉进深水：像玩家一样浮到水面，不沉底淹死（试玩里沉到湖底淹死了）
+  await fixture(`tp Claude 4007.5 ${Y - 3} 4007.5`); await wait(6000);
+  const floating = await pos('Claude'), air = Number((await command('data get entity Claude Air')).match(/(-?\d+)s?\s*$/)?.[1]);
+  check('空闲时在深水里浮到水面，没有憋气', floating.y > Y - 1.2 && air >= 280, { floating, air });
+
   // 2. 游泳上岸：从水池中央（水下）走到池外 6 格的岸上
   await fixture(`tp Claude 4007.5 ${Y - 2} 4007.5`); await wait(800);
   const target = { x: 4016.5, y: Y + 1, z: 4007.5 };
@@ -143,6 +150,24 @@ try {
   op = await finished('move-to-position', { ...back, timeoutMs: 40000 });
   const other = await pos('Claude');
   check('另一侧也能游上岸', op.status === 'succeeded' && Math.hypot(other.x - back.x, other.z - back.z) < 1.5, { status: op.status, summary: op.summary, other });
+
+  // 2c. 试玩里卡住的地形：一格深的浅水坑，四周的岸都比水面高一格（站在水底，岸顶比脚高两格）
+  await fixture(`fill 4012 ${Y - 1} 4001 4018 ${Y} 4003 air`); await fixture(`fill 4012 ${Y - 1} 4001 4018 ${Y - 1} 4003 water`);
+  await fixture(`tp Claude 4015.5 ${Y - 1} 4002.5`); await wait(1200);
+  const up = { x: 4015.5, y: Y + 1, z: 4006.5 };
+  op = await finished('move-to-position', { ...up, timeoutMs: 40000 });
+  const high = await pos('Claude');
+  report.highBankOnly = { status: op.status, summary: op.summary, at: high, navigation: op.result?.navigation };
+  console.log('只有高一格的岸：', JSON.stringify(report.highBankOnly));
+  // 10-08 实测：从水里爬不上高一格的岸（浮到差 0.14 格上不去，原版玩家也一样），所以这种岸不选，直接说出不去
+  check('只有高一格的岸时立刻说明出不去，不在原地一直浮到超时', op.status === 'failed' && /NO_PATH/.test(op.summary ?? ''), report.highBankOnly);
+  // 加一个和水面齐平的缺口（离起点比高岸远），应该改从缺口上岸
+  await fixture(`setblock 4011 ${Y} 4002 air`);
+  await fixture(`tp Claude 4015.5 ${Y - 1} 4002.5`); await wait(1200);
+  op = await finished('move-to-position', { ...up, timeoutMs: 40000 });
+  const out = await pos('Claude');
+  check('有齐平的缺口时从缺口上岸，走到目标', op.status === 'succeeded' && Math.hypot(out.x - up.x, out.z - up.z) < 1.5 && Math.abs(out.y - up.y) < 0.6,
+    { status: op.status, summary: op.summary, out, navigation: op.result?.navigation });
 
   if (withPeer) {
     // 2b. 跟随时在水里：测试玩家站在池外岸上，Claude 在池底开始跟随

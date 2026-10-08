@@ -56,5 +56,11 @@ final class BodyPlayer extends ServerPlayer {
         setYRot(yaw); setYHeadRot(yaw); forwardInput=Math.max(0,Math.min(1,strength));
     }
     void jumpInput(boolean jump) {jumpInput=jump;setJumping(jump);}
-    void stopInput() { forwardInput=0; jumpInput=false;xxa=yya=zza=0; setJumping(false); }
+    /**
+     * Let go of everything, except what a player does without thinking in water: keep the head above it. With the eyes
+     * under water the body holds jump and floats up instead of sinking to the bottom and drowning while it waits.
+     */
+    void stopInput() { forwardInput=0; jumpInput=isUnderWater();xxa=yya=zza=0; setJumping(jumpInput); setSprinting(false); }
+    /** Sprint like a player: only running forward on foot with more than three drumsticks and nothing in use. */
+    void sprintInput(boolean sprint) { setSprinting(sprint&&forwardInput>=1&&!isInWater()&&!isUsingItem()&&getFoodData().getFoodLevel()>6); }
 }

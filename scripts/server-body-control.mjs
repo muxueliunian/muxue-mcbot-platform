@@ -58,11 +58,13 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
     return value.result;
   }
 
-  async function checkedConnection(owner) {
+  // sameSession false: revoking a session the body already left (it died and respawned) is still allowed; the server
+  // only accepts it for its own retired lease and never lets it touch a newer controller's lease.
+  async function checkedConnection(owner, { sameSession = true } = {}) {
     const connection = serverConnection(scope.connectionFile, scope);
     const hello = await call(connection, 'hello', {});
     if (hello?.protocol !== 2 || hello.backend !== 'server' || hello.worldId !== scope.worldId || hello.username !== scope.username
-        || hello.instanceId !== owner.instanceId || hello.sessionId !== owner.sessionId) throw failure('CONTROL_IDENTITY_CHANGED');
+        || hello.instanceId !== owner.instanceId || (sameSession && hello.sessionId !== owner.sessionId)) throw failure('CONTROL_IDENTITY_CHANGED');
     return connection;
   }
 
@@ -84,7 +86,7 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
     // Preserve it from the start of teardown, but never dispatch before revocation finishes.
     revoking++;
     try {
-      const connection = await checkedConnection(owner);
+      const connection = await checkedConnection(owner, { sameSession: false });
       const result = await call(connection, 'revoke', { ...capability(owner), ...(leave ? { leave: true } : {}) });
       if (result?.stopped !== true || result?.revoked !== true) throw failure('REVOKE_NOT_CONFIRMED');
       stopped = true;

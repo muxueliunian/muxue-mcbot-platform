@@ -24,7 +24,8 @@ async function mock(){
     const ok=result=>res.end(JSON.stringify({ok:true,result}));const fail=code=>res.end(JSON.stringify({ok:false,error:{code,message:code}}));
     if(req.headers.authorization!=='Bearer test-only-token')return fail('FORBIDDEN');
     if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:[]});
-    if(p.instanceId!==state.instanceId||p.sessionId&&p.sessionId!==state.sessionId)return fail('WRONG_INSTANCE');
+    // Like the server: a revoke may name the session the body already left (it is matched against the retired lease).
+    if(p.instanceId!==state.instanceId||p.sessionId&&p.sessionId!==state.sessionId&&method!=='revoke')return fail('WRONG_INSTANCE');
     if(method==='claim'){
       if(state.lease)return fail('LEASE_BUSY');
       state.lease={leaseId:`lease-${++state.claims}`,stopToken:`stop-${state.claims}`,instanceId:state.instanceId,sessionId:state.sessionId,chatCursor:state.seq,ttlMs:10000,controlGeneration:1};
@@ -299,5 +300,20 @@ test('宿主退出时撤销带 leave，让角色下线；普通叫停不带',asy
     await control.revoke(undefined,{leave:true});
     const revokes=api.state.calls.filter(c=>c.method==='revoke');
     assert.equal(revokes.length,2);assert.equal(revokes[0].leave,undefined);assert.equal(revokes[1].leave,true);
+  }finally{control.close();await api.close();cleanup(dir);}
+});
+
+test('角色死后重生换了会话，宿主退出时照样能撤销并让角色下线',async()=>{
+  const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
+  fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));
+  const owner={protocol:2,backend:'server',...scope,controllerId:'owner',instanceId:'instance-a',sessionId:'session-a',leaseId:'lease-1',stopToken:'stop-1',chatCursor:10};
+  fs.writeFileSync(path.join(dir,'server-control-ServerTest.json'),JSON.stringify(owner));
+  // The body died: the server retired the lease and rotated the session.
+  api.state.revoked={...owner};api.state.lease=null;api.state.sessionId='session-b';
+  const control=createServerBodyControl({scope,runtimeDir:dir,controllerId:'owner',isStop:()=>false,isNewTask:()=>false,onStop:()=>{},onNewTask:()=>{}});
+  try{
+    assert.equal((await control.revoke(undefined,{leave:true})).revoked,true);
+    const revokes=api.state.calls.filter(c=>c.method==='revoke');assert.equal(revokes.length,1);assert.equal(revokes[0].leave,true);
+    await control.poll();assert.equal(api.state.calls.filter(c=>c.method==='watch').length,0,'普通的监听仍然要求会话一致');
   }finally{control.close();await api.close();cleanup(dir);}
 });

@@ -187,63 +187,143 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
   };
 }
 
+// 页面风格参考 NapCat WebUI：渐变背景加模糊光斑、透明侧栏、选中项右移带小胶囊、胶囊顶栏和按钮、半透明毛玻璃卡片。颜色、图标、字样都是自己的。
 const PAGE = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>mcbot 控制台</title>
 <style>
-:root{--bg:#f6f7f9;--panel:#fff;--text:#1d2129;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--ok:#16a34a;--busy:#d97706;--off:#9ca3af;--err:#dc2626;
---chat:#0f766e;--reply:#2563eb;--tool:#7c3aed;--event:#64748b}
-@media (prefers-color-scheme:dark){:root{--bg:#111318;--panel:#1a1d24;--text:#e5e7eb;--muted:#9ca3af;--line:#2a2f3a;--accent:#60a5fa;--chat:#2dd4bf;--reply:#60a5fa;--tool:#a78bfa;--event:#94a3b8}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
-header h1{font-size:16px;margin:0}header .hint{color:var(--muted);font-size:12px}
-main{display:grid;grid-template-columns:280px 1fr;gap:16px;padding:16px;height:calc(100vh - 53px)}
-@media (max-width:760px){main{grid-template-columns:1fr;height:auto}}
-.bots{display:flex;flex-direction:column;gap:10px;overflow:auto}
-.bot{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;cursor:pointer}
-.bot.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+:root{color-scheme:light;--primary:#ec6a9c;--primary-strong:#d94f86;--primary-soft:rgba(236,106,156,.12);--primary-pale:#f9c9db;--secondary:#7fb6cb;
+--bg1:#eef1ff;--bg2:#ffffff;--bg3:#fdf0f6;--glass:rgba(255,255,255,.62);--glass-strong:rgba(255,255,255,.82);--glass-line:rgba(255,255,255,.75);
+--text:#27272a;--muted:#71717a;--line:rgba(24,24,27,.07);--fill:rgba(24,24,27,.045);--fill-hover:rgba(24,24,27,.07);
+--ok:#17a865;--busy:#e3912b;--off:#a1a1aa;--err:#e0457b;--err-soft:rgba(224,69,123,.12);--ok-soft:rgba(23,168,101,.12);
+--chat:#14a39a;--reply:#6a8cf0;--tool:#a070e6;--event:#8a93a6;--shadow:0 8px 30px rgba(236,106,156,.10);--blob-a:rgba(249,201,219,.55);--blob-b:rgba(176,216,231,.5);--blob-c:rgba(251,207,232,.4)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--primary:#f0679b;--primary-strong:#f58ab2;--primary-soft:rgba(240,103,155,.18);--primary-pale:#5b2a3f;
+--bg1:#111827;--bg2:#1c2230;--bg3:#111827;--glass:rgba(32,34,44,.58);--glass-strong:rgba(32,34,44,.86);--glass-line:rgba(255,255,255,.07);
+--text:#ececf1;--muted:#a1a1aa;--line:rgba(255,255,255,.08);--fill:rgba(255,255,255,.06);--fill-hover:rgba(255,255,255,.1);--err-soft:rgba(224,69,123,.2);--ok-soft:rgba(23,168,101,.2);
+--shadow:0 8px 30px rgba(0,0,0,.25);--blob-a:rgba(240,103,155,.16);--blob-b:rgba(127,182,203,.13);--blob-c:rgba(160,112,230,.12)}}
+:root[data-theme="dark"]{color-scheme:dark;--primary:#f0679b;--primary-strong:#f58ab2;--primary-soft:rgba(240,103,155,.18);--primary-pale:#5b2a3f;
+--bg1:#111827;--bg2:#1c2230;--bg3:#111827;--glass:rgba(32,34,44,.58);--glass-strong:rgba(32,34,44,.86);--glass-line:rgba(255,255,255,.07);
+--text:#ececf1;--muted:#a1a1aa;--line:rgba(255,255,255,.08);--fill:rgba(255,255,255,.06);--fill-hover:rgba(255,255,255,.1);--err-soft:rgba(224,69,123,.2);--ok-soft:rgba(23,168,101,.2);
+--shadow:0 8px 30px rgba(0,0,0,.25);--blob-a:rgba(240,103,155,.16);--blob-b:rgba(127,182,203,.13);--blob-c:rgba(160,112,230,.12)}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;color:var(--text);background:linear-gradient(135deg,var(--bg1),var(--bg2) 50%,var(--bg3));background-attachment:fixed;
+font:14px/1.55 Quicksand,Nunito,"Segoe UI Variable Text","Segoe UI",system-ui,"Microsoft YaHei UI","PingFang SC",sans-serif;letter-spacing:.02em;-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:var(--primary-pale);color:var(--text)}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:rgba(236,106,156,.35);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:rgba(236,106,156,.6)}::-webkit-scrollbar-track{background:transparent}
+.blobs{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.blobs i{position:absolute;border-radius:50%}
+.blobs i:nth-child(1){width:480px;height:480px;left:-120px;top:-140px;background:var(--blob-a);filter:blur(100px)}
+.blobs i:nth-child(2){width:400px;height:400px;right:-10%;top:20%;background:var(--blob-b);filter:blur(90px)}
+.blobs i:nth-child(3){width:560px;height:560px;left:22%;bottom:-18%;background:var(--blob-c);filter:blur(110px)}
+svg.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.shell{display:flex;height:100vh}
+aside{width:16rem;flex:none;display:flex;flex-direction:column;padding:22px 14px 16px;gap:4px}
+.brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;letter-spacing:.04em;padding:0 10px}
+.brand i{width:4px;height:20px;border-radius:4px;background:var(--primary);box-shadow:0 2px 8px var(--primary-soft)}
+.brand-sub{color:var(--muted);font-size:12px;padding:0 10px 0 24px;margin-bottom:18px}
+nav{display:flex;flex-direction:column;gap:6px}
+.nav-item{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:12px;width:100%;padding:10px 14px;border-radius:14px;cursor:pointer;color:var(--text);transition:all .3s}
+.nav-item:hover{background:var(--fill-hover);transform:translateX(4px)}
+.nav-item.on{background:var(--primary-soft);color:var(--primary-strong);font-weight:600;transform:translateX(4px)}
+.nav-item .pip{width:12px;height:6px;border-radius:6px;margin-left:auto;background:var(--primary-pale);transition:all .3s}
+.nav-item.on .pip{background:var(--primary);width:18px;box-shadow:0 0 8px var(--primary-soft)}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.side-foot .note{color:var(--muted);font-size:12px;text-align:center}
+.scrim{display:none}
+.content{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px 8px 0}
+.topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;height:42px;padding:0 8px 0 10px;border-radius:999px;background:var(--glass);
+backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);border:1px solid var(--glass-line);box-shadow:0 2px 12px var(--primary-soft)}
+.crumb{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}.crumb b{color:var(--text);font-weight:600}
+.topbar .grow{flex:1}.topbar .live{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;padding-right:6px}
+.view{flex:1;min-height:0;padding:14px 8px 14px;overflow:auto}
+.view.enter{animation:enter .4s ease}
+@keyframes enter{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.glass,.bot{background:var(--glass);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid var(--glass-line);border-radius:18px;box-shadow:var(--shadow)}
+.grid{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start}
+#view-monitor .grid{height:100%;align-items:stretch}
+.col-title{font-size:13px;font-weight:600;color:var(--muted);margin:2px 6px 10px;display:flex;align-items:center;gap:8px}
+.col-title::before{content:"";width:3px;height:12px;border-radius:3px;background:var(--secondary)}
+.bots{display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0;padding:2px}
+.bot{padding:14px;cursor:pointer;transition:transform .25s,box-shadow .25s,border-color .25s}
+.bot:hover{transform:translateY(-2px)}
+.bot.sel{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary),var(--shadow)}
 .bot .top{display:flex;align-items:center;gap:8px;font-weight:600}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--off);flex:none}.dot.on{background:var(--ok)}.dot.busy{background:var(--busy)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--off);flex:none}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}.dot.busy{background:var(--busy);box-shadow:0 0 0 3px rgba(227,145,43,.18);animation:pulse 1.4s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 6px rgba(227,145,43,0)}}
 .meta{color:var(--muted);font-size:12px;margin-top:4px}
-.btns{display:flex;gap:8px;margin-top:10px}
-button{font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
-button:hover{border-color:var(--accent)}button.danger{color:var(--err)}button:disabled{opacity:.4;cursor:default}
-.feed{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-height:0}
-.bar{display:flex;flex-wrap:wrap;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;align-items:center}
-.bar label{display:flex;gap:4px;align-items:center;cursor:pointer}
-#rows{overflow:auto;padding:6px 0;flex:1;min-height:300px}
-.row{display:grid;grid-template-columns:64px 52px 1fr;gap:8px;padding:3px 12px;align-items:baseline}
-.row:hover{background:color-mix(in srgb,var(--line) 40%,transparent)}
+.btns{display:flex;gap:8px;margin-top:12px}
+button{font:inherit;font-size:12px;padding:5px 14px;border-radius:999px;border:0;background:var(--primary-soft);color:var(--primary-strong);cursor:pointer;font-weight:500;transition:all .25s}
+button:hover{filter:brightness(1.04);box-shadow:0 4px 14px var(--primary-soft)}
+button:disabled{opacity:.4;cursor:default;box-shadow:none}
+button.danger{background:var(--err-soft);color:var(--err)}
+button.primary{background:var(--primary);color:#fff;box-shadow:0 6px 16px rgba(236,106,156,.35)}
+button.ghost{background:transparent;color:var(--text)}button.ghost:hover{background:var(--fill-hover);box-shadow:none}
+button.icon{padding:6px;display:inline-flex;border-radius:50%}
+button.wide{width:100%;padding:8px 14px;font-size:13px}
+.feed{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.bar{display:flex;flex-wrap:wrap;gap:14px;padding:12px 16px;color:var(--muted);font-size:12px;align-items:center;border-bottom:1px solid var(--line)}
+#title{font-size:14px;font-weight:600;color:var(--text)}
+.bar label{display:flex;gap:6px;align-items:center;cursor:pointer}
+input[type=checkbox],input[type=radio]{accent-color:var(--primary)}
+#now{background:var(--fill)}
+#rows{overflow:auto;padding:8px 6px;flex:1;min-height:300px}
+.row{display:grid;grid-template-columns:62px 48px 1fr;gap:10px;padding:4px 10px;align-items:baseline;border-radius:10px}
+.row:hover{background:var(--fill)}
 .t{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
-.tag{font-size:11px;border-radius:4px;padding:0 4px;text-align:center;color:#fff;background:var(--event)}
-.k-event-chat .tag{background:var(--chat)}.k-reply .tag{background:var(--reply)}.k-tool .tag{background:var(--tool)}.k-error .tag,.k-turn.err .tag{background:var(--err)}
-.k-turn .tag,.k-turn_start .tag{background:var(--muted)}
+.tag{--c:var(--event);font-size:11px;border-radius:999px;padding:0 6px;text-align:center;color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent);font-weight:600}
+.k-event-chat .tag{--c:var(--chat)}.k-reply .tag{--c:var(--reply)}.k-tool .tag{--c:var(--tool)}.k-error .tag,.k-turn.err .tag{--c:var(--err)}
+.k-turn .tag,.k-turn_start .tag{--c:var(--off)}
 .msg{white-space:pre-wrap;word-break:break-word}.k-tool .msg,.k-info .msg,.k-turn .msg,.k-turn_start .msg{color:var(--muted);font-size:13px}
 .k-reply .msg{font-weight:500}.err .msg{color:var(--err)}
-.empty{color:var(--muted);padding:24px;text-align:center}
-.tabs{display:flex;gap:4px}.tabs button{font-size:13px;border-color:transparent}.tabs button.on{border-color:var(--accent);color:var(--accent)}
-[hidden]{display:none!important}
-.cfg{display:grid;grid-template-columns:280px 1fr;gap:16px;padding:16px;align-items:start}
-@media (max-width:760px){.cfg{grid-template-columns:1fr}}
-.form{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;max-width:780px}
-.form h2{font-size:15px;margin:0 0 12px}.form h3{font-size:13px;margin:16px 0 8px;color:var(--muted);font-weight:600}
-.field{display:grid;grid-template-columns:110px 1fr;gap:4px 12px;align-items:center;margin-bottom:10px}
+.empty{color:var(--muted);padding:28px;text-align:center}
+.bots>button{align-self:stretch;padding:10px;font-size:13px}
+.form{padding:22px 24px;max-width:820px}
+.form h2{font-size:17px;margin:0 0 6px}
+.form h3{display:flex;align-items:center;gap:8px;font-size:13px;margin:22px 0 12px;color:var(--primary-strong);font-weight:600}
+.form h3::before{content:"";width:3px;height:12px;border-radius:3px;background:var(--primary)}
+.field{display:grid;grid-template-columns:110px 1fr;gap:6px 14px;align-items:center;margin-bottom:12px}
+.field>label,.field>span:first-child{color:var(--muted);font-size:13px}
 .field>.hint{grid-column:2;color:var(--muted);font-size:12px}
-@media (max-width:560px){.field{grid-template-columns:1fr}.field>.hint{grid-column:1}}
-.field input,.field select{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);width:100%;min-width:0}
-.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.inline input{flex:1}
-.radio{display:flex;gap:16px;flex-wrap:wrap}.radio label{display:flex;gap:4px;align-items:center;white-space:nowrap}.field .radio input{width:auto}.radio label.off{color:var(--muted)}
-details summary{cursor:pointer;color:var(--muted);font-size:13px;margin:12px 0 8px}
-.actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;align-items:center}
-.actions button{font-size:13px;padding:6px 14px}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-#c-msg{font-size:12px;color:var(--muted)}#c-msg.err{color:var(--err)}
-.status{margin-top:12px;padding:10px 12px;border-radius:6px;background:var(--bg);font-size:13px}
-.status pre{margin:8px 0 0;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted)}
+.field input:not([type=radio]),.field select{font:inherit;padding:8px 12px;border:1px solid transparent;border-radius:12px;background:var(--fill);color:var(--text);width:100%;min-width:0;outline:none;transition:all .2s}
+.field input:not([type=radio]):hover,.field select:hover{background:var(--fill-hover)}
+.field input:not([type=radio]):focus,.field select:focus{border-color:var(--primary);background:var(--glass-strong);box-shadow:0 0 0 3px var(--primary-soft)}
+.field select option{background:var(--bg2);color:var(--text)}
+.inline{display:flex;gap:8px;align-items:center}.inline input{flex:1}
+.radio{display:flex;gap:18px;flex-wrap:wrap}.radio label{display:flex;gap:6px;align-items:center;white-space:nowrap}.radio label.off{color:var(--muted)}
+details{margin-top:18px;border-radius:14px;background:var(--fill);padding:2px 14px}
+details summary{cursor:pointer;color:var(--muted);font-size:13px;padding:10px 0;list-style-position:inside}
+details[open]{padding-bottom:6px}
+.actions{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap;align-items:center}
+.actions button{font-size:13px;padding:8px 18px}
+#c-msg{font-size:12px;color:var(--muted);margin-top:10px}#c-msg.err{color:var(--err)}
+.status{margin-top:12px;padding:12px 14px;border-radius:14px;background:var(--fill);font-size:13px}
+.status pre{margin:8px 0 0;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace;color:var(--muted)}
 .okc{color:var(--ok)}.errc{color:var(--err)}
+@media (max-width:1100px){.grid{grid-template-columns:1fr}#view-monitor .grid{height:auto}#bots{max-height:40vh}.feed{min-height:60vh}}
+@media (max-width:767px){
+body{overflow:auto}.shell{height:auto;min-height:100vh}
+aside{position:fixed;inset:0 auto 0 0;z-index:50;background:var(--glass-strong);backdrop-filter:blur(24px) saturate(1.5);-webkit-backdrop-filter:blur(24px) saturate(1.5);
+border-radius:0 18px 18px 0;box-shadow:0 10px 40px rgba(0,0,0,.18);transform:translateX(-105%);transition:transform .35s cubic-bezier(.2,.9,.3,1.2)}
+body.nav-open aside{transform:none}
+body.nav-open .scrim{display:block;position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.2);backdrop-filter:blur(1px)}
+.grid{grid-template-columns:1fr}#view-monitor .grid{height:auto}.view{overflow:visible;padding-bottom:40px}
+.field{grid-template-columns:1fr}.field>.hint{grid-column:1}.form{padding:18px 16px}}
+@media (min-width:768px){#menu{display:none}}
 </style></head><body>
-<header><h1>mcbot 控制台</h1><nav class="tabs"><button id="tab-monitor" class="on">监控</button><button id="tab-config">配置</button></nav><span class="hint">只在本机可见</span></header>
-<section class="cfg" id="view-config" hidden><section class="bots" id="profiles"></section>
-<form class="form" id="cform" autocomplete="off"><h2 id="c-title">新配置</h2>
+<div class="blobs"><i></i><i></i><i></i></div>
+<div class="shell">
+<aside id="side"><div class="brand"><i></i>mcbot</div><div class="brand-sub">本地控制台</div>
+<nav><button class="nav-item on" id="tab-monitor"><svg class="i" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>监控<span class="pip"></span></button>
+<button class="nav-item" id="tab-config"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>配置<span class="pip"></span></button></nav>
+<div class="side-foot"><button class="wide" id="theme-btn">主题：跟随系统</button><div class="note">只在本机可见</div></div></aside>
+<div class="scrim" id="scrim"></div>
+<div class="content">
+<header class="topbar"><button class="icon ghost" id="menu" aria-label="菜单"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+<span class="crumb">mcbot<span>/</span><b id="crumb">监控</b></span><span class="grow"></span><span class="live" id="live"><span class="dot on"></span>每 1.5 秒刷新</span></header>
+<section class="view" id="view-config" hidden><div class="grid"><div><div class="col-title">配置档案</div><section class="bots" id="profiles"></section></div>
+<form class="form glass" id="cform" autocomplete="off"><h2 id="c-title">新配置</h2>
 <div class="field"><label for="c-label">名称</label><input id="c-label" maxlength="40" required></div>
 <div class="field"><label for="c-agent">Agent</label><select id="c-agent"></select></div>
 <h3>账号</h3>
@@ -263,13 +343,14 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px;margin:12px 0 8
 <div class="field"><label for="c-rotateTokens">换新会话</label><input id="c-rotateTokens" type="number" min="0" max="2000000" step="1000" placeholder="200000"><span class="hint">上下文超过这么多 tokens 就整理记忆后换新会话；0 表示不换</span></div>
 <div class="field"><label for="c-maxRestarts">最多重启</label><input id="c-maxRestarts" type="number" min="0" max="100" placeholder="10"><span class="hint">Agent 连续崩溃这么多次后不再重启</span></div>
 </details>
-<div class="actions"><button type="submit">保存</button><button type="button" class="primary" id="c-launch">保存并启动托管</button><button type="button" class="danger" id="c-stop">停止托管</button><span style="flex:1"></span><button type="button" class="danger" id="c-del">删除这份配置</button></div>
+<div class="actions"><button type="submit">保存</button><button type="button" class="primary" id="c-launch">保存并启动托管</button><button type="button" class="danger" id="c-stop">停止托管</button><span style="flex:1"></span><button type="button" class="ghost" id="c-del">删除这份配置</button></div>
 <div id="c-msg"></div><div class="status" id="c-status" hidden></div>
-<datalist id="dl-account"></datalist><datalist id="dl-model"></datalist></form></section>
-<main id="view-monitor"><section class="bots" id="bots"><div class="empty">还没有托管记录</div></section>
-<section class="feed"><div class="bar"><span id="title">选择左边的 Bot</span><span style="flex:1"></span>
+<datalist id="dl-account"></datalist><datalist id="dl-model"></datalist></form></div></section>
+<main class="view" id="view-monitor"><div class="grid"><div style="display:flex;flex-direction:column;min-height:0"><div class="col-title">托管中的 Bot</div><section class="bots" id="bots"><div class="empty">还没有托管记录</div></section></div>
+<section class="feed glass"><div class="bar"><span id="title">选择左边的 Bot</span><span style="flex:1"></span>
 <label><input type="checkbox" id="f-tool" checked>工具调用</label><label><input type="checkbox" id="f-info">驱动器提示</label><label><input type="checkbox" id="f-auto" checked>自动滚动</label></div>
-<div class="bar" id="now"></div><div id="rows"></div></section></main>
+<div class="bar" id="now"></div><div id="rows"></div></section></div></main>
+</div></div>
 <script>
 const $=(s)=>document.querySelector(s);let bots=[],sel=localStorage.getItem('mcbot.sel')||'',offset=-1,items=[];
 const TAG={event:'事件',reply:'回复',tool:'工具',turn:'本轮',turn_start:'开始',info:'提示',error:'出错',halt:'叫停'};
@@ -364,8 +445,17 @@ $('#c-del').onclick=async()=>{if(!cur||!cur.id||!confirm('删除配置「'+cur.l
 const r=await post('/api/profiles/delete',{id:cur.id});if(!r.ok){say(r.error||'删除失败',true);return}cur=null;loadCfg(true)};
 function setTab(t){$('#view-monitor').hidden=t!=='monitor';$('#view-config').hidden=t!=='config';$('#tab-monitor').classList.toggle('on',t==='monitor');
 $('#tab-config').classList.toggle('on',t==='config');try{localStorage.setItem('mcbot.tab',t)}catch{}clearInterval(cfgTimer);
+$('#crumb').textContent=t==='config'?'配置':'监控';$('#live').hidden=t!=='monitor';document.body.classList.remove('nav-open');
+const v=$(t==='config'?'#view-config':'#view-monitor');v.classList.remove('enter');void v.offsetWidth;v.classList.add('enter');
 if(t==='config'){loadCfg();cfgTimer=setInterval(()=>loadCfg(),3000)}}
 $('#tab-monitor').onclick=()=>setTab('monitor');$('#tab-config').onclick=()=>setTab('config');
+$('#menu').onclick=()=>document.body.classList.toggle('nav-open');$('#scrim').onclick=()=>document.body.classList.remove('nav-open');
+// 主题：跟随系统 → 亮色 → 暗色，记在本浏览器里
+const THEMES={auto:'跟随系统',light:'亮色',dark:'暗色'};
+let themeNow='auto';
+function setTheme(m){themeNow=m;if(m==='auto')delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=m;$('#theme-btn').textContent='主题：'+THEMES[m];try{localStorage.setItem('mcbot.theme',m)}catch{}}
+let theme0='auto';try{theme0=localStorage.getItem('mcbot.theme')||'auto'}catch{}setTheme(THEMES[theme0]?theme0:'auto');
+$('#theme-btn').onclick=()=>{const ks=Object.keys(THEMES);setTheme(ks[(ks.indexOf(themeNow)+1)%ks.length])};
 let tab0='monitor';try{tab0=localStorage.getItem('mcbot.tab')||'monitor'}catch{}setTab(tab0);
 </script></body></html>`;
 

@@ -21,6 +21,7 @@ public final class ControlSessionTest {
             if((!exists||!dead)&&!savedDead)throw error("INVALID_ARGUMENT","No dead body");
             exists=true;dead=false;savedDead=false;respawns++;
         }
+        @Override public boolean leave() { if(!exists)return false;exists=false;dead=false;return true; }
         @Override public JsonObject hello() { return obj("capabilities",nearby?List.of("send-chat","nearby-blocks"):List.of("send-chat")); }
         @Override public JsonObject observe(JsonObject p) { return obj("source","server-observed","container",null); }
         @Override public JsonObject nearbyBlocks(JsonObject p) {discoveries++;return obj("dimension","minecraft:overworld","candidates",List.of());}
@@ -98,6 +99,17 @@ public final class ControlSessionTest {
         check(f.game.stops==stops,"old host revoke never stops new lease");
         errorCode("LEASE_LOST",()->f.session.call("watch",f.host(claim)));
         f.session.call("heartbeat",f.auth(next));
+        Fixture leaving=new Fixture();JsonObject leavingClaim=leaving.claim("a");
+        JsonObject shutdown=leaving.host(leavingClaim);shutdown.addProperty("leave",true);
+        check(leaving.session.call("revoke",shutdown).get("left").getAsBoolean()&&!leaving.game.exists,"host shutdown revoke logs the body out");
+        check(!leaving.session.call("revoke",shutdown).get("left").getAsBoolean(),"repeated shutdown finds no body to log out");
+        JsonObject back=leaving.claim("b");
+        check(leaving.game.creations==2&&!back.get("sessionId").equals(leavingClaim.get("sessionId")),"next claim brings the body back in a new session");
+        check(!leaving.session.call("revoke",shutdown).get("left").getAsBoolean()&&leaving.game.exists,"old host shutdown never logs out another controller's body");
+        Fixture stoppedFirst=new Fixture();JsonObject chatStopped=stoppedFirst.claim("a");
+        stoppedFirst.session.call("revoke",stoppedFirst.host(chatStopped));
+        JsonObject later=stoppedFirst.host(chatStopped);later.addProperty("leave",true);
+        check(stoppedFirst.session.call("revoke",later).get("left").getAsBoolean()&&!stoppedFirst.game.exists,"a host already stopped by chat still logs its body out on shutdown");
         Fixture expiry=new Fixture();JsonObject expiring=expiry.claim("a");expiry.time.set(9000);
         check(expiry.claim("a").get("ttlMs").getAsLong()==1000,"retransmitted claim exposes remaining TTL");expiry.time.set(10000);
         errorCode("LEASE_LOST",()->expiry.session.call("heartbeat",expiry.auth(expiring)));

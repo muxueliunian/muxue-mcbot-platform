@@ -107,6 +107,7 @@ export interface ActionArguments {
     & ({ emptyHand: true } | { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components });
   'use-item': { interaction: string; slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components; timeoutMs?: number };
   'pillar-up': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components };
+  'equip-item': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components };
   'sleep-in-bed': { player?: string; timeoutMs?: number };
   'wake-up': Record<string, never>;
   'craft-item': { item: string; count?: number; timeoutMs?: number };

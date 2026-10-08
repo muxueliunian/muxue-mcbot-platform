@@ -82,7 +82,7 @@ final class TravelTask {
         Vec3 feet=player.position();
         if(player.onGround()&&arrived(feet)){player.stopInput();if(navigation!=null)navigation.closeDoorsBehind();operation.finish("succeeded","Arrived",progress());return;}
         if(navigation==null) {
-            if(!player.onGround())return;
+            if(!player.onGround()&&!player.isInWater())return;
             NativeNavigation.conditions(player);
             leg=pickLeg(feet);
             if(leg==null){fail(feet,"no loaded surface toward the destination");return;}

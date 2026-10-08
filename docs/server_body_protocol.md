@@ -24,7 +24,7 @@
 | operation | `{instanceId,sessionId,leaseId,operationId}` | 对应当前租约的 Operation；不以查询续租 |
 | stop | `{instanceId,sessionId,leaseId}` | `{stopped:true,controlGeneration}`；取消当前操作、推进代次、角色保持在线，旧代次 act 拒绝；同一租约后续明确新动作可执行 |
 | release | `{instanceId,sessionId,leaseId}` | `{released:true}`；仅停止并放弃这一份控制权，角色保留；旧 lease 不能影响新 lease |
-| revoke | `{instanceId,sessionId,leaseId,stopToken}` | `{stopped:true,revoked:true}`；宿主专用，仅撤销指定租约，角色保留；不能接管／移动，不续租。已释放的匹配旧租约可幂等确认，但绝不影响新租约 |
+| revoke | `{instanceId,sessionId,leaseId,stopToken,leave?}` | `{stopped:true,revoked:true,left}`；宿主专用，仅撤销指定租约，角色默认保留；不能接管／移动，不续租。已释放的匹配旧租约可幂等确认，但绝不影响新租约。`leave:true`（宿主退出时用）同时让角色像玩家一样下线（原版存档），只在没有别的租约时生效，`left`说明这次是否真的下线；下次 claim 在原地重新上线 |
 | watch | `{instanceId,sessionId,leaseId,stopToken}` | `{chat,chatCursor}`；宿主只读新聊天，用于 MCP 不响应时直接叫停，不续租、不创建角色。也接受同 instance/session 下最近已撤销／释放／过期的租约，前提没有不同的新有效租约；新 claim 或角色代次变化即使旧 watch 失效。chat 格式同 Observation |
 | respawn | `{instanceId,worldId,username,sessionId}` | `{respawned:true,connected:true,instanceId,sessionId,controlGeneration}`；独立显式原生重生，无 claim／lease。必须匹配 hello 当前死亡会话；首次尚未加载的死亡存档可携 `sessionId:null`。活角色拒绝此请求，成功产生新会话 |
 
@@ -260,6 +260,15 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 同一仲裁器在普通观察之外独立采样紧凑生存状态；模式切换、慢普通观察与原生战斗等待不能挤掉感知。防卫抢占前阻断新普通写入，撤销容器／采集／陪伴／进食后等待身体停止确认，再获得写锁；不新增第二个控制者或偷偷接纳外部generation。人工停止解除armed，读状态与危险仍存在都不能重新授权。危险事件只按有意义的状态变化生成，不因距离微调、每次挥击、空气补回或跳跃下落数值变化反复唤醒模型。
 
 分段时间字段sensedAt、stopRequestedAt、stopConfirmedAt、actionRequestedAt、actionAcceptedAt记录运行端时间；actionAcceptedAt是收到回执的时刻，不是服务器最后实际写入tick。真实反应延迟与更长运行的结果须看本批验收，工具数量不代表通用Mod、任意武器或全地形支持。
+
+### 试玩反馈修正（2026-10-08）
+
+10-08 小雪用 Claude（Haiku）实测时遇到的问题，按顺序修了三处；实测见`scripts/server-equip-swim-smoke.mjs`（隔离服，15 项）。
+
+- **停托管不留假人**：驱动器退出（WebUI 停止、`stop-companion.ps1`）时`revoke`带`leave:true`，角色下线、原版照常存档，下次启动在原地上线。聊天叫停、换会话、托管出错重启这些不带`leave`，角色还在原地。驱动器异常退出没机会撤销时，角色仍留在服务器，等租约过期（不下线）。
+- **穿装备**：新原子能力`equip-item`：`{slot:0..35,expectedItem,expectedCount>0,expectedComponents}`。物品要是原版判定穿在护甲槽的（头盔、胸甲、鞘翅、护腿、靴子、生物头颅）。要求自身物品栏、空光标。护甲槽空着就原生 QUICK_MOVE（shift 点击）；有东西就原生 PICKUP 三下（拿起新的、点护甲槽对换、放回原槽），和玩家在物品栏里换装一样；绑定诅咒的脱不下来先拒绝。回执`{part,slot,wearing,tookOff?,inventory}`；没动就`failed`+`FORBIDDEN`，光标里还留着东西就放回原槽并判`unknown`。穿在身上的护甲本来就在观察的`inventory`里：槽 36 靴子、37 护腿、38 胸甲、39 头盔、40 副手。Node 发布`equip-item`工具，参数只有`item`，运行端从最新观察里挑主背包的那一格填守卫。
+- **水里能走**：导航的前置条件不再拒绝「在水里」（岩浆、着火、骑乘等照旧拒绝）。身体在水里时不规划步行路线，像玩家一样按住跳浮上水面，朝岸边游：在身边 10 格内找能站的岸（从水面往下看每一列第一个不是空气的格子，最高比水面高一格），选「离身体近、离目的地也近」的（到目的地的距离按一半算）；碰到岸边时原版的出水攀爬把身体送上去，上岸后照常规划步行路线。4 秒没进展就换下一处岸，换 4 次还出不去判`BLOCKED`，10 格内没有岸判`NO_PATH`。步行路线照旧不穿过水。`navigation`诊断多一个`swims`（找岸次数），`stage`多一个`swim`。`move-to-position`、`travel-to`可以从水里开始；`pillar-up`仍要求站在干地上。跟随、保护、拾取等用同一个导航，所以跟随时下了水也会自己游上岸再跟。
+- 生存危险事件不再把「在水里」当成变化唤醒模型，只有空气不足（`oxygenLow`）才算。
 
 ## 手持物品使用（2026-10-06）
 

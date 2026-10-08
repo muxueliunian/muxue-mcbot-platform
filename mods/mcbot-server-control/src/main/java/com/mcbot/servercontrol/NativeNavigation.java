@@ -36,6 +36,12 @@ final class NativeNavigation {
      * falls once its centre is 0.8 out); back up to RUN_UP for another run.
      */
     static final double TAKEOFF_FROM=0.05,EDGE=0.6,LAND_MIN=1.6,LAND_MAX=2.4,RUN_UP=-0.3;
+    /** Swimming out: shores are looked for this far around, and one that brings no progress this long is dropped. */
+    static final int SHORE_RANGE=10;
+    static final long SWIM_STUCK_MS=4000;
+    private Vec3 shore;
+    private final Set<BlockPos> badShores=new HashSet<>();
+    private int swimTries,swims;
     private final BodyPlayer body;
     private final ControlSession session;
     private final ControlSession.Operation operation;
@@ -59,9 +65,10 @@ final class NativeNavigation {
         progress=replanAnchor=body.position();lastProgress=clock();
     }
     private static long clock(){return System.nanoTime()/1_000_000;}
+    /** Water is allowed: a body in water swims out to the shore first (swim()), then walks on. */
     static void conditions(BodyPlayer body) {
         if(body.containerMenu!=body.inventoryMenu)throw error("BUSY","Close the container before navigating");
-        if(!body.isAlive()||body.isRemoved()||body.isInWater()||body.isInLava()||body.isPassenger()||body.isFallFlying()||body.isSleeping()||body.getPose()!=Pose.STANDING||body.isOnFire()||body.getTicksFrozen()>0)
+        if(!body.isAlive()||body.isRemoved()||body.isInLava()||body.isPassenger()||body.isFallFlying()||body.isSleeping()||body.getPose()!=Pose.STANDING||body.isOnFire()||body.getTicksFrozen()>0)
             throw error("BLOCKED","Body cannot safely navigate in its current state");
     }
     boolean tick(Vec3 destination,Predicate<Vec3> goal){return tick(destination,goal,p->true);}
@@ -79,6 +86,8 @@ final class NativeNavigation {
         if(feet.distanceToSqr(progress)>0.09){progress=feet;lastProgress=now;}
         // Real progress since the last replan earns the finite replan budget back.
         if(feet.distanceTo(replanAnchor)>2){replans=0;replanAnchor=feet;}
+        if(body.isInWater()){swim(feet,destination,allowed,now);return false;}
+        if(shore!=null){shore=null;badShores.clear();swimTries=0;}
         if(route!=null&&now-lastProgress>STUCK_MS){
             if(!body.onGround())throw error("BLOCKED","Airborne navigation made no progress");
             replan(now);lastProgress=now;
@@ -154,10 +163,60 @@ final class NativeNavigation {
         body.jumpInput(step.jump());body.moveInput(toLanding.x,toLanding.z,1);
         if(step.jump()){jumped=true;leaps++;}
     }
+    /**
+     * In water the walking planner has nothing to stand on, so swim like a player: hold jump to stay at the surface
+     * and swim at a shore spot. Vanilla lifts a swimmer who pushes against a bank while jumping out onto it; on land
+     * the ordinary route takes over. A shore that brings no progress for a while is dropped for the next best one.
+     */
+    private void swim(Vec3 feet,Vec3 destination,Predicate<Vec3> allowed,long now){
+        route=null;
+        if(shore!=null&&now-lastProgress>SWIM_STUCK_MS){
+            badShores.add(BlockPos.containing(shore));shore=null;
+            if(++swimTries>MAX_REPLANS)throw error("BLOCKED","Could not swim out of the water");
+        }
+        if(shore==null){
+            shore=shore(feet,destination,allowed);lastProgress=now;progress=feet;
+            if(shore==null)throw error("NO_PATH","No loaded shore within reach of the water");
+            swims++;
+        }
+        Vec3 delta=shore.subtract(feet);
+        body.jumpInput(true);jumped=true;
+        body.moveInput(delta.x,delta.z,(float)Math.min(1,delta.horizontalDistance()/0.4));
+    }
+    /**
+     * The walkable spot (solid floor, room to stand, no water or danger) a swimmer can climb onto that is best on the
+     * way: closest to the body, with the remaining distance to the destination counting half. At most a block above
+     * the water, since a swimmer only climbs out over a low bank.
+     */
+    private Vec3 shore(Vec3 feet,Vec3 destination,Predicate<Vec3> allowed){
+        ensureModel();
+        Vec3 best=null;double score=Double.MAX_VALUE;
+        int fx=Mth.floor(feet.x),fy=Mth.floor(feet.y),fz=Mth.floor(feet.z);
+        // The swimmer rises to the surface first: banks are measured from there, not from where it sank to.
+        int surface=fy;
+        while(surface<fy+SHORE_RANGE&&!body.serverLevel().getFluidState(new BlockPos(fx,surface,fz)).isEmpty())surface++;
+        for(int dx=-SHORE_RANGE;dx<=SHORE_RANGE;dx++)for(int dz=-SHORE_RANGE;dz<=SHORE_RANGE;dz++){
+            if(dx*dx+dz*dz>SHORE_RANGE*SHORE_RANGE)continue;
+            for(int y=surface+1;y>=fy-2;y--){
+                BlockPos pos=new BlockPos(fx+dx,y,fz+dz);
+                if(!body.serverLevel().isLoaded(pos))break;
+                PathType type=WalkNodeEvaluator.getPathTypeStatic(model,pos);
+                if(type==PathType.OPEN)continue;
+                // The first non-air from above decides: a bank to stand on, or water, a wall or danger (nothing here).
+                Vec3 spot=new Vec3(pos.getX()+0.5,pos.getY(),pos.getZ()+0.5);
+                if(type==PathType.WALKABLE&&!badShores.contains(pos)&&allowed.test(spot)){
+                    double s=spot.distanceTo(feet)+0.5*spot.distanceTo(destination);
+                    if(s<score){score=s;best=spot;}
+                }
+                break;
+            }
+        }
+        return best;
+    }
     private void ensureModel(){
         if(model==null||model.level()!=body.level()){
             model=new Zombie(EntityType.ZOMBIE,body.level());
-            // The body never swims or wades through powder snow. Wooden doors are opened by hand on the way (doors()).
+            // Routes never go through water (a body already in water swims out first, swim()) or powder snow. Wooden doors are opened by hand on the way (doors()).
             model.setPathfindingMalus(PathType.WATER,-1);model.setPathfindingMalus(PathType.WATER_BORDER,8);
             model.setPathfindingMalus(PathType.DANGER_FIRE,-1);model.setPathfindingMalus(PathType.DAMAGE_FIRE,-1);
             model.setPathfindingMalus(PathType.DANGER_POWDER_SNOW,-1);model.setPathfindingMalus(PathType.POWDER_SNOW,-1);
@@ -240,16 +299,16 @@ final class NativeNavigation {
     /** A guarding body fights while it walks: damage is expected, not a sign of an unsafe route. */
     NativeNavigation tolerateDamage(){damageTolerated=true;return this;}
     /** Someone else drove the body meanwhile: forget the old route and start fresh from where it stands now. */
-    void reset(){route=null;replans=0;progress=replanAnchor=body.position();lastProgress=clock();body.stopInput();}
+    void reset(){route=null;replans=0;shore=null;swimTries=0;badShores.clear();progress=replanAnchor=body.position();lastProgress=clock();body.stopInput();}
     private final NavigationDoors doors=new NavigationDoors(this::bodyRef);
     private BodyPlayer bodyRef(){return body;}
     /** The caller decided the walk is over: shut the doors opened on the way that the body is out of. */
     void closeDoorsBehind(){doors.arrived();}
     private static JsonObject point(Vec3 p){return p==null?null:obj("x",p.x,"y",p.y,"z",p.z);}
     JsonObject diagnostics(){return obj("planner","vanilla-walk","plans",plans,"obstacleReplans",totalReplans,"routePoints",routePoints,"visitedLimit",visitedLimit,
-        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,"leaps",leaps,"doorsOpened",doors.opened,"doorsClosed",doors.closed,
+        "searchMs",searchNanos/1_000_000d,"maxSearchMs",maxSearchNanos/1_000_000d,"jumped",jumped,"leaps",leaps,"doorsOpened",doors.opened,"doorsClosed",doors.closed,"swims",swims,
         "next",route!=null&&index<route.size()?point(route.get(index)):null,"feet",point(body.position()),"motion",point(body.getDeltaMovement()),
-        "onGround",body.onGround(),"stage",route==null?"planning":body.onGround()?"walk":"air");}
+        "onGround",body.onGround(),"stage",shore!=null?"swim":route==null?"planning":body.onGround()?"walk":"air");}
 
     /** Walking nodes plus one-block gap leaps, minus any node outside the caller's authorized region. */
     private static final class RouteEvaluator extends WalkNodeEvaluator {

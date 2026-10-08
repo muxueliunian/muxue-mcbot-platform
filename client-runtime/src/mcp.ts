@@ -9,7 +9,7 @@ import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop, companionReflexHooks } from './action-stop.js';
 import { PillarTasks } from './pillar.js';
-import { interactBlock, interactBlockRepeated, useItem } from './interactions.js';
+import { equipItem, interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 import { PlaceBook } from './places.js';
 
@@ -320,6 +320,9 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   if (serverObserved && body.hello.capabilities.includes('use-item') && itemInteractionIds.length) register('use-item', `Use a held item in the air through a registered interaction: ${itemInteractionIds.join(', ')}. The item must be in the hotbar (use prepare-item first). An interaction that opens a menu (e.g. a backpack) leaves it open: read it with get-container, move items with click-slot, then close-container. unknown is never retried; observe again.`, {
     interaction: z.enum(itemInteractionIds as [string, ...string[]]), item: registryId, timeoutMs,
   }, async args => { tasks.assertIdle(); return operationResult(await useItem(body, args)); });
+  if (serverObserved && body.hello.capabilities.includes('equip-item')) register('equip-item', 'Put on armour from the inventory: a helmet, chestplate, elytra, leggings, boots or mob head (item = its ID, from anywhere in the inventory). The piece worn there before comes off into the slot the new one came from. Worn armour is in the get-status inventory as slots 36 boots, 37 leggings, 38 chestplate, 39 helmet (40 is the offhand). unknown is never retried; observe again.', {
+    item: registryId,
+  }, async args => { tasks.assertIdle(); return operationResult(await equipItem(body, args)); });
   if (serverObserved && body.hello.capabilities.includes('use-item-on-block') && interactionIds.length) register('interact-block', `Right-click one block in reach through a registered interaction: ${interactionIds.join(', ')}. Give exactly one of item (must be in hotbar; use prepare-item first) or emptyHand when the interaction requires it. Unregistered blocks or items are refused before any action. unknown is never retried; observe again. For timing-sensitive repeats (e.g. stirring a pot) give repeatUntil: the program repeats the same interaction until the receipt summary field equals the value, stopping at the first non-succeeded receipt.`, {
     ...blockXyz, interaction: z.enum(interactionIds as [string, ...string[]]), item: registryId.optional(), emptyHand: z.literal(true).optional(),
     face: z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(), timeoutMs,

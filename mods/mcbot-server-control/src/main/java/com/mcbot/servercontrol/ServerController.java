@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -496,7 +496,7 @@ final class ServerController implements ControlSession.Game {
     private void requireWalkable() {
         NativeNavigation.conditions(player);
         if(!connected())throw error("BLOCKED","Body is not connected in authorized survival state");
-        if(!player.onGround())throw error("BLOCKED","Start navigation from supported ground");
+        if(!player.onGround()&&!player.isInWater())throw error("BLOCKED","Start navigation from supported ground or water");
     }
     /** Walk to the nearest free bed (around the named player, or the body) and lie down when vanilla's bed range is reached. */
     private void beginSleep(ControlSession.Operation operation) {
@@ -557,6 +557,10 @@ final class ServerController implements ControlSession.Game {
     }
     @Override public void stop() { active=null;pillar=null;if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
+    @Override public boolean leave() {
+        if(player==null)return false;
+        remove();return true;
+    }
     void remove() {
         session.revokeCurrent("Server body removed");
         BodyPlayer old=player; VirtualConnection oldSink=sink; player=null; sink=null;survival=null;

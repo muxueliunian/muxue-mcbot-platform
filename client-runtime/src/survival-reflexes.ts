@@ -125,8 +125,9 @@ export class SurvivalReflexes {
     } finally { this.sensing = false; }
   }
   private reportDanger(state: SurvivalState): void {
+    // Being in water is no danger by itself (the body swims out when it moves); running out of air is.
     const facts = { lowHealth: state.health <= this.policy.lowHealth, dangers: state.dangers ? { onFire: state.dangers.onFire, inLava: state.dangers.inLava,
-      inWater: state.dangers.inWater, oxygenLow: state.dangers.air <= state.dangers.maxAir * 0.2, fallingDanger: state.dangers.fallDistance > 3,
+      oxygenLow: state.dangers.air <= state.dangers.maxAir * 0.2, fallingDanger: state.dangers.fallDistance > 3,
       retreatRecommended: state.dangers.retreatRecommended } : undefined,
       threatsComplete: state.threats?.complete ?? false,
       threats: state.threats?.nearby.filter(threat => threat.classification === 'unknown' || threat.alive === true && typeof threat.distance === 'number' && threat.distance <= this.policy.defenseRadius && ['hostile', 'attacking_self'].includes(threat.classification))

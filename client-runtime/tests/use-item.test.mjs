@@ -53,3 +53,23 @@ test('use-item refuses items outside the hotbar or missing before any act', asyn
   assert.match(await call(c, { interaction: OPEN, item: 'sophisticatedbackpacks:gold_backpack' }), /MISSING_ITEM/);
   assert.equal(acts().length, 0);
 });
+
+const chestplate = { slot: 4, id: 'minecraft:netherite_chestplate', count: 1, components: { 'minecraft:damage': 3 }, maxStackSize: 1 };
+const worn = { slot: 38, id: 'minecraft:iron_chestplate', count: 1, components: {}, maxStackSize: 1 };
+const equip = async (c, args) => (await c.callTool({ name: 'equip-item', arguments: args })).content[0].text;
+
+test('equip-item is published with its capability and guards the observed inventory stack', async t => {
+  const { c, acts } = await setup(t, { capabilities: ['equip-item'], inventory: [chestplate, worn] });
+  assert.ok((await c.listTools()).tools.some(item => item.name === 'equip-item'));
+  assert.equal(JSON.parse(await equip(c, { item: 'minecraft:netherite_chestplate' })).status, 'succeeded');
+  assert.deepEqual(acts()[0], { ...acts()[0], name: 'equip-item', args: { slot: 4, expectedItem: 'minecraft:netherite_chestplate', expectedCount: 1, expectedComponents: { 'minecraft:damage': 3 } } });
+});
+
+test('equip-item refuses what is only worn already or missing, and is absent without the capability', async t => {
+  const { c, acts } = await setup(t, { capabilities: ['equip-item'], inventory: [chestplate, worn] });
+  assert.match(await equip(c, { item: 'minecraft:iron_chestplate' }), /MISSING_ITEM/);
+  assert.match(await equip(c, { item: 'minecraft:diamond_boots' }), /MISSING_ITEM/);
+  assert.equal(acts().length, 0);
+  const without = await setup(t, { capabilities: [] });
+  assert.ok(!(await without.c.listTools()).tools.some(item => item.name === 'equip-item'));
+});

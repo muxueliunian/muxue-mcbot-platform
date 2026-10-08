@@ -33,7 +33,7 @@ import static com.mcbot.servercontrol.Protocol.*;
 /** Ordinary player packet entry points, with authoritative preconditions and no client prediction. */
 final class SurvivalActions {
     private static final Map<ServerPlayer,NativeAttackScope> NATIVE_ATTACKS=new IdentityHashMap<>();
-    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","defend-entity","use-bucket");
+    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","equip-item","defend-entity","use-bucket");
     private final ServerPlayer player;
     private final ControlSession session;
     private final TargetTokens targets;
@@ -237,6 +237,7 @@ final class SurvivalActions {
                 case "drop-item" -> drop(operation);
                 case "swap-inventory" -> swapInventory(operation);
                 case "eat-item" -> eat(operation);
+                case "equip-item" -> equip(operation);
                 case "defend-entity" -> defend(operation);
                 case "use-item-on-block" -> useOnBlock(operation);
                 case "use-item" -> useItem(operation);
@@ -637,6 +638,44 @@ final class SurvivalActions {
         else if(InventorySwap.exact(before,after,source,target))operation.finish("succeeded","Native inventory SWAP and complete source/target receipts confirmed",result);
         else if(before.equals(after))operation.finish("failed","Native swap produced no inventory change",obj("code","FORBIDDEN","sourceSlot",source,"hotbarSlot",target,"inventory",after));
         else operation.finish("unknown","Native swap produced other inventory effects; do not repeat",result);
+    }
+    /**
+     * Put a piece of armour (helmet, chestplate, elytra, leggings, boots, a mob head) from the inventory on, the way a
+     * player does in their own inventory: shift-click it into an empty armour slot, or pick it up, click the worn piece
+     * (they swap) and put the old piece back where the new one was. Vanilla decides what fits where.
+     */
+    private void equip(ControlSession.Operation operation) {
+        worldAction();JsonObject args=operation.args;int slot=integer(args,"slot");
+        if(slot<0||slot>35)throw error("INVALID_ARGUMENT","Equip takes a main inventory slot 0..35");
+        AbstractContainerMenu menu=player.inventoryMenu;
+        if(player.containerMenu!=menu||!menu.getCarried().isEmpty()||!menu.stillValid(player))throw error("BUSY","Equipping needs the own inventory with an empty cursor; close other menus first");
+        ItemStack stack=player.getInventory().getItem(slot);
+        expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
+        net.minecraft.world.entity.EquipmentSlot part=player.getEquipmentSlotForItem(stack);
+        if(stack.isEmpty()||part.getType()!=net.minecraft.world.entity.EquipmentSlot.Type.HUMANOID_ARMOR)throw error("UNSUPPORTED","Item is not worn in an armour slot");
+        int from=NativeWorkstation.menuSlot(menu,player.getInventory(),slot),worn=NativeWorkstation.menuSlot(menu,player.getInventory(),36+part.getIndex());
+        if(from<0||worn<0)throw error("UNSUPPORTED","Own inventory menu has no matching slots");
+        Slot armour=menu.getSlot(worn);ItemStack old=armour.getItem().copy();
+        if(!armour.mayPlace(stack)||(!old.isEmpty()&&!armour.mayPickup(player)))throw error("FORBIDDEN","The worn piece cannot be taken off (curse of binding) or the item does not fit");
+        JsonObject wanted=stackValue(stack),previous=old.isEmpty()?null:stackValue(old);guard(operation);
+        nativeEffects.sent();
+        if(old.isEmpty())NativeWorkstation.click(player,menu,from,0,ClickType.QUICK_MOVE);
+        else{
+            NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
+            NativeWorkstation.click(player,menu,worn,0,ClickType.PICKUP);
+            NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
+        }
+        JsonObject now=stackValue(armour.getItem());
+        JsonObject result=obj("part",part.getName(),"slot",slot,"wearing",now,"inventory",observedInventory());
+        if(previous!=null)result.add("tookOff",previous);
+        if(!menu.getCarried().isEmpty()){
+            // Something refused the last click: the cursor still holds a piece. Put it back in its slot rather than lose it.
+            NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
+            operation.finish("unknown","Armour swap did not complete; inspect the inventory before trying again",obj("part",part.getName(),"inventory",observedInventory(),"carried",stackValue(menu.getCarried())));
+        }
+        else if(now.equals(wanted)&&(previous==null||stackValue(player.getInventory().getItem(slot)).equals(previous)))operation.finish("succeeded","Armour worn",result);
+        else if(now.equals(previous==null?stackValue(ItemStack.EMPTY):previous))operation.finish("failed","FORBIDDEN: Native inventory click did not move the armour",obj("code","FORBIDDEN","part",part.getName(),"inventory",observedInventory()));
+        else operation.finish("unknown","Armour slot changed in an unexpected way; inspect before trying again",result);
     }
     private void eat(ControlSession.Operation operation) {
         worldAction();JsonObject args=operation.args;int slot=hotbar(args);ItemStack stack=player.getInventory().getItem(slot);

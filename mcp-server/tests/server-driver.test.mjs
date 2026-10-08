@@ -20,7 +20,7 @@ function cleanup(dir){assert.equal(path.dirname(path.resolve(dir)),path.resolve(
 async function mock(){
   const state={instanceId:'instance-a',sessionId:'session-a',worldId:'world-a',username:'ServerTest',seq:10,chat:[{seq:10,username:'tester',message:'停下'}],lease:null,revoked:null,claims:0,calls:[],revokeCount:0};
   const server=http.createServer(async(req,res)=>{
-    let raw='';for await(const p of req)raw+=p;const {method,params:p}=JSON.parse(raw);state.calls.push({method,leaseId:p.leaseId});
+    let raw='';for await(const p of req)raw+=p;const {method,params:p}=JSON.parse(raw);state.calls.push({method,leaseId:p.leaseId,...(p.leave!==undefined?{leave:p.leave}:{})});
     const ok=result=>res.end(JSON.stringify({ok:true,result}));const fail=code=>res.end(JSON.stringify({ok:false,error:{code,message:code}}));
     if(req.headers.authorization!=='Bearer test-only-token')return fail('FORBIDDEN');
     if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:[]});
@@ -284,5 +284,20 @@ test('宿主只接自身controller，旧capability不撤销新lease或新instanc
     assert.equal((await control.revoke()).revoked,true);assert.equal(api.state.lease.leaseId,'lease-new');assert.equal(api.state.revokeCount,0);
     api.state.instanceId='instance-b';await assert.rejects(control.revoke(),/CONTROL_IDENTITY_CHANGED/);assert.equal(api.state.lease.leaseId,'lease-new');
     assert.equal(api.state.calls.filter(c=>c.method==='revoke').length,1);
+  }finally{control.close();await api.close();cleanup(dir);}
+});
+
+test('宿主退出时撤销带 leave，让角色下线；普通叫停不带',async()=>{
+  const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
+  fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));
+  const owner={protocol:2,backend:'server',...scope,controllerId:'owner',instanceId:'instance-a',sessionId:'session-a',leaseId:'lease-1',stopToken:'stop-1',chatCursor:10};
+  fs.writeFileSync(path.join(dir,'server-control-ServerTest.json'),JSON.stringify(owner));
+  api.state.lease={...owner};
+  const control=createServerBodyControl({scope,runtimeDir:dir,controllerId:'owner',isStop:()=>false,isNewTask:()=>false,onStop:()=>{},onNewTask:()=>{}});
+  try{
+    await control.revoke();
+    await control.revoke(undefined,{leave:true});
+    const revokes=api.state.calls.filter(c=>c.method==='revoke');
+    assert.equal(revokes.length,2);assert.equal(revokes[0].leave,undefined);assert.equal(revokes[1].leave,true);
   }finally{control.close();await api.close();cleanup(dir);}
 });

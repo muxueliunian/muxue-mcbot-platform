@@ -77,14 +77,15 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
     return current && ['instanceId', 'sessionId', 'leaseId', 'controllerId'].every(key => current[key] === owner[key]);
   }
 
-  async function revoke(owner = capture()) {
+  // leave: the host is shutting down, so the body logs out instead of standing idle in the world.
+  async function revoke(owner = capture(), { leave = false } = {}) {
     if (!owner) return { stopped: false, reason: 'NO_OWN_CONTROL' };
     // An in-flight watch may return new chat while hello/revoke is awaiting its reply.
     // Preserve it from the start of teardown, but never dispatch before revocation finishes.
     revoking++;
     try {
       const connection = await checkedConnection(owner);
-      const result = await call(connection, 'revoke', capability(owner));
+      const result = await call(connection, 'revoke', { ...capability(owner), ...(leave ? { leave: true } : {}) });
       if (result?.stopped !== true || result?.revoked !== true) throw failure('REVOKE_NOT_CONFIRMED');
       stopped = true;
       return result;

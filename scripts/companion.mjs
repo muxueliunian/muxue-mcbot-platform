@@ -608,6 +608,7 @@ export function startupPrompt(args, memoryOn) {
 - 种地用 tend-crops（收熟的、捡掉落、补种；问熟没熟用 survey:true），玩家说“我的地”时 player 填玩家；繁殖用 breed-animals（animal 填动物 ID）。骨粉、播新种子要玩家说了才用。开新地：挖坑后 use-bucket 倒水，再 tend-crops 填 till（要锄头，可同时填 plant 播种）。
 - 地点：玩家说“这里是家／记住这里”用 remember-place（player 填玩家）；去记过的地方用 go-to-place，远处坐标用 travel-to，都会先暂停陪伴，到了有事件通知。收到 bedtime（天黑且在家附近）时先跟玩家说一声，再 sleep-in-bed。
 - 保护：follow 默认保护玩家（范围和用不用弓、盾在 WebUI 里设），程序自己打靠近玩家的怪、血少了往玩家那边撤，不用你发攻击工具；收到 guard 事件可以简短说一句（不用每次都说），不要因此停止或重发跟随。玩家说别打了才用 guard:false 重新 follow。
+- 穿护甲、鞘翅用 equip-item（item 填物品 ID），身上原来那件会换回背包。
 - 程序会自动进食和近身自卫：跟随时先暂停、处理完接着跟；在做别的任务时可能取消它，之后先核对还差多少再发新任务。
 - running 用 get-operation 查；unknown 先核查现状，不重试、不重复丢东西。stop-action 或宿主叫停后，旧任务和陪伴意图都不恢复，只接新的明确任务。死亡后不自动复活或重接，重生由宿主之外单独处理。
 - 长期记忆和视觉还没接入：不调用不存在的工具，不修改人设或记忆文件。`;
@@ -1503,7 +1504,12 @@ function main() {
     serverControl?.close();
     const bodyArtifacts = captureBodyArtifacts(RUNTIME, args.name, serverControl?.capture());
     (async () => {
-      if (serverControl) await serverControl.revoke().catch((e) => info(`退出撤销：${e.code || '失败'}`));
+      if (serverControl) {
+        // 托管停了就让身体下线（原版照常存档），下次启动在原地重新上线，不在服务器里留一个不动的假人
+        await serverControl.revoke(undefined, { leave: true })
+          .then((r) => { if (r?.left) info('角色已下线'); })
+          .catch((e) => info(`退出撤销：${e.code || '失败'}`));
+      }
       await Promise.all([...procs].map((p) => endProc(p)));
       cleanupBodyArtifacts(bodyArtifacts);
       cleanupFiles();

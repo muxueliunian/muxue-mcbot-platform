@@ -13,6 +13,8 @@ final class ControlSession {
         boolean connected();
         void ensureBody();
         default void respawn() { throw error("UNSUPPORTED","Explicit native respawn is not available"); }
+        /** The body logs out like a player (vanilla saves it); the next claim brings it back where it left. */
+        default boolean leave() { throw error("UNSUPPORTED","Body logout is not available"); }
         JsonObject hello();
         JsonObject observe(JsonObject params);
         default JsonObject nearbyBlocks(JsonObject params) {throw error("UNSUPPORTED","Nearby discovery is not available");}
@@ -81,6 +83,10 @@ final class ControlSession {
     private void requireNativeStopped() {
         if(game.nativeWriteInProgress())throw error("STOP_UNCONFIRMED","Authorization was withdrawn but the synchronous native write has not returned");
     }
+    private boolean leaveBody() {
+        if(!game.leave())return false;
+        bodyChanged();return true;
+    }
     void revokeCurrent(String reason) {
         Retired previous=leaseId==null?null:new Retired(sessionId,leaseId,stopToken);
         try { cancel(reason); }
@@ -145,13 +151,16 @@ final class ControlSession {
         }
         if(method.equals("revoke")) {
             String requestedSession=string(p,"sessionId"), requestedLease=string(p,"leaseId"), requestedToken=string(p,"stopToken");
+            // leave: the host is shutting down for good, so the body logs out instead of standing idle in the world.
+            boolean leave=p.has("leave")&&p.get("leave").isJsonPrimitive()&&p.get("leave").getAsBoolean();
             if(retired.stream().anyMatch(r->r.sessionId.equals(requestedSession)&&r.leaseId.equals(requestedLease)&&r.stopToken.equals(requestedToken))) {
                 requireNativeStopped();
-                return obj("stopped",true,"revoked",true);
+                // An already revoked (stopped by chat, died) host may still send its body home, unless another controller took it meanwhile.
+                return obj("stopped",true,"revoked",true,"left",leave&&leaseId==null&&leaveBody());
             }
             authorize(p);
             if(!stopToken.equals(requestedToken)) throw error("FORBIDDEN","Wrong host stop token");
-            revokeCurrent("Host revoked control");requireNativeStopped(); return obj("stopped",true,"revoked",true);
+            revokeCurrent("Host revoked control");requireNativeStopped(); return obj("stopped",true,"revoked",true,"left",leave&&leaveBody());
         }
         if(method.equals("watch")&&leaseId==null) {
             Retired last=retired.peekLast();

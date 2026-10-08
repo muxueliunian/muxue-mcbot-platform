@@ -47,7 +47,7 @@ final class NativePillar {
     static NativePillar begin(ControlSession.Operation operation,BodyPlayer body,ControlSession session,SurvivalActions survival) {
         JsonObject args=operation.args;
         NativeNavigation.conditions(body);
-        if(!body.onGround())throw error("BLOCKED","Pillar up from supported ground");
+        if(!body.onGround()||body.isInWater())throw error("BLOCKED","Pillar up from supported dry ground");
         int slot=SurvivalActions.integer(args,"slot");
         if(slot<0||slot>8)throw error("INVALID_ARGUMENT","slot must be a hotbar slot 0..8");
         ItemStack stack=body.getInventory().getItem(slot);

@@ -67,6 +67,7 @@ final class ServerController implements ControlSession.Game {
     private final Consumer<net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent> incomingDamageGuard=SurvivalActions::guardNativeIncomingDamage;
     private final Consumer<net.neoforged.neoforge.event.entity.player.SweepAttackEvent> sweepGuard=SurvivalActions::guardNativeSweep;
     private final Consumer<net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent> friendlyFireGuard=this::guardFriendlyFire;
+    private final Consumer<net.neoforged.neoforge.event.entity.EntityJoinLevelEvent> projectileMark=this::markBodyProjectile;
     private final IdleGaze gaze=new IdleGaze();
     private final BodyEmotes emotes=new BodyEmotes();
     private ServerPlayer speaker;
@@ -89,10 +90,23 @@ final class ServerController implements ControlSession.Game {
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,true,sweepGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,trampleGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,friendlyFireGuard);
+        NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,projectileMark);
     }
     /** The body never tramples farmland: a companion walking the player's field must not turn it back to dirt. */
     /** Whatever the body does (a swing, an arrow, a guard fight), it never hurts a player, a pet, a villager or anything named. */
-    private void guardFriendlyFire(net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event){if(player!=null&&event.getSource().getEntity()==player&&event.getEntity()!=player&&GuardCombat.protectedEntity(event.getEntity()))event.setCanceled(true);}
+    private void guardFriendlyFire(net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event){if(GuardCombat.blocksFriendlyFire(player!=null&&event.getSource().getEntity()==player,event.getSource().getDirectEntity()!=null&&event.getSource().getDirectEntity().getTags().contains(GuardCombat.BODY_PROJECTILE_TAG),event.getEntity()==player,GuardCombat.protectedEntity(event.getEntity())))event.setCanceled(true);}
+    /** An arrow the body loosed keeps its mark after the body is gone (or its owner reference is), so the guard still knows whose it is. */
+    private void markBodyProjectile(net.neoforged.neoforge.event.entity.EntityJoinLevelEvent event){if(player!=null&&!event.getLevel().isClientSide()&&event.getEntity() instanceof net.minecraft.world.entity.projectile.Projectile projectile&&projectile.getOwner()==player)projectile.addTag(GuardCombat.BODY_PROJECTILE_TAG);}
+    private static final String UNCERTAIN_FAULT="Result uncertain: native calls may already have moved items. Observe the inventory and station before acting; do not retry blindly. ";
+    /** A fault in the middle of a workstation, farm or breed tick: the progress report is best effort, since the same fault may break it too. */
+    private JsonObject faultResult(RuntimeException fault,java.util.function.Supplier<JsonObject> detail) {
+        JsonObject result;
+        try{result=detail.get();}catch(RuntimeException ignored){result=null;}
+        if(result==null)result=obj();
+        result.addProperty("code","INTERNAL");result.addProperty("fault",fault.getClass().getSimpleName());
+        if(player!=null)result.add("position",position(player.position()));
+        return result;
+    }
     private void guardFarmland(net.neoforged.neoforge.event.level.BlockEvent.FarmlandTrampleEvent event){if(player!=null&&event.getEntity()==player)event.setCanceled(true);}
     JsonObject call(String method,JsonObject params) {
         reconcile();
@@ -341,7 +355,7 @@ final class ServerController implements ControlSession.Game {
         if(operation.name.equals("craft-item")||operation.name.equals("smelt-item")) {
             WorkstationTask task=WorkstationTask.create(operation,player,session);
             try{task.start();}
-            catch(Protocol.Error e){task.stop();JsonObject result=task.detail();result.addProperty("code",e.code);operation.finish("failed",e.code+": "+e.getMessage(),result);return;}
+            catch(Protocol.Error e){task.stop();JsonObject result=task.detail();result.addProperty("code",e.code);operation.finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
             if(operation.status.equals("running")){station=task;active=operation;}
             return;
         }
@@ -349,7 +363,7 @@ final class ServerController implements ControlSession.Game {
         if(operation.name.equals("produce-item")||operation.name.equals("modify-item")) {
             StationJob task=operation.name.equals("produce-item")?new ProduceTask(operation,player,session):new ModifyTask(operation,player,session,subjectRefs);
             try{task.start();}
-            catch(Protocol.Error e){task.stop();JsonObject result=task.detail();result.addProperty("code",e.code);operation.finish("failed",e.code+": "+e.getMessage(),result);return;}
+            catch(Protocol.Error e){task.stop();JsonObject result=task.detail();result.addProperty("code",e.code);operation.finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
             if(operation.status.equals("running")){job=task;active=operation;}
             return;
         }
@@ -411,21 +425,21 @@ final class ServerController implements ControlSession.Game {
         if(station!=null){
             try{station.tick();}
             catch(Protocol.Error e){JsonObject result=station.detail();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
-            catch(RuntimeException e){finish("failed","Workstation failed: "+e.getClass().getSimpleName());return;}
+            catch(RuntimeException e){finish("unknown",UNCERTAIN_FAULT+"Workstation fault: "+e.getClass().getSimpleName(),faultResult(e,station::detail));return;}
             if(active!=null&&!active.status.equals("running"))stop();
             return;
         }
         if(job!=null){
             try{job.tick();}
             catch(Protocol.Error e){StationJob failed=job;failed.stop();JsonObject result=failed.detail();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
-            catch(RuntimeException e){job.stop();finish("failed","Station task failed: "+e.getClass().getSimpleName());return;}
+            catch(RuntimeException e){StationJob faulted=job;JsonObject result=faultResult(e,faulted::detail);faulted.stop();finish("unknown",UNCERTAIN_FAULT+"Station task fault: "+e.getClass().getSimpleName(),result);return;}
             if(active!=null&&!active.status.equals("running"))stop();
             return;
         }
         if(farm!=null||breed!=null){
             try{if(farm!=null)farm.tick();else breed.tick();}
             catch(Protocol.Error e){JsonObject result=farm!=null?farm.progress():breed.progress();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
-            catch(RuntimeException e){finish("failed","Farm task failed: "+e.getClass().getSimpleName());return;}
+            catch(RuntimeException e){finish("unknown",UNCERTAIN_FAULT+"Farm task fault: "+e.getClass().getSimpleName(),faultResult(e,farm!=null?farm::progress:breed::progress));return;}
             if(active!=null&&!active.status.equals("running"))stop();
             return;
         }
@@ -596,7 +610,7 @@ final class ServerController implements ControlSession.Game {
         if(oldSink!=null) oldSink.closeSink();
         wasConnected=false; lastDimension=null;
     }
-    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);NeoForge.EVENT_BUS.unregister(trampleGuard);NeoForge.EVENT_BUS.unregister(friendlyFireGuard);}}
+    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);NeoForge.EVENT_BUS.unregister(trampleGuard);NeoForge.EVENT_BUS.unregister(friendlyFireGuard);NeoForge.EVENT_BUS.unregister(projectileMark);}}
     private void look(Vec3 target) {
         Vec3 delta=target.subtract(player.getEyePosition());
         float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));

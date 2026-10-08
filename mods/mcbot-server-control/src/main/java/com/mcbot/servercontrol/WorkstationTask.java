@@ -267,7 +267,7 @@ final class WorkstationTask {
         loaded=obj("furnace",pos(pos),"type",BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString(),"input",id(input),"added",put,"queued",queued,
             "output",id(output),"cookSeconds",cookTime/20.0,"readyInSeconds",queued*cookTime/20.0,"fuel",fuelId,"fuelAdded",fuelPut,"coveredByFuel",coveredItems);
         if(taken>0)loaded.addProperty("collectedBefore",taken);
-        collected=taken;
+        collected=0; // the old product is only collectedBefore; this batch counts from nothing
         if(put==0&&queued==0){closeMenu(player);finishSmelt(loaded,"Nothing was put in");return;}
         if(coveredItems<queued&&!lit)loaded.addProperty("fuelShortItems",queued-coveredItems);
         if(coveredItems==0&&!lit){closeMenu(player);loaded.addProperty("code","NO_FUEL");operation.finish("failed","NO_FUEL: the input is in the furnace but there is no fuel for it",withChange(loaded));station=null;return;}

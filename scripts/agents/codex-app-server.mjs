@@ -29,6 +29,7 @@ export const CODEX_SERVER_TOOLS = Object.freeze([
   'interact-block', 'sleep-in-bed', 'wake-up',
   'craft-item', 'smelt-item', 'travel-to', 'remember-place', 'list-places', 'forget-place', 'go-to-place',
   'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals', 'use-bucket',
+  'emote', 'equip-item', 'use-item',
 ]);
 
 // Windows 的 npm .ps1/.cmd shim 不能直接交给 spawn；用 Node 启动官方 npm 入口。

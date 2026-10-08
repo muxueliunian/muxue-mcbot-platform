@@ -79,7 +79,8 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
   for(const tool of ['discover-resources','gather-resources','collect-items','look-around','pillar-up','pillar-down','sleep-in-bed','wake-up','craft-item','smelt-item','travel-to','remember-place','list-places','forget-place','go-to-place','workstation-options','produce-item','modify-item','tend-crops','breed-animals','use-bucket']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['get-survival-state','assess-tool','prepare-item','eat-food','set-reflexes','defend-self']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   assert.equal(CODEX_SERVER_TOOLS.includes('interact-block'),true);
-  assert.equal(CODEX_SERVER_TOOLS.length,58);
+  for(const tool of ['emote','equip-item','use-item']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
+  assert.equal(CODEX_SERVER_TOOLS.length,61);
 });
 
 test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲回合',()=>{
@@ -88,6 +89,16 @@ test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲�
   const prompt=startupPrompt(parseArgs(['--agent','claude','--body','server']),false);
   assert.match(prompt,/不为聊天停止跟随/);
   assert.match(prompt,/不自动 resume/);
+  assert.equal(isWakeEvent({type:'bedtime',text:'天黑了，你在家附近'}),true,'bedtime 要叫醒模型去睡觉');
+});
+
+test('startupPrompt 的 new-task 阶段去掉启动限制，其余内容不变',()=>{
+  const args=parseArgs(['--agent','claude','--body','server']);
+  const startup=startupPrompt(args,false),next=startupPrompt(args,false,'new-task');
+  assert.match(startup,/本轮只确认准备好并结束，不调用游戏工具/);
+  assert.doesNotMatch(next,/不调用游戏工具/);
+  assert.match(next,/这是停止之后的新明确任务；先查询现状，只处理以下新消息。/);
+  assert.equal(next.replace('这是停止之后的新明确任务；先查询现状，只处理以下新消息。','本轮只确认准备好并结束，不调用游戏工具；之后的事件会自动唤醒你。'),startup);
 });
 
 for(const agent of ['claude','codex','dsh'])test(`ServerBody 真驱动+${agent}：journal卡住仍叫停，缓存能力重接且无旧TCP/RCON`,async()=>{
@@ -124,6 +135,9 @@ for(const agent of ['claude','codex','dsh'])test(`ServerBody 真驱动+${agent}�
     fs.appendFileSync(F.events,JSON.stringify({session:'attached',seq:1,timestamp:Date.now(),type:'spawn',text:'already attached'})+'\n');
     await sleep(1700);
     assert.equal(records(agentLog).filter(r=>r.kind==='turn').length,startupTurns,'ServerBody接管事件不额外唤醒空闲模型轮');
+    const beforeBedtime=records(agentLog).filter(r=>r.kind==='turn').length;
+    fs.appendFileSync(F.events,JSON.stringify({session:'attached',seq:2,timestamp:Date.now(),type:'bedtime',text:'天黑了，你在家附近 BEDTIME_MARK'})+'\n');
+    await waitFor(()=>records(agentLog).filter(r=>r.kind==='turn').length>beforeBedtime&&records(agentLog).some(r=>r.kind==='turn'&&r.text.includes('BEDTIME_MARK')),'bedtime 事件唤醒模型');
     const quickStart=Date.now();
     for(const [seq,text] of [[1,'tester: 小克查询位置'],[2,'tester: 小克查询背包']]) fs.appendFileSync(F.events,JSON.stringify({session:'quick',seq,timestamp:Date.now(),type:'chat',text})+'\n');
     await waitFor(()=>records(agentLog).some(r=>r.kind==='turn'&&r.text.includes('小克查询位置')),'prompt fast chat');
@@ -145,6 +159,7 @@ for(const agent of ['claude','codex','dsh'])test(`ServerBody 真驱动+${agent}�
     const firstOwner=records(agentLog).find(r=>r.kind==='connected').controllerId;
     await waitFor(()=>api.state.claims===2&&records(agentLog).some(r=>r.kind==='turn'&&r.text.includes('停止后的新指令')),'new explicit task reconnect');
     const resumed=records(agentLog).find(r=>r.kind==='turn'&&r.text.includes('停止后的新指令'));
+    assert.doesNotMatch(resumed.text,/不调用游戏工具/,'停止后的新任务提示不再要求不调用工具');assert.match(resumed.text,/这是停止之后的新明确任务/);
     assert.match(resumed.text,/收尾期间查询位置/);assert.match(resumed.text,/收尾期间再查询背包/);
     await sleep(650);assert.equal(records(agentLog).filter(r=>r.kind==='turn'&&r.text.includes('收尾期间')).length,1,'收尾期间新消息仅投递一次');
     assert.doesNotMatch(resumed.text,/\[hold\]/);assert.equal(records(agentLog).filter(r=>r.kind==='connected').at(-1).controllerId,firstOwner);

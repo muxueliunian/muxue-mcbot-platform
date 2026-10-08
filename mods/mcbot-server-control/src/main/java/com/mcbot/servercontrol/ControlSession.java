@@ -156,7 +156,10 @@ final class ControlSession {
             if(retired.stream().anyMatch(r->r.sessionId.equals(requestedSession)&&r.leaseId.equals(requestedLease)&&r.stopToken.equals(requestedToken))) {
                 requireNativeStopped();
                 // An already revoked (stopped by chat, died) host may still send its body home, unless another controller took it meanwhile.
-                return obj("stopped",true,"revoked",true,"left",leave&&leaseId==null&&leaveBody());
+                // Only the most recent takeover may send the body home: an older host's late leave must not log out a body a later host drove.
+                Retired last=retired.peekLast();
+                boolean latest=last!=null&&last.sessionId.equals(requestedSession)&&last.leaseId.equals(requestedLease)&&last.stopToken.equals(requestedToken);
+                return obj("stopped",true,"revoked",true,"left",leave&&leaseId==null&&latest&&leaveBody());
             }
             authorize(p);
             if(!stopToken.equals(requestedToken)) throw error("FORBIDDEN","Wrong host stop token");

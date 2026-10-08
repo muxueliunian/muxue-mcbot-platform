@@ -4,10 +4,12 @@ import type { GatherTasks } from './gather-tasks.js';
 import type { CompanionMode } from './companion-mode.js';
 import type { SurvivalTasks } from './survival-tasks.js';
 
+export type StopCurrent = (() => Promise<{ stopped: true }>) & { generation?: () => number };
 /** Shared stop barrier for explicit stops and program preemption; never resumes old intent. */
-export function createActionStop(body: Body, tasks: ContainerTasks, gather: GatherTasks, companion?: CompanionMode, survival?: SurvivalTasks) {
+export function createActionStop(body: Body, tasks: ContainerTasks, gather: GatherTasks, companion?: CompanionMode, survival?: SurvivalTasks): StopCurrent {
   let revision = 0;
-  return async (): Promise<{ stopped: true }> => {
+  /** generation rises as soon as any stop starts, so tool calls admitted earlier can tell they were stopped. */
+  return Object.assign(async (): Promise<{ stopped: true }> => {
     const owner = ++revision;
     const containers = tasks.cancel(), meal = survival?.cancel();
     gather.cancel();
@@ -18,7 +20,7 @@ export function createActionStop(body: Body, tasks: ContainerTasks, gather: Gath
       if (meal !== undefined) survival!.stopped(meal);
     }
     return result;
-  };
+  }, { generation: () => revision });
 }
 /** Reflex hooks around a follow: the server guard owns fighting, and a short reflex pauses the follow instead of discarding it. */
 export function companionReflexHooks(tasks: ContainerTasks, gather: GatherTasks, companion?: CompanionMode) {

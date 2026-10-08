@@ -47,7 +47,7 @@ final class GuardCombatTest {
     static GuardCombat guard(FakeView view){return new GuardCombat(view,GuardCombat.Options.parse(JsonParser.parseString("true")));}
     static final Vec3 COMPANION=new Vec3(-2,64,0);
     static void run() {
-        options();geometry();melee();preference();bow();retreat();creeper();noPath();
+        options();geometry();melee();preference();bow();retreat();creeper();noPath();friendlyFire();
         System.out.println("GuardCombatTest: "+checks+" checks passed");
     }
     private static void options() {
@@ -150,4 +150,12 @@ final class GuardCombatTest {
         flier.foes.add(new GuardCombat.Foe("phantom","phantom","minecraft:phantom",new Vec3(6,70,0),8,8,true,false,false,false,false,true,true));
         check(!sky.tick(COMPANION)&&flier.approaches==0,"no bow: a flying foe out of reach is not chased");
     }
-}
+    private static void friendlyFire() {
+        check(GuardCombat.blocksFriendlyFire(true,false,false,true),"the live body's own hit on a pet or player is cancelled");
+        check(GuardCombat.blocksFriendlyFire(false,true,false,true),"a tagged arrow still in flight after the body logged out (no owner) is cancelled");
+        check(GuardCombat.blocksFriendlyFire(true,true,false,true),"a tagged arrow with a live owner is cancelled");
+        check(!GuardCombat.blocksFriendlyFire(false,false,false,true),"damage from someone else onto a pet is not this guard's business");
+        check(!GuardCombat.blocksFriendlyFire(true,true,false,false),"the body may hurt hostile mobs with its arrows");
+        check(!GuardCombat.blocksFriendlyFire(true,true,true,true),"the body's own damage to itself is not blocked");
+        check(GuardCombat.BODY_PROJECTILE_TAG.equals("mcbot_body_projectile"),"the projectile tag is stable across a restart");
+    }}

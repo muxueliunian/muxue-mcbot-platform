@@ -173,19 +173,19 @@ export class EventJournal {
   markConsumed(seq: number): void {
     if (this.consumedFile) fs.writeFileSync(this.consumedFile, `${this.session} ${seq}`);
   }
-  since(cursor: number, types?: string[]): GameEvent[] {
-    return this.records.filter(event => event.seq > cursor && (!types || types.includes(event.type))
+  since(cursor: number, types?: string[], exclude?: ReadonlySet<number>): GameEvent[] {
+    return this.records.filter(event => event.seq > cursor && (!types || types.includes(event.type)) && !exclude?.has(event.seq)
       && !(['task', 'companion'].includes(event.type) && event.operationId && this.deliveredOperations.has(event.operationId)));
   }
-  async wait(cursor: number, timeoutMs: number, types?: string[]): Promise<GameEvent[]> {
+  async wait(cursor: number, timeoutMs: number, types?: string[], exclude?: ReadonlySet<number>): Promise<GameEvent[]> {
     const deadline = Date.now() + timeoutMs;
-    while (!this.since(cursor, types).length && Date.now() < deadline) {
+    while (!this.since(cursor, types, exclude).length && Date.now() < deadline) {
       await new Promise<void>(resolve => {
         const finish = () => { clearTimeout(timer); this.waiters.delete(finish); resolve(); };
         const timer = setTimeout(finish, Math.max(0, deadline - Date.now()));
         this.waiters.add(finish);
       });
     }
-    return this.since(cursor, types);
+    return this.since(cursor, types, exclude);
   }
 }

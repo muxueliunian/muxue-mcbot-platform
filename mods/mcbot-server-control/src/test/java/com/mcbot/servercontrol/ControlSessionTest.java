@@ -110,6 +110,18 @@ public final class ControlSessionTest {
         stoppedFirst.session.call("revoke",stoppedFirst.host(chatStopped));
         JsonObject later=stoppedFirst.host(chatStopped);later.addProperty("leave",true);
         check(stoppedFirst.session.call("revoke",later).get("left").getAsBoolean()&&!stoppedFirst.game.exists,"a host already stopped by chat still logs its body out on shutdown");
+        Fixture relay=new Fixture();JsonObject hostA=relay.claim("a");
+        relay.session.call("revoke",relay.host(hostA));
+        JsonObject hostB=relay.claim("b");relay.session.call("revoke",relay.host(hostB));
+        JsonObject lateA=relay.host(hostA);lateA.addProperty("leave",true);
+        JsonObject replyA=relay.session.call("revoke",lateA);
+        check(replyA.get("stopped").getAsBoolean()&&replyA.get("revoked").getAsBoolean()&&!replyA.get("left").getAsBoolean()&&relay.game.exists,"an earlier host's late leave gets its receipt but never logs out the body a later host drove");
+        JsonObject lateB=relay.host(hostB);lateB.addProperty("leave",true);
+        check(relay.session.call("revoke",lateB).get("left").getAsBoolean()&&!relay.game.exists,"the most recent host's late leave still logs the body out");
+        Fixture lapsed=new Fixture();JsonObject lapseA=lapsed.claim("a");lapsed.session.call("revoke",lapsed.host(lapseA));
+        JsonObject lapseB=lapsed.claim("b");lapsed.time.set(20000);
+        JsonObject lateLapseA=lapsed.host(lapseA);lateLapseA.addProperty("leave",true);
+        check(!lapsed.session.call("revoke",lateLapseA).get("left").getAsBoolean()&&lapsed.game.exists,"a lapsed later lease still shields the body from the earlier host's leave");
         Fixture expiry=new Fixture();JsonObject expiring=expiry.claim("a");expiry.time.set(9000);
         check(expiry.claim("a").get("ttlMs").getAsLong()==1000,"retransmitted claim exposes remaining TTL");expiry.time.set(10000);
         errorCode("LEASE_LOST",()->expiry.session.call("heartbeat",expiry.auth(expiring)));

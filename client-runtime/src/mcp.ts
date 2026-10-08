@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z, type ZodRawShape } from 'zod';
 import { BodyError, type Body, type ActionArguments, type ActionName, type Observation } from './body.js';
 import { EventJournal } from './events.js';
@@ -7,7 +8,7 @@ import { CompanionMode } from './companion-mode.js';
 import { GatherTasks } from './gather-tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
-import { createActionStop, companionReflexHooks } from './action-stop.js';
+import { createActionStop, companionReflexHooks, type StopCurrent } from './action-stop.js';
 import { PillarTasks } from './pillar.js';
 import { equipItem, interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
@@ -20,20 +21,35 @@ const registryId = z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('Na
 const resourceSelector = z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('A block ID (minecraft:oak_log, biomesoplenty:fir_log) or a block tag (#minecraft:logs, #c:ores, #c:ores/iron, #c:stones)');
 const timeoutMs = z.number().int().min(500).max(120000).optional();
 /** chatFloor: ServerBody claim chatCursor; chat at or before it predates this control and is withheld from the model. */
-export function createMcpServer(body: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: () => Promise<{ stopped: true }>; places?: PlaceBook } = {}): McpServer {
+export function createMcpServer(rawBody: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: StopCurrent; places?: PlaceBook } = {}): McpServer {
   const server = new McpServer({ name: 'mcbot-client-runtime', version: '0.1.0' });
-  const serverObserved = body.hello.backend === 'server';
-  const tasks = options.tasks ?? new ContainerTasks(body, Date.now, operation => events.deliverOperation(operation));
-  const gather = options.gather ?? new GatherTasks(body, events);
-  const companion = body.hello.capabilities.includes('follow-companion') ? options.companion ?? new CompanionMode(body, events, gather) : undefined;
-  const survival = options.survival ?? (['survival-state', 'swap-inventory', 'eat-item'].every(cap => body.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events.recordOperation(operation)) : undefined);
-  const stopCurrent = options.stopCurrent ?? createActionStop(body, tasks, gather, companion, survival);
-  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ...companionReflexHooks(tasks, gather, companion), ordinaryBusy: () => {
+  const serverObserved = rawBody.hello.backend === 'server';
+  const tasks = options.tasks ?? new ContainerTasks(rawBody, Date.now, operation => events.deliverOperation(operation));
+  const gather = options.gather ?? new GatherTasks(rawBody, events);
+  const companion = rawBody.hello.capabilities.includes('follow-companion') ? options.companion ?? new CompanionMode(rawBody, events, gather) : undefined;
+  const survival = options.survival ?? (['survival-state', 'swap-inventory', 'eat-item'].every(cap => rawBody.hello.capabilities.includes(cap)) ? new SurvivalTasks(rawBody, Date.now, operation => events.recordOperation(operation)) : undefined);
+  const stopCurrent = options.stopCurrent ?? createActionStop(rawBody, tasks, gather, companion, survival);
+  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(rawBody, survival, events, { stopCurrent, ...companionReflexHooks(tasks, gather, companion), ordinaryBusy: () => {
     try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); } catch { return true; }
-    return body.isBusy?.() === true || body.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
+    return rawBody.isBusy?.() === true || rawBody.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
   } }) : undefined);
   if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
-  const readTools = new Set(['get-status', 'get-position', 'list-inventory', 'find-entity', 'read-chat', 'get-block', 'get-container', 'get-operation', 'get-companion-mode', 'wait-for-events', 'discover-resources', 'discover-containers', 'look-around', 'get-survival-state', 'assess-tool', 'send-chat', 'stop-action', 'set-reflexes', 'defend-self']);
+  /** A stop (explicit, reflex preemption or reconfiguration) ends every tool call admitted before it: their later body.act submissions are refused. */
+  let localStops = 0;
+  const stopEpoch = () => localStops + (stopCurrent.generation?.() ?? 0);
+  const calls = new AsyncLocalStorage<{ epoch: number }>();
+  const body: Body = new Proxy(rawBody, { get(target, property) {
+    const value = (target as any)[property];
+    if (property === 'act') return (...args: unknown[]) => {
+      const call = calls.getStore();
+      if (call && call.epoch !== stopEpoch()) return Promise.reject(new BodyError('CANCELLED', '已被叫停，这次调用不再提交动作'));
+      return (value as Function).apply(target, args);
+    };
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const readTools = new Set(['get-status', 'get-position', 'list-inventory', 'find-entity', 'read-chat', 'get-block', 'get-container', 'get-operation', 'get-companion-mode', 'wait-for-events', 'discover-resources', 'discover-containers', 'look-around', 'get-survival-state', 'assess-tool', 'send-chat', 'stop-action', 'set-reflexes', 'defend-self', 'workstation-options', 'list-places', 'remember-place', 'forget-place']);
+  /** Calls that only look (survey:true) never authorize action, so they cannot rearm disarmed reflexes. */
+  const readOnlyCall = (name: string, args: { survey?: boolean }) => readTools.has(name) || (['tend-crops', 'breed-animals'].includes(name) && args.survey === true);
   const publicOperation = (operation: import('./body.js').Operation) => {
     if (!operation.result || typeof operation.result !== 'object' || !('targetToken' in operation.result)) return operation;
     const { targetToken: _private, ...result } = operation.result as Record<string, unknown>;
@@ -49,6 +65,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   const serverRevision: ZodRawShape = serverObserved ? { expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).describe('Current container.revision from get-container details:true; reobserve after every mutation.') } : {};
   const serverSlotComponents: ZodRawShape = serverObserved ? { expectedComponents: completeComponents, expectedCarriedComponents: completeComponents } : {};
   let eventCursor = 0;
+  const returnedSeqs = new Set<number>();
   const currentChat = (chat: Observation['chat']) => options.chatFloor === undefined ? chat : chat.filter(line => line.seq > options.chatFloor!);
   const register = (name: string, description: string, shape: ZodRawShape, handler: (args: any) => Promise<unknown>) => {
     server.registerTool(name, { description, inputSchema: shape }, async args => {
@@ -57,8 +74,8 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
           if (!body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体未声明持续陪挖保护，未降级为普通跟随');
           if (args.action !== 'follow' || args.pickup || (args.distance ?? 2.5) > args.mining.radius || new Set(args.mining.blockIds).size !== args.mining.blockIds.length) throw new BodyError('INVALID_ARGUMENT', '陪挖仅用于跟随，不能同时开启独立拾取，跟随距离须在陪挖半径内，矿石列表不能重复');
         }
-        if (!readTools.has(name)) reflexes?.authorizeAction();
-        const result = await handler(args);
+        if (!readOnlyCall(name, args)) reflexes?.authorizeAction();
+        const result = await calls.run({ epoch: stopEpoch() }, () => handler(args));
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
       } catch (error) {
         return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ code: error instanceof BodyError ? error.code : 'ERROR', message: (error as Error).message }) }] };
@@ -85,6 +102,7 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   if (!serverObserved || body.hello.capabilities.includes('open-container')) register('get-container', `Observe the current menu, slots and carried cursor item.${prediction} Use details=true to obtain full guards for atomic debugging.`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => { const container = (await body.observe()).container; return serverObserved && !details ? summarizeContainer(container) : container; });
   register('get-operation', 'Check an operation created by this controller. running is not success; unknown must be checked against the world, never blindly retried.', { operationId: z.string().uuid(), ...(serverObserved ? { details: z.boolean().default(false) } : {}) }, async ({ operationId, details }) => { const op = survival?.operation(operationId) ?? gather.operation(operationId) ?? tasks.operation(operationId) ?? await body.operation(operationId); events.deliverOperation(op); const visible = publicOperation(op); return serverObserved && !details ? summarizeOperation(visible) : visible; });
   register('stop-action', 'Immediately cancel current body actions and discard companion intent while keeping the character online. Does not wait for a model.', {}, async () => {
+    localStops++;
     return reflexes ? reflexes.stop() : stopCurrent();
   });
   if (body.survivalState && body.hello.capabilities.includes('survival-state')) register('get-survival-state', 'Read current server survival facts, native dangers/threats when supported, active defense and effective program policy. Compact by default; details includes guarded inventory. Missing or incomplete threat facts do not establish safety. Reading never rearms stopped behavior.', { details: z.boolean().default(false) }, async args => ({ ...await body.survivalState!(args), ...(reflexes ? { policy: reflexes.read() } : {}) }));
@@ -129,8 +147,15 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
   }, async ({ timeoutSeconds, types, say }) => {
     const sent = say ? await body.act('send-chat', { message: say }) : undefined;
     eventCursor = Math.max(eventCursor, events.deliveredSeq());
-    const found = await events.wait(eventCursor, timeoutSeconds * 1000, types);
-    if (found.length) { eventCursor = found[found.length - 1].seq; events.markConsumed(eventCursor); }
+    for (const seq of returnedSeqs) if (seq <= eventCursor) returnedSeqs.delete(seq);
+    const found = await events.wait(eventCursor, timeoutSeconds * 1000, types, returnedSeqs);
+    if (found.length) {
+      // Only the contiguous delivered prefix is confirmed: an event the types filter skipped stays pending, and matches beyond it are remembered so they are not returned twice.
+      for (const event of found) returnedSeqs.add(event.seq);
+      const before = eventCursor;
+      for (let next = events.since(eventCursor)[0]; next && returnedSeqs.has(next.seq); next = events.since(eventCursor)[0]) { eventCursor = next.seq; returnedSeqs.delete(next.seq); }
+      if (eventCursor > before) events.markConsumed(eventCursor);
+    }
     return { events: found, ...(sent ? { sent } : {}) };
   });
   const actions: Array<{ name: ActionName; description: string; schema: ZodRawShape }> = [

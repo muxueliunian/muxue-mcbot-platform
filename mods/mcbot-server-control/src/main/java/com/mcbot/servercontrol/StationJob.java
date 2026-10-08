@@ -94,6 +94,8 @@ abstract class StationJob {
     }
     protected void succeed(String summary,JsonObject result){closeMenu(player);open=null;operation.finish("succeeded",summary,withChange(result));station=null;}
     protected void fail(String code,String summary,JsonObject result){closeMenu(player);open=null;result.addProperty("code",code);operation.finish("failed",code+": "+summary,withChange(result));station=null;}
+    /** The commit may have happened but its result cannot be confirmed: report unknown (observe, never replay), not failed. */
+    protected void unknown(String code,String summary,JsonObject result){closeMenu(player);open=null;result.addProperty("code",code);operation.finish("unknown",code+": "+summary,withChange(result));station=null;}
     /** Shift-click every listed slot of the open menu back into the inventory; false when something stayed. */
     protected boolean takeBack(AbstractContainerMenu menu,List<Integer> slots) {
         boolean all=true;for(int slot:slots)all&=quickMove(player,menu,slot);return all;

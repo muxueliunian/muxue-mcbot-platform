@@ -128,7 +128,10 @@ final class ModifyTask extends StationJob {
         int got=ItemDescriptions.counts(player.getInventory()).getOrDefault(key,0)-had;
         boolean back=takeBack(menu,inputs());if(!back)result.addProperty("leftInStation",true);
         refs.forget(subjectRef);if(withRef!=null)refs.forget(withRef);
-        if(got<shown.getCount()){fail(menu.getSlot(resultSlot).getItem().isEmpty()?"UNKNOWN_RESULT":"INVENTORY_FULL","The result did not arrive in the inventory",result);return;}
+        if(got<shown.getCount()){
+            if(menu.getSlot(resultSlot).getItem().isEmpty()){unknown("UNKNOWN_RESULT","The result slot emptied but the result did not arrive in the inventory; observe the inventory and do not repeat",result);return;}
+            fail("INVENTORY_FULL","The result did not arrive in the inventory",result);return;
+        }
         result.addProperty("levelsSpent",levelsBefore-player.experienceLevel);
         succeed("Made "+key,result);
     }

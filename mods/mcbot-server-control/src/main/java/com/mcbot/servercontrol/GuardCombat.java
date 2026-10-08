@@ -215,6 +215,12 @@ final class GuardCombat {
         return point.distanceTo(a.add(ab.scale(t)));
     }
 
+    /** Tag put on every projectile the body looses; it outlives the body, so an arrow in flight after a logout stays harmless to players and pets. */
+    static final String BODY_PROJECTILE_TAG="mcbot_body_projectile";
+    /** Cancel damage that comes from the body (its own hit, or a tagged projectile) onto a protected victim other than the body itself. */
+    static boolean blocksFriendlyFire(boolean sourceIsBody,boolean directIsBodyProjectile,boolean victimIsBody,boolean victimProtected) {
+        return (sourceIsBody||directIsBodyProjectile)&&!victimIsBody&&victimProtected;
+    }
     /** Players, anything tamed or named, leashed animals, villagers, golems that are not monsters, allays and armor stands. */
     static boolean protectedEntity(Entity entity) {
         if(entity instanceof Player||entity instanceof ArmorStand||entity instanceof Npc||entity instanceof Allay)return true;

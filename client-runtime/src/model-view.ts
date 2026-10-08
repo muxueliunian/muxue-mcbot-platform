@@ -40,13 +40,19 @@ export function summarizeObservation(state: Observation) {
     details: 'Compact view. Exact guarded snapshots remain available from list-inventory/get-container or get-status details:true.',
   };
 }
+/** storedIn is {storage id: count}; keep at most 16 numeric entries with short keys. */
+function boundedStoredIn(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>).filter(([key, count]) => key.length <= 128 && typeof count === 'number' && Number.isFinite(count)).slice(0, 16) as Array<[string, number]>;
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
 export function summarizeOperation(operation: Operation) {
   const result = operation.result && typeof operation.result === 'object' ? operation.result as Record<string, unknown> : undefined;
   const compact: Record<string, unknown> = {};
   if (result) {
     // Never copy an entire inventory, menu or component payload into every completion wake.
     for (const [key, value] of Object.entries(result)) {
-      if ((typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) && key !== 'components' && key !== 'targetToken') compact[key] = value;
+      if ((typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) && key !== 'components' && key !== 'targetToken' && key !== 'storedIn') compact[key] = value;
     }
     if (result.block) compact.block = result.block;
     // Interaction receipts: the adapter's own facts (e.g. a pot's status) and what was gained are what the model acts on next.
@@ -59,10 +65,14 @@ export function summarizeOperation(operation: Operation) {
     for (const key of ['stations', 'ways', 'subjects'])
       if (Array.isArray(result[key]) && JSON.stringify(result[key]).length <= 6000) compact[key] = result[key];
     if (result.container) compact.container = summarizeContainer(result.container as Container);
+    // Items a carried backpack took: where they went ({storage id: count}), bounded.
+    const storedIn = boundedStoredIn(result.storedIn);
+    if (storedIn) compact.storedIn = storedIn;
     if (Array.isArray(result.inventory)) compact.inventoryChanged = true;
     if (Array.isArray(result.items)) compact.items = result.items.slice(0, 64).map(value => {
       const item = value as Record<string, unknown>;
-      return { item: item.item, count: item.count, variant: item.variant, ...(item.maxStackSize !== undefined ? { maxStackSize: item.maxStackSize } : {}) };
+      const itemStored = boundedStoredIn(item.storedIn);
+      return { item: item.item, count: item.count, variant: item.variant, ...(item.maxStackSize !== undefined ? { maxStackSize: item.maxStackSize } : {}), ...(itemStored ? { storedIn: itemStored } : {}) };
     });
     if (Array.isArray(result.items) && result.items.length > 64) compact.itemsTruncated = true;
   }

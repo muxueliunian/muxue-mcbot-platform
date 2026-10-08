@@ -28,7 +28,7 @@ import static com.mcbot.servercontrol.Protocol.*;
  * take-off block and jumps once vanilla's walking-jump physics put the landing in the middle of that block.
  */
 final class NativeNavigation {
-    static final int MAX_REPLANS=4,MAX_RANGE=48,MAX_VISITED=2048;
+    static final int MAX_REPLANS=4,MAX_RANGE=48,MAX_VISITED=2048,WIDE_VISITED=6000;
     static final double WAYPOINT=0.45,STUCK_MS=2000,FINAL_APPROACH=1.5;
     /**
      * Gap leap, in blocks from the take-off block centre toward the gap: jump from TAKEOFF_FROM on when the
@@ -77,7 +77,10 @@ final class NativeNavigation {
     boolean tick(Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed){
         if(stopped||!session.mayDrive(operation)){stop();return false;}
         conditions(body);if(body.serverLevel()!=dimension)throw error("STALE_TARGET","Navigation dimension changed");
-        if(!damageTolerated&&body.getHealth()<initialHealth)throw error("BLOCKED","Body took damage during navigation; safe movement was not confirmed");
+        if(!damageTolerated&&body.getHealth()<initialHealth){
+            var source=body.getLastDamageSource();
+            throw error("BLOCKED","Body took damage during navigation"+(source!=null?" ("+source.getMsgId()+")":"")+"; safe movement was not confirmed");
+        }
         int tick=body.getServer().getTickCount();if(lastTick==tick)return arrivedThisTick;
         lastTick=tick;arrivedThisTick=false;
         Vec3 feet=body.position();long now=clock();
@@ -226,13 +229,15 @@ final class NativeNavigation {
     }
     private void ensureModel(){
         if(model==null||model.level()!=body.level()){
-            model=new Zombie(EntityType.ZOMBIE,body.level());
+            // A long walk steps down one block at a time: whatever it walks down it can walk back up, so it never
+            // drops into a hole or onto a ledge it cannot leave (a body jumps up one block, vanilla drops three).
+            model=wide?new Zombie(EntityType.ZOMBIE,body.level()){@Override public int getMaxFallDistance(){return 1;}}:new Zombie(EntityType.ZOMBIE,body.level());
             // Routes never go through water (a body already in water swims out first, swim()) or powder snow. Wooden doors are opened by hand on the way (doors()).
             model.setPathfindingMalus(PathType.WATER,-1);model.setPathfindingMalus(PathType.WATER_BORDER,8);
             model.setPathfindingMalus(PathType.DANGER_FIRE,-1);model.setPathfindingMalus(PathType.DAMAGE_FIRE,-1);
             model.setPathfindingMalus(PathType.DANGER_POWDER_SNOW,-1);model.setPathfindingMalus(PathType.POWDER_SNOW,-1);
             model.setPathfindingMalus(PathType.DANGER_OTHER,-1);model.setPathfindingMalus(PathType.DAMAGE_OTHER,-1);
-            evaluator=new RouteEvaluator();evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(true);evaluator.setCanFloat(false);
+            evaluator=new RouteEvaluator();evaluator.leaps=!wide;evaluator.boundedDrops=wide;evaluator.setCanPassDoors(true);evaluator.setCanOpenDoors(true);evaluator.setCanFloat(false);
         }
     }
     /**
@@ -258,8 +263,8 @@ final class NativeNavigation {
         body.stopInput();
         ensureModel();
         model.moveTo(feet.x,feet.y,feet.z,body.getYRot(),0);model.setOnGround(body.onGround());
-        float range=(float)Math.min(MAX_RANGE,feet.distanceTo(destination)+16);
-        visitedLimit=Math.min(MAX_VISITED,(int)(range*16));
+        float range=wide?MAX_RANGE:(float)Math.min(MAX_RANGE,feet.distanceTo(destination)+16);
+        visitedLimit=wide?WIDE_VISITED:Math.min(MAX_VISITED,(int)(range*16));
         finder=new PathFinder(evaluator,visitedLimit);
         evaluator.allowed=allowed;
         BlockPos from=body.blockPosition();int radius=(int)range+8;
@@ -310,6 +315,9 @@ final class NativeNavigation {
     void stop(){stopped=true;route=null;body.stopInput();}
     /** A guarding body fights while it walks: damage is expected, not a sign of an unsafe route. */
     NativeNavigation tolerateDamage(){damageTolerated=true;return this;}
+    /** A leg of a long walk: search the whole range with a larger node budget, to find the way round a cliff or along a river. */
+    NativeNavigation wide(){wide=true;return this;}
+    private boolean wide;
     /** Run instead of walk on ordinary legs (chasing or fleeing a mob); never on a gap leap, which is timed for walking speed. */
     NativeNavigation sprint(){sprint=true;return this;}
     private boolean sprint;
@@ -328,6 +336,15 @@ final class NativeNavigation {
     /** Walking nodes plus one-block gap leaps, minus any node outside the caller's authorized region. */
     private static final class RouteEvaluator extends WalkNodeEvaluator {
         Predicate<Vec3> allowed=p->true;
+        /** Gap leaps; a long walk goes round a gap instead (a missed leap by a cliff is a long fall). */
+        boolean leaps=true;
+        /**
+         * Never step to a BLOCKED node or drop further than the model may fall. Vanilla shares one node per block and
+         * marks the block under a too-long fall BLOCKED (cost -1) even when it is already queued; it then lets a node
+         * with negative cost lead to more of them, cheaper each time. With a one-block fall limit that chained whole
+         * cliffs of two-block drops into a route (a long walk measured in game: 106 down to 95, fall damage).
+         */
+        boolean boundedDrops;
         @Override public int getNeighbors(Node[] output,Node node){
             int count=super.getNeighbors(output,node);
             for(Direction direction:Direction.Plane.HORIZONTAL){
@@ -335,11 +352,15 @@ final class NativeNavigation {
                 int x=node.x+direction.getStepX(),z=node.z+direction.getStepZ();
                 boolean walkable=false; // vanilla already walks (or steps up) there: no leap
                 for(int i=0;i<count;i++)if(output[i].x==x&&output[i].z==z&&output[i].y>=node.y)walkable=true;
-                Node landing=walkable?null:gapLanding(node,direction);
+                Node landing=walkable||!leaps?null:gapLanding(node,direction);
                 if(landing!=null)output[count++]=landing;
             }
             int kept=0;
-            for(int i=0;i<count;i++){Node next=output[i];if(allowed.test(new Vec3(next.x+0.5,next.y,next.z+0.5)))output[kept++]=next;}
+            for(int i=0;i<count;i++){
+                Node next=output[i];
+                if(boundedDrops&&(next.type==PathType.BLOCKED||next.costMalus<0||node.y-next.y>mob.getMaxFallDistance()))continue;
+                if(allowed.test(new Vec3(next.x+0.5,next.y,next.z+0.5)))output[kept++]=next;
+            }
             return kept;
         }
         /**

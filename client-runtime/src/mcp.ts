@@ -161,7 +161,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   const actions: Array<{ name: ActionName; description: string; schema: ZodRawShape }> = [
     { name: 'send-chat', description: `Send normal single-line chat, no slash commands. Success means ${serverObserved ? 'broadcast by the server' : 'handed to the client connection'}.`, schema: { message: z.string().min(1).max(256) } },
     { name: 'look-at', description: 'Turn toward a world position.', schema: xyz },
-    { name: 'move-to-position', description: `Limited ordinary movement on ${navigation}, without teleporting or digging. Obstacles/hazards/timeouts fail. running means still moving; poll get-operation.`, schema: { ...xyz, tolerance: z.number().min(0.25).max(3).optional(), timeoutMs } },
+    { name: 'move-to-position', description: `Limited ordinary movement on ${navigation}, without teleporting or digging. Obstacles/hazards/timeouts fail. running means still moving; poll get-operation.${serverObserved && body.hello.capabilities.includes('travel-to') ? ' A target more than 32 blocks away is walked leg by leg as travel-to (routedVia in the result).' : ''}`, schema: { ...xyz, tolerance: z.number().min(0.25).max(3).optional(), timeoutMs } },
     { name: 'follow-player', description: 'Follow a visible player for a finite time, using ordinary movement. running lasts until stopped, failed or timed out.', schema: { player: z.string().min(1).max(16), distance: z.number().min(1).max(8).optional(), timeoutMs } },
     { name: 'approach-player', description: 'Walk to a named nearby player using bounded safe routes on loaded level ground. expectedEntityId binds the UUID; a moved or missing recipient stops movement. running requires polling get-operation.', schema: { player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/), expectedEntityId: z.string().uuid().optional(), distance: z.number().min(1).max(1.5).optional(), timeoutMs } },
     { name: 'dig-block', description: `Dig exactly one authorized block in reach, after checking its exact state and line of sight. ${serverObserved ? 'Uses current selected tool with native survival timing and protection events; select-slot first when needed.' : 'unknown means server confirmation could not be established.'}`, schema: { ...blockXyz, expectedBlock: registryId, ...serverBlockGuard, timeoutMs } },
@@ -316,16 +316,17 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       return operationResult(await settle(await body.act('breed-animals', args), 15000));
     });
   }
-  if (serverObserved && body.hello.capabilities.includes('travel-to')) {
+  const canTravel = serverObserved && body.hello.capabilities.includes('travel-to');
+  const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {
+    idleBody();
+    if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' });
+    if (extra.say) await body.act('send-chat', { message: extra.say });
+    return operationResult(await body.act('travel-to', { ...target, ...(extra.tolerance !== undefined ? { tolerance: extra.tolerance } : {}), ...(extra.timeoutMs !== undefined ? { timeoutMs: extra.timeoutMs } : {}) }));
+  };
+  if (canTravel) {
     const places = options.places ?? new PlaceBook();
-    const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {
-      idleBody();
-      if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' });
-      if (extra.say) await body.act('send-chat', { message: extra.say });
-      return operationResult(await body.act('travel-to', { ...target, ...(extra.tolerance !== undefined ? { tolerance: extra.tolerance } : {}), ...(extra.timeoutMs !== undefined ? { timeoutMs: extra.timeoutMs } : {}) }));
-    };
     const walk = { tolerance: z.number().min(1).max(8).optional(), timeoutMs: z.number().int().min(5000).max(900000).optional(), say: z.string().min(1).max(256).optional() };
-    register('travel-to', 'Walk a long way (up to 2000 blocks) to a point, leg by leg over the surface; chunks load as the body goes. Opens and closes wooden doors on the way, never digs or swims. Pauses companion mode first (resume it after). running: the result (arrived, or how far it got) arrives as a task event; stop-action ends it.', { x: coordinate, y: coordinate.optional(), z: coordinate, ...walk }, async ({ x, y, z: zz, ...extra }) => travel({ x, z: zz, ...(y !== undefined ? { y } : {}) }, extra));
+    register('travel-to', 'Walk a long way (up to 2000 blocks) to a point, leg by leg over the surface; chunks load as the body goes. Finds the way round cliffs and out of valleys over the ground it can see (about 96 blocks around), swims across rivers and lakes like a player, steps down only one block at a time, opens and closes wooden doors; never digs or builds. Pauses companion mode first (resume it after). running: the result arrives as a task event: arrived, or NO_PATH with how far it got and how close the walkable ground comes (tell the player; a cliff or deep valley may need them); stop-action ends it.', { x: coordinate, y: coordinate.optional(), z: coordinate, ...walk }, async ({ x, y, z: zz, ...extra }) => travel({ x, z: zz, ...(y !== undefined ? { y } : {}) }, extra));
     register('remember-place', 'Remember a named spot in this world for later (home/家, mine entrance, farm). Defaults to where you stand; player uses where that player stands; or give x/y/z. The same name overwrites. A place named home or 家 also makes you get a bedtime event at night when you are near it.', {
       name: z.string().min(1).max(32), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), x: coordinate.optional(), y: coordinate.optional(), z: coordinate.optional(), note: z.string().max(120).optional(),
     }, async ({ name, player, x, y, z: zz, note }) => {
@@ -395,6 +396,12 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   for (const action of actions) {
     if (body.hello.capabilities.includes(action.name)) register(action.name, action.description, action.schema, async args => {
       if (action.name !== 'send-chat') tasks.assertIdle();
+      if (action.name === 'move-to-position' && canTravel) {
+        // Past the 32-block walk (or into chunks not loaded yet): the same leg-by-leg walk as travel-to.
+        const { x, y, z: zz, tolerance } = args as { x: number; y: number; z: number; tolerance?: number };
+        const here = (await body.observe()).position;
+        if (Math.hypot(x - here.x, y - here.y, zz - here.z) > 32) return { ...await travel({ x, y, z: zz }, { tolerance: Math.max(1, tolerance ?? 1) }), routedVia: 'travel-to' };
+      }
       const sent = action.name === 'place-block' ? await placeGuard(args) : args;
       return operationResult(await body.act(action.name, sent as ActionArguments[ActionName]));
     });

@@ -388,7 +388,9 @@ final class ServerController implements ControlSession.Game {
         }
         long timeout=(long)bounded(args,"timeoutMs",operation.name.equals("follow-player")?60_000:15_000,500,120_000);
         if(operation.name.equals("move-to-position")) {
-            Vec3 target=point(args); if(target.distanceTo(player.position())>32) throw error("INVALID_ARGUMENT","Movement limited to 32 blocks");
+            Vec3 target=point(args);
+            if(!player.serverLevel().hasChunkAt(BlockPos.containing(target))) throw error("UNLOADED","Target chunk is not loaded; travel-to walks there leg by leg");
+            if(target.distanceTo(player.position())>32) throw error("OUT_OF_REACH","move-to-position is limited to 32 blocks; travel-to walks further");
             bounded(args,"tolerance",0.7,0.25,3);
         } else {
             String name=string(args,"player"); bounded(args,"distance",2.5,1,8);

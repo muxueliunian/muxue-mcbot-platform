@@ -122,6 +122,18 @@ test('places are remembered per world in the runtime directory and go-to-place w
   assert.deepEqual(await call(c, 'forget-place', { name: 'HOME' }), { removed: true });
 });
 
+test('move-to-position past 32 blocks walks as travel-to; a near one stays an ordinary move', async t => {
+  const { body, acts } = await setup(t);
+  const c = await client(t, body);
+  const far = await call(c, 'move-to-position', { x: 100, y: 70, z: -40, tolerance: 0.5 });
+  assert.equal(far.routedVia, 'travel-to');
+  await call(c, 'move-to-position', { x: 10, y: 64, z: 5 });
+  assert.deepEqual(acts().map(act => [act.name, act.args]), [['travel-to', { x: 100, y: 70, z: -40, tolerance: 1 }], ['move-to-position', { x: 10, y: 64, z: 5 }]]);
+  const { body: old, acts: oldActs } = await setup(t, []);
+  await call(await client(t, old), 'move-to-position', { x: 100, y: 64, z: 0 });
+  assert.deepEqual(oldActs().map(act => act.name), ['move-to-position'], 'without travel-to the server decides');
+});
+
 test('bedtime wakes the model once a night when the body is near home', () => {
   const events = new EventJournal(undefined, 'ServerBot');
   let home = { name: '家', dimension: 'minecraft:overworld', position: { x: 0, y: 64, z: 0 }, savedAt: 0 };

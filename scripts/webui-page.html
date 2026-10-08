@@ -288,6 +288,13 @@ const ago = (t) => { if (!t) return '—'; const s = Math.round((Date.now() - t)
 async function api(p, opt) { const r = await fetch(p, opt); return r.json(); }
 async function post(p, b) { return api(p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }); }
 
+// 直接当文件打开时接口都连不上，提示从 WebUI 打开
+if (location.protocol === 'file:') document.addEventListener('DOMContentLoaded', () => {
+  const b = el('div', 'glass', '这是页面文件的预览，接口连不上。请运行 node scripts/webui.mjs --open，用终端里打印的地址打开。');
+  b.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:99;padding:10px 16px;color:var(--err);font-size:13px';
+  document.body.append(b);
+});
+
 // ---- 点击水波 ----
 document.addEventListener('pointerdown', (e) => {
   const b = e.target.closest('button,.dd-btn,.nav-item');
@@ -522,7 +529,8 @@ function updateEfforts(want) {
   $('#c-effort').value = list.includes(keep) ? keep : (info?.defaultEffort && list.includes(info.defaultEffort) ? info.defaultEffort : list[0]);
   effortDD.sync();
   const h = $('#h-effort');
-  h.textContent = info && !info.efforts.length ? '这个模型不支持调思考强度，设置会被忽略' : info ? info.label + ' 支持 ' + list.join('、') : '越高越聪明，也越慢、越费额度；试玩一般用 low';
+  // CLI 没列出档位（比如 Claude 的 Haiku）不代表不支持，照样给全部档位
+  h.textContent = info && !info.efforts.length ? (models?.source || 'CLI') + ' 没列出 ' + info.label + ' 的档位，这里给出全部' : info ? info.label + ' 支持 ' + list.join('、') : '越高越聪明，也越慢、越费额度；试玩一般用 low';
 }
 // refill：重新填表单（第一次打开、保存或删除之后）；定时刷新只更新列表和状态，不动正在填的表单
 async function loadCfg(refill) {

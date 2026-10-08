@@ -420,6 +420,8 @@ final class SurvivalActions {
         }
         ItemInteractions.requireHeld(emptyHand,interaction,held);
         ItemInteractions.precondition(interaction,player,position,state,held);
+        boolean sneak;
+        try { sneak=interaction.sneaking(); } catch(RuntimeException | LinkageError broken) { throw error("UNSUPPORTED","Interaction adapter failed while declaring its stance"); }
         Direction face=null;
         if(args.has("face")) { face=Direction.byName(string(args,"face"));if(face==null) throw error("INVALID_ARGUMENT","Invalid block face"); }
         BlockHitResult hit=hit(position,face);
@@ -427,8 +429,10 @@ final class SurvivalActions {
         int previous=player.getInventory().selected;
         nativeEffects.sent();select(slot);look(hit.getLocation());guard(operation);
         try {
+            // A sneaking right-click is the same packet with the shift key held, as a player's client sends it.
+            if(sneak) player.setShiftKeyDown(true);
             nativeEffects.sent();player.connection.handleUseItemOn(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND,hit,++sequence));
-        } finally { if(emptyHand) select(previous); }
+        } finally { if(sneak) player.setShiftKeyDown(false);if(emptyHand) select(previous); }
         finishInteraction(operation,interaction,before,slot,position,null);
     }
     /**

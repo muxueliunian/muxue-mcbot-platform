@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createWebServer, listBots, readActivity, requestControl, parseWebArgs } from '../../scripts/webui.mjs';
 import { claudeModelsFrom, codexModelsFrom, dshModelsFrom, createModelCatalog } from '../../scripts/agent-models.mjs';
-import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, launchArgs, createLauncher, accountDirs } from '../../scripts/webui-profiles.mjs';
+import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, inspectMemory, launchArgs, createLauncher, accountDirs } from '../../scripts/webui-profiles.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-webui-'));
 const heartbeat = (dir, name, extra = {}) => fs.writeFileSync(path.join(dir, `companion-${name}.json`),
@@ -161,6 +161,20 @@ test('连接文件：只返回角色、世界和地址，不带令牌；只认�
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('记忆目录：只看有没有小克的人设和玩家档案；留空用仓库的 memory，没有人设就提醒', () => {
+  const dir = tmp();
+  try {
+    assert.match(inspectMemory(dir).error, /没有 xiaoke\/persona\.md/);
+    assert.match(inspectMemory('', 'claude', dir).error, /留空时用的/);
+    fs.mkdirSync(path.join(dir, 'xiaoke'), { recursive: true }); fs.writeFileSync(path.join(dir, 'xiaoke', 'persona.md'), '# 人设');
+    fs.mkdirSync(path.join(dir, 'shared', 'players'), { recursive: true }); fs.writeFileSync(path.join(dir, 'shared', 'players', 'muxue.md'), 'x');
+    const r = inspectMemory(dir);
+    assert.deepEqual([r.ok, r.persona, r.players], [true, true, ['muxue']]); assert.match(r.text, /找到小克的人设.*muxue/);
+    assert.doesNotMatch(JSON.stringify(r), /# 人设/);
+    assert.equal(inspectMemory(dir, 'dsh').persona, false);
+    assert.match(inspectMemory('relative/dir').error, /完整路径/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 test('启动参数：每个值单独一项，带 -Headless；没填的会话选项不传', () => {
   const dir = tmp();
   try {

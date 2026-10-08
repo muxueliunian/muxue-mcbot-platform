@@ -73,7 +73,7 @@ node scripts/webui.mjs --open      # 默认端口 8770，--port 换端口，--ru
 - 只读驱动器写在 `runtime/` 里的文件：心跳 `companion-<名字>.json`（在线、是否在推理）、会话 `session-<名字>.json`（上下文大小、上次请求）、活动记录 `activity-<名字>.jsonl`（游戏事件和聊天、AI 回复、工具调用、每轮开始和结束、驱动器提示，超过 5MB 轮转）。三家 Agent 都走同一个驱动器，记录格式一样。
 - 页面上的「陪伴模式」「最近工具」「最近出错」是从记录里推算的。
 - 「叫停」放 `companion-<名字>.halt` 标记，驱动器按游戏里叫停的流程停下动作和推理，等玩家用名字或昵称给新任务（目前只支持 ServerBody）；「停止托管」放 `companion-<名字>.stop`，和 `stop-companion.ps1` 一样让驱动器退出。WebUI 不碰游戏，关掉它不影响托管。
-- 「配置」页（`scripts/webui-profiles.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。可以配 Agent、账号目录、模型、思考强度、连接文件、昵称、记忆目录、保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)），高级里有 Node 路径和会话选项；每项对应 `start-server-play.ps1` 的同名参数。「保存并启动托管」用 `pwsh start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换 `pwsh`。
+- 「配置」页（`scripts/webui-profiles.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。可以配 Agent、账号目录、模型、思考强度、连接文件、昵称、记忆目录（旁边即时显示有没有 `xiaoke/persona.md`，留空用仓库里的 `memory`，没有人设时说话会像客服）、保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)），高级里有 Node 路径和会话选项；每项对应 `start-server-play.ps1` 的同名参数。「保存并启动托管」用 `pwsh start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换 `pwsh`。
 - 配置页只存路径和参数，不存凭据：Agent 用账号目录里已有的登录；档案里出现 `apiKey` 这类不认识的字段会被拒绝。连接文件只读出角色、世界和地址，控制令牌不回传给网页。能从网页启动托管，就等于拿到令牌的人能用你的账号开托管，所以令牌地址不要发给别人。
 
 ## 单人模式实测

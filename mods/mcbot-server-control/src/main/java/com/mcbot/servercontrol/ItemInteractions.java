@@ -142,7 +142,9 @@ final class ItemInteractions {
         JsonElement blockBefore=before.get("block"),blockAfter=after.get("block");
         if(blockBefore!=null&&blockBefore.isJsonObject()&&blockAfter!=null&&blockAfter.isJsonObject()) {
             JsonObject b=blockBefore.getAsJsonObject(),a=blockAfter.getAsJsonObject();
-            if(!b.get("id").equals(a.get("id"))) unexpected.add("block replaced by "+a.get("id").getAsString());
+            if(!b.get("id").equals(a.get("id"))) {
+                if(!(expected.removesBlock()&&"minecraft:air".equals(a.get("id").getAsString()))) unexpected.add("block replaced by "+a.get("id").getAsString());
+            }
             else changedKeys(member(b,"properties"),member(a,"properties"),expected.properties(),"property",unexpected);
         } else if(!Objects.equals(blockBefore,blockAfter)) unexpected.add("block observation changed shape");
         changedKeys(member(before,"summary"),member(after,"summary"),expected.summaryFields(),"summary",unexpected);

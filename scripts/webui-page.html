@@ -262,7 +262,7 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 <div class="fields">
   <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="服务器的 config/mcbot-server-control/connection.json" required><button type="button" id="c-check">检查</button></div><span class="hint" id="h-conn">游戏里的角色名和世界从这个文件读</span></div>
   <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家可以用昵称叫它</span></div>
-  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空就不带人设"><span class="hint">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
+  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用仓库里的 memory 目录"><span class="hint" id="h-mem">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
 </div>
 <h3>保护玩家</h3>
 <div class="fields">
@@ -584,7 +584,12 @@ function guardGear() { const on = $('#c-guard').checked; for (const l of documen
 function onAgent(effort) {
   const a = cfg.agents[$('#c-agent').value];
   $('#h-account').textContent = a.accountHint; $('#c-nickname').placeholder = a.defaultNickname;
-  models = null; updateEfforts(effort); loadModels(false);
+  models = null; updateEfforts(effort); loadModels(false); checkMemory();
+}
+/** Whether the memory directory holds 小克's persona; without it the agent talks like a help desk (7th playtest). */
+async function checkMemory() {
+  const r = await post('/api/memory', { dir: $('#c-memoryDir').value.trim(), agent: $('#c-agent').value }), h = $('#h-mem');
+  h.textContent = r.ok ? r.text : r.error; h.className = 'hint ' + (r.ok ? (r.persona ? 'okc' : '') : 'errc');
 }
 function collect() {
   const o = { agent: $('#c-agent').value, effort: $('#c-effort').value, credential: { kind: 'login' } };
@@ -638,6 +643,7 @@ $('#c-del').onclick = async () => {
   const r = await post('/api/profiles/delete', { id: cur.id }); if (!r.ok) { say(r.error || '删除失败', true); return; } cur = null; loadCfg(true);
 };
 $('#c-guard').onchange = guardGear;
+$('#c-memoryDir').addEventListener('change', checkMemory);
 $('#c-adv').onclick = () => { const o = $('#c-adv-box').classList.toggle('open'); $('#c-adv').classList.toggle('open', o); store.set('mcbot.adv', o ? '1' : ''); };
 if (store.get('mcbot.adv', '')) { $('#c-adv-box').classList.add('open'); $('#c-adv').classList.add('open'); }
 // 分段选择的滑块

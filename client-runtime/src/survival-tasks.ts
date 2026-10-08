@@ -68,6 +68,17 @@ export function selectFood(state: SurvivalState, policy: FoodPolicy = {}): FoodS
     : { urgent, deficit, reason: candidates.length ? 'WAIT_FOR_DEFICIT' : 'NO_SAFE_FOOD' };
 }
 
+/** Why selectThreat passes over one sensed threat (the same checks, in words for the model), or undefined when it would defend. */
+export function threatRefusal(threat: Threat, policy: DefensePolicy): string | undefined {
+  if (policy.excludedEntityIds.includes(threat.entityId)) return '玩家说过不打它';
+  if (threat.factsAvailable === false || threat.alive !== true) return '读不到它的状态';
+  if (typeof threat.distance !== 'number' || !Number.isFinite(threat.distance) || threat.distance > policy.defenseRadius) return `不在 ${policy.defenseRadius} 格内`;
+  if (threat.lineOfSight !== true) return '中间有东西挡着，没有视线';
+  if (!['hostile', 'attacking_self'].includes(threat.classification) || ['none', 'unknown'].includes(threat.hostilitySource)) return '没确认是敌对的';
+  if (!threat.defenseEligible && threat.explosionPreparing !== true) return threat.defenseReason ?? '不符合自卫条件';
+  return undefined;
+}
+
 /** Both explicit and automatic defense use the same conservative authority facts. */
 export function selectThreat(state: SurvivalState, policy: DefensePolicy, entityId?: string): Threat | undefined {
   if (!state.threats || state.threats.serverTick !== state.serverTick) return;

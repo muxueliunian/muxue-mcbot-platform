@@ -1,6 +1,6 @@
 import { BodyError, type Body, type SurvivalState, type Threat, type Operation } from './body.js';
 import type { EventJournal } from './events.js';
-import { selectFood, selectThreat, type DefensePolicy, type SurvivalTasks } from './survival-tasks.js';
+import { selectFood, selectThreat, threatRefusal, type DefensePolicy, type SurvivalTasks } from './survival-tasks.js';
 
 export interface SurvivalPolicy extends DefensePolicy {
   autoEat: boolean; urgentFood: number; protectedItems: string[];
@@ -136,8 +136,22 @@ export class SurvivalReflexes {
     const key = JSON.stringify(facts);
     if (key !== this.dangerFacts) {
       const previous = this.dangerFacts; this.dangerFacts = key;
-      if (previous !== undefined || facts.lowHealth || facts.threats.length || state.dangers?.onFire || state.dangers?.inLava) this.events.add('survival', `危险状态变化：${key}`);
+      if (previous !== undefined || facts.lowHealth || facts.threats.length || state.dangers?.onFire || state.dangers?.inLava) this.events.add('survival', `危险状态变化：${key}${this.defenseNote(state, facts.threats.map(threat => threat.entityId))}`);
     }
+  }
+  /**
+   * Whether the body will hit back at the threats in the event, and if not why, so the model neither claims a fight
+   * that never happened nor stays silent about one it cannot have. Not part of the event key: it never wakes the model.
+   */
+  private defenseNote(state: SurvivalState, ids: string[]): string {
+    if (!ids.length) return '';
+    if (!this.policy.autoDefend || !this.defenseSupported()) return '；自动自卫没开，不会自己还手';
+    if (this.options.guarding?.()) return '；保护玩家在处理';
+    if (!this.armed) return `；自动自卫已停用（${this.lastReason ?? '原因不明'}），不会自己还手`;
+    if (!state.threats || state.threats.serverTick !== state.serverTick) return '';
+    const parts = ids.map(id => state.threats!.nearby.find(threat => threat.entityId === id)).filter(threat => !!threat)
+      .map(threat => `${threat.type ?? '未知生物'}${threatRefusal(threat, this.policy) ? `不还手（${threatRefusal(threat, this.policy)}）` : '会自动还手'}`);
+    return parts.length ? `；自卫：${parts.join('，')}` : '';
   }
   async defendSelf(entityId?: string): Promise<Operation> {
     this.assertWritable();
@@ -164,7 +178,10 @@ export class SurvivalReflexes {
       if (!threat || operation.status !== 'succeeded' || this.defenseEvent?.entityId !== threat.entityId || Date.now() - this.defenseEvent.at >= 10000) {
         this.events.notifyOperation(operation); this.defenseEvent = { entityId: threat?.entityId ?? entityId, at: Date.now() };
       }
-      if (operation.status !== 'succeeded' && operation.status !== 'cancelled') { this.armed = false; this.revision++; this.phase = 'blocked'; this.lastReason = operation.summary; }
+      // Nothing in reach (NO_THREAT) means nothing was done: no reason to stop defending on our own from now on.
+      const idle = operation.status === 'failed' && (operation.result as { code?: string } | undefined)?.code === 'NO_THREAT';
+      if (idle) this.lastReason = operation.summary;
+      else if (operation.status !== 'succeeded' && operation.status !== 'cancelled') { this.armed = false; this.revision++; this.phase = 'blocked'; this.lastReason = operation.summary; }
       else resumable = operation.status === 'succeeded';
       return operation;
     } catch (error) {

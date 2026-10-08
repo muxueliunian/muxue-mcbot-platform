@@ -156,6 +156,21 @@ export function inspectConnection(file) {
   return { ok: true, username: c.username, worldId: String(c.worldId), endpoint: endpoint.origin };
 }
 
+/**
+ * 记忆目录里有没有小克的人设（xiaoke/persona.md）和哪些玩家档案；只看文件在不在，不读内容。
+ * 留空时和驱动器一样用仓库里的 memory 目录。第七轮试玩就是留空、人设没读到，说话成了客服腔。
+ */
+export function inspectMemory(dir, agent = 'claude', root = ROOT) {
+  if (agent !== 'claude') return { ok: true, persona: false, text: '这个 Agent 用独立试玩身份，不带小克的人设' };
+  let base = '';
+  try { base = dir ? checkPath(dir, '记忆目录') : path.join(root, 'memory'); } catch (e) { return { ok: false, error: e.message }; }
+  const persona = fs.existsSync(path.join(base, 'xiaoke', 'persona.md'));
+  let players = [];
+  try { players = fs.readdirSync(path.join(base, 'shared', 'players')).filter((n) => /^[A-Za-z0-9_]{1,16}\.md$/.test(n)).map((n) => n.slice(0, -3)).sort(); } catch { /* 没有就空着 */ }
+  if (!persona) return { ok: false, persona, players, error: `${dir ? '这个目录' : '留空时用的 ' + base}里没有 xiaoke/persona.md，托管时不带人设，说话会比较像客服；要小克的人设就填有人设的记忆目录` };
+  return { ok: true, persona, players, text: `找到小克的人设${players.length ? '；玩家档案：' + players.join('、') : ''}` };
+}
+
 /** 本机用户目录里像账号目录的文件夹（只列名字，不读里面的东西）。 */
 export function accountDirs(home = os.homedir()) {
   let names = [];

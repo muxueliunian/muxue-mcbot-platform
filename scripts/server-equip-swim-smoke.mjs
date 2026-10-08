@@ -52,8 +52,9 @@ async function pos(name) {
   return { x, y, z };
 }
 const online = async () => (await command('list')).trim().match(/:\s*([^\r\n]*)$/)?.[1].split(',').map(v => v.trim()).filter(Boolean) ?? [];
-const worn = async (slot, id) => new RegExp(`Slot: ${slot}b, id: "${id}"`).test(await command('data get entity Claude Inventory'));
-const carries = async id => new RegExp(`Slot: (\\d|[12]\\d|3[0-5])b, id: "${id}"`).test(await command('data get entity Claude Inventory'));
+// One inventory entry: its Slot, then (components may sit in between) its id, never reaching into the next entry.
+const worn = async (slot, id) => new RegExp(`Slot: ${slot}b,(?:(?!Slot:).)*?id: "${id}"`).test(await command('data get entity Claude Inventory'));
+const carries = async id => new RegExp(`Slot: (\\d|[12]\\d|3[0-5])b,(?:(?!Slot:).)*?id: "${id}"`).test(await command('data get entity Claude Inventory'));
 let client, peer;
 async function until(read, predicate, description, timeout = 30000) {
   const deadline = Date.now() + timeout; let latest;
@@ -113,6 +114,20 @@ try {
   check('铁头盔戴上了', op.status === 'succeeded' && await worn(103, 'minecraft:iron_helmet'), op);
   op = await finished('equip-item', { item: 'minecraft:stone' });
   check('石头不是护甲，被拒绝且没动背包', op.status === 'failed' && /UNSUPPORTED/.test(JSON.stringify(op)) && await carries('minecraft:stone'), op);
+
+  // 1b. 背包（服务器装了精妙背包和它的适配时）：潜行空手捡起放着的背包，背上，再换回钻石胸甲
+  const PICKUP = 'sophisticatedbackpacks:backpack/take';
+  if (status.value.interactions?.includes?.(PICKUP) || (await client.listTools()).tools.find(t => t.name === 'interact-block')?.description.includes(PICKUP)) {
+    await fixture(`setblock 4016 ${Y + 1} 4013 sophisticatedbackpacks:backpack[facing=north]`);
+    await fixture(`tp Claude 4016.5 ${Y + 1} 4015.5 180 30`); await wait(500);
+    op = await finished('interact-block', { x: 4016, y: Y + 1, z: 4013, interaction: PICKUP, emptyHand: true });
+    const gone = /Test passed/.test(await command(`execute if block 4016 ${Y + 1} 4013 air`));
+    check('潜行空手捡起放着的背包', op.status === 'succeeded' && gone && await carries('sophisticatedbackpacks:backpack'), op);
+    op = await finished('equip-item', { item: 'sophisticatedbackpacks:backpack' });
+    check('背包背上了（胸甲那一格），钻石胸甲换回背包', op.status === 'succeeded' && await worn(102, 'sophisticatedbackpacks:backpack') && await carries('minecraft:diamond_chestplate'), op);
+    op = await finished('equip-item', { item: 'minecraft:diamond_chestplate' });
+    check('再换回钻石胸甲，背包回到背包栏', op.status === 'succeeded' && await worn(102, 'minecraft:diamond_chestplate') && await carries('sophisticatedbackpacks:backpack'), op);
+  } else report.skipped = ['背包：服务器没有登记 ' + PICKUP];
 
   // 2. 游泳上岸：从水池中央（水下）走到池外 6 格的岸上
   await fixture(`tp Claude 4007.5 ${Y - 2} 4007.5`); await wait(800);

@@ -9,7 +9,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createModelCatalog } from './agent-models.mjs';
-import { AGENTS, SESSION_OPTIONS, accountDirs, createLauncher, deleteProfile, expandHome, inspectConnection, loadProfiles, saveProfile } from './webui-profiles.mjs';
+import { AGENTS, SESSION_OPTIONS, accountDirs, createLauncher, deleteProfile, expandHome, inspectConnection, inspectMemory, loadProfiles, saveProfile } from './webui-profiles.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
@@ -146,7 +146,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     }
     if (!authed) return send(res, 403, { error: 'unauthorized' });
     if (req.method === 'POST' && !allowedOrigin(req.headers.origin)) return send(res, 403, { error: 'origin not allowed' });
-    if (url.pathname.startsWith('/api/profiles') || url.pathname === '/api/connection' || url.pathname === '/api/models') {
+    if (url.pathname.startsWith('/api/profiles') || url.pathname === '/api/connection' || url.pathname === '/api/memory' || url.pathname === '/api/models') {
       handleProfiles(req, res, url).catch((e) => send(res, 400, { ok: false, error: e.message }));
       return;
     }
@@ -180,6 +180,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     if (p === '/api/connection') {
       return send(res, 200, inspectConnection(expandHome(String(body.file || ''))));
     }
+    if (p === '/api/memory') return send(res, 200, inspectMemory(String(body.dir || ''), String(body.agent || 'claude')));
     if (p === '/api/profiles/save') return send(res, 200, { ok: true, profile: saveProfile(runtime, body) });
     const profile = loadProfiles(runtime).find((x) => x.id === body.id);
     if (!profile) return send(res, 404, { ok: false, error: '没有这份配置' });

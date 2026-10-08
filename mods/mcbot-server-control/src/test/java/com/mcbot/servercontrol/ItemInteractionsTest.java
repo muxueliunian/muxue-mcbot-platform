@@ -80,6 +80,15 @@ final class ItemInteractionsTest {
         JsonObject renamed=stack(0,"example:backpack",1,obj("example:storage_uuid",obj("type","string","value","u"),"minecraft:custom_name",obj("type","string","value","x")));
         JsonObject renamedAfter=snapshot("0",renamed);renamedAfter.addProperty("menu","example:backpack");
         check(ItemInteractions.judge(snapshot("0",pack),renamedAfter,0,opens,(x,y)->true).status().equals("unknown"),"other held components still count beside a declared one");
+        // A placed block picked up into the empty hand (a backpack): the block may become air only when declared
+        var pickUp=new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of("example:backpack"),false,Set.of(),true);
+        JsonObject placed=snapshot("0",stack(0,"minecraft:air",0,obj())),taken=snapshot("0",stack(0,"example:backpack",1,obj()));
+        taken.getAsJsonObject("block").addProperty("id","minecraft:air");
+        check(ItemInteractions.judge(placed,taken,0,pickUp,(x,y)->true).status().equals("succeeded"),"declared block pickup leaves air and the item in hand");
+        check(ItemInteractions.judge(placed,taken,0,takeOut,(x,y)->true).status().equals("unknown"),"block removal without the declaration is unknown");
+        JsonObject swapped=taken.deepCopy();swapped.getAsJsonObject("block").addProperty("id","minecraft:dirt");
+        check(ItemInteractions.judge(placed,swapped,0,pickUp,(x,y)->true).status().equals("unknown"),"a pickup may only leave air, never another block");
+        check(!new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),false,Set.of()).removesBlock(),"older constructors never allow block removal");
         check(new ItemInteraction.Expected(0,0,false,null,null,null,false).heldComponents().isEmpty()&&new ItemInteraction.Expected(0,0,false,Set.of(),Set.of(),Set.of(),false,null).heldComponents().isEmpty(),"seven-argument and null held components mean none");
 
         // Held rules: empty hand is never a fallback

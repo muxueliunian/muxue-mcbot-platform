@@ -175,12 +175,25 @@ test('danger events compare identities and states without each distance/hit waki
   f.state.dangers.air = 299; f.state.dangers.fallDistance = 0.5;
   await f.reflexes.tick(); assert.equal(f.events.since(0, ['survival']).length, count);
   f.state.threats.nearby[0].explosionPreparing = true; await f.reflexes.tick(); assert.equal(f.events.since(0, ['survival']).length, count + 1);
+  assert.match(f.events.since(0, ['survival']).at(-1).text, /自动自卫已停用.*不会自己还手/);
+});
+
+test('danger events say whether the body will hit back and why not, without the note waking the model', async () => {
+  const f = fixture(); f.state.threats.nearby[0].lineOfSight = false;
+  await f.reflexes.tick(); await turn();
+  const events = f.events.since(0, ['survival']);
+  assert.match(events.at(-1).text, /不还手（中间有东西挡着，没有视线）/);
+  assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 0);
+  f.state.serverTick++; f.state.threats.serverTick++; await f.reflexes.tick(); assert.equal(f.events.since(0, ['survival']).length, events.length);
+  f.state.threats.nearby[0].lineOfSight = true; f.state.serverTick++; f.state.threats.serverTick++; await f.reflexes.tick(); await turn();
+  assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 1);
 });
 
 test('explicit defense follows the same task and current excluded UUID policy', async () => {
   const f = fixture(); const op = await f.reflexes.defendSelf(f.state.threats.nearby[0].entityId); assert.equal(op.name, 'defend-self'); assert.equal(op.status, 'succeeded');
   await f.reflexes.configure({ expectedRevision: f.reflexes.read().revision, excludedEntityIds: [f.state.threats.nearby[0].entityId] });
   const refusal = await f.reflexes.defendSelf(f.state.threats.nearby[0].entityId); assert.equal(refusal.status, 'failed'); assert.equal(refusal.result.code, 'NO_THREAT');
+  assert.equal(f.reflexes.read().armed, true, 'a defense that found nothing to hit does not switch automatic defense off');
   assert.equal(f.calls.filter(c => c.name === 'defend-entity').length, 1);
 });
 

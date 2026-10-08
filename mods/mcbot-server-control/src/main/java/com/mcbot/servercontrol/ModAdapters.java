@@ -1,7 +1,9 @@
 package com.mcbot.servercontrol;
 
 import com.google.gson.JsonArray;
+import com.mcbot.servercontrol.api.AppearanceSource;
 import com.mcbot.servercontrol.api.ContainerAdapter;
+import com.mcbot.servercontrol.api.EmoteSource;
 import com.mcbot.servercontrol.api.ItemInteraction;
 import com.mcbot.servercontrol.api.McbotApi;
 import com.mcbot.servercontrol.api.PickupSink;
@@ -34,6 +36,8 @@ final class ModAdapters {
     // Before a server starts only the built-ins are known; installed containers are resolved lazily then.
     private static volatile Loaded loaded=null;
     private static volatile List<WorkstationAdapter> addonWorkstations=List.of();
+    private static volatile List<EmoteSource> emoteSources=List.of();
+    private static volatile List<AppearanceSource> appearances=List.of();
 
     /** Freezes add-on registration and loads JSON interactions from {@code <config>/interactions}. */
     static synchronized Loaded load(Path configDirectory) {
@@ -43,6 +47,9 @@ final class ModAdapters {
         Loaded combined=combine(BUILTIN_CONTAINERS,registered.containers(),BUILTIN_INTERACTIONS,fromJson,registered.interactions(),problems);
         Set<String> ids=new HashSet<>();for(var a:combined.containers())ids.add(safeId(a::id));for(var i:combined.interactions())ids.add(safeId(i::id));
         addonWorkstations=workstations(registered.workstations(),ids,problems);
+        for(var w:addonWorkstations)ids.add(safeId(w::id));
+        emoteSources=installedUnique(registered.emotes(),EmoteSource::id,EmoteSource::installed,ids,problems,"emote source");
+        appearances=installedUnique(registered.appearances(),AppearanceSource::id,AppearanceSource::installed,ids,problems,"appearance source");
         loaded=new Loaded(combined.containers(),combined.interactions(),List.copyOf(problems),installedSinks(registered.pickupSinks()));
         return loaded;
     }
@@ -109,6 +116,20 @@ final class ModAdapters {
         }
         return false;
     }
+
+    /** Installed add-ons with a working, unused id; the rest are reported or silently absent (not installed). */
+    static <T> List<T> installedUnique(List<T> addons,java.util.function.Function<T,String> id,java.util.function.Predicate<T> installed,Set<String> taken,List<String> problems,String kind) {
+        List<T> result=new ArrayList<>();
+        for(T addon:addons) {
+            String name=safeId(()->id.apply(addon));
+            if(name==null) { problems.add(kind+" with a broken id() skipped");continue; }
+            if(!taken.add(name)) { problems.add("duplicate adapter id "+name+" skipped");continue; }
+            if(installed(()->installed.test(addon))) result.add(addon);
+        }
+        return List.copyOf(result);
+    }
+    static List<EmoteSource> emoteSources() {return emoteSources;}
+    static List<AppearanceSource> appearances() {return appearances;}
 
     static List<PickupSink> installedSinks(List<PickupSink> sinks) {
         List<PickupSink> result=new ArrayList<>();

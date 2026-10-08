@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createWebServer, listBots, readActivity, requestControl, parseWebArgs } from '../../scripts/webui.mjs';
 import { claudeModelsFrom, codexModelsFrom, dshModelsFrom, createModelCatalog } from '../../scripts/agent-models.mjs';
-import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, inspectMemory, launchArgs, createLauncher, accountDirs } from '../../scripts/webui-profiles.mjs';
+import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, inspectMemory, launchArgs, createLauncher, accountDirs, appearanceChoices } from '../../scripts/webui-profiles.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-webui-'));
 const heartbeat = (dir, name, extra = {}) => fs.writeFileSync(path.join(dir, `companion-${name}.json`),
@@ -203,6 +203,26 @@ test('保护玩家：默认开、弓和盾都开；开关和数值原样转给�
     assert.throws(() => normalizeProfile(profile(dir, { guardRadius: 20 })), /guardRadius/);
     assert.throws(() => normalizeProfile(profile(dir, { guardLowHealth: 2 })), /guardLowHealth/);
     assert.throws(() => normalizeProfile(profile(dir, { guard: 'yes' })), /guard 要是开或关/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('外观：从服务器 hello 读模型列表，不把令牌给网页；选好的原样转给启动脚本', async () => {
+  const dir = tmp();
+  try {
+    const file = connection(dir);
+    let sent;
+    const fake = async (url, init) => { sent = { url, init }; return { ok: true, status: 200, json: async () => ({ ok: true, result: { appearances: [{ id: 'yes_steve_model:model', choices: ['ds_whale.ysm', 'claude_orange', 'bad"name'] }] } }) }; };
+    const r = await appearanceChoices(file, fake);
+    assert.deepEqual(r, { ok: true, sources: [{ id: 'yes_steve_model:model', choices: ['ds_whale.ysm', 'claude_orange'] }] });
+    assert.equal(sent.url, 'http://127.0.0.1:8767/v2'); assert.equal(sent.init.headers.authorization, 'Bearer secret-token');
+    assert.doesNotMatch(JSON.stringify(r), /secret-token/);
+    assert.match((await appearanceChoices(file, async () => { throw new Error('ECONNREFUSED'); })).error, /没开/);
+    const p = normalizeProfile(profile(dir, { appearance: 'yes_steve_model:model=ds_whale.ysm' }));
+    const a = launchArgs(p, 'S.ps1');
+    assert.equal(a[a.indexOf('-Appearance') + 1], 'yes_steve_model:model=ds_whale.ysm');
+    assert.ok(!launchArgs(normalizeProfile(profile(dir)), 'S.ps1').includes('-Appearance'), '没选就不传');
+    assert.throws(() => normalizeProfile(profile(dir, { appearance: 'ds_whale.ysm' })), /外观/);
+    assert.throws(() => normalizeProfile(profile(dir, { appearance: 'yes_steve_model:model=a"b' })), /外观/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

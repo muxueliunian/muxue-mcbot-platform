@@ -26,6 +26,9 @@ export class EventJournal {
   private asleep?: boolean;
   private home?: () => Place | undefined;
   private bedtimeSent = false;
+  private sunsetSent = false;
+  private weatherSeen?: { raining: boolean; thundering: boolean };
+  private sceneDayTime?: number;
   constructor(runtimeDir?: string, private readonly username?: string, private readonly botPlayers: string[] = [], private readonly attachmentChatCursor?: number) {
     if (!runtimeDir || !username) return;
     fs.mkdirSync(runtimeDir, { recursive: true });
@@ -113,6 +116,28 @@ export class EventJournal {
     this.chatCursor = Math.max(this.chatCursor ?? 0, observation.chatCursor);
     this.ingestSleep(observation);
     this.ingestBedtime(observation);
+    this.ingestScene(observation);
+  }
+  /**
+   * Things a person outdoors would notice and might remark on: the sun setting, rain or thunder starting. Only what the
+   * body can see (sky overhead, Overworld-like dimension); each once, and the first observation is a baseline.
+   */
+  private ingestScene(observation: Observation): void {
+    const weather = observation.weather, dayTime = observation.time?.dayTime;
+    if (!weather?.natural || dayTime === undefined) { this.weatherSeen = undefined; this.sceneDayTime = undefined; return; }
+    const first = this.sceneDayTime === undefined, sunset = dayTime >= 11800 && dayTime < 13000;
+    this.sceneDayTime = dayTime;
+    if (!sunset) this.sunsetSent = dayTime >= 13000 && dayTime < 23000;
+    else if (first) this.sunsetSent = true;
+    else if (!this.sunsetSent) {
+      this.sunsetSent = true;
+      if (weather.sky && !weather.raining && !observation.sleeping) this.add('scene', '太阳快下山了，天边红红的。想说就随口说一句；陪着玩家时可以提醒天快黑了。不用特意做什么。');
+    }
+    const before = this.weatherSeen;
+    this.weatherSeen = { raining: weather.raining, thundering: weather.thundering };
+    if (!before || !weather.sky || observation.sleeping) return;
+    if (weather.thundering && !before.thundering) this.add('scene', '打雷了，雷雨天外面会刷怪。想说就随口说一句，陪着玩家时可以提醒小心。');
+    else if (weather.raining && !before.raining) this.add('scene', '下雨了。想说就随口说一句，不用特意做什么。');
   }
   /** Where home is (a remembered place named home or 家), for the bedtime nudge. */
   useHome(home: () => Place | undefined): void { this.home = home; }

@@ -61,7 +61,7 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
   for(const agent of ['claude','codex','dsh']){
     const args=parseArgs(['--agent',agent,'--body','server','--server-check-seconds','1']);assert.equal(args.serverCheckSeconds,0);
     assert.match(startupPrompt(args,true),/ServerBody/);assert.doesNotMatch(startupPrompt(args,true),/调用 memory-context 读记忆|会自动进服|会被自动下线/);
-    assert.match(startupPrompt(args,true),/components/);assert.match(startupPrompt(args,true),/revision/);assert.match(startupPrompt(args,true),/不自动复活/);
+    assert.match(startupPrompt(args,true),/components/);assert.match(startupPrompt(args,true),/revision/);assert.match(startupPrompt(args,true),/死亡后控制就结束了，不自己重接；下次启动托管时会自动重生/);
     assert.match(startupPrompt(args,true),/discover-containers → fetch-and-give/);assert.match(startupPrompt(args,true),/wholeTree:true/);assert.match(startupPrompt(args,true),/details:true/);
     assert.doesNotMatch(startupPrompt(args,true),/每轮先查询当前状态|完整复制状态与 components/);
     assert.equal(bodySessionScope(args,['--world-id','a','--connection-file','x']).body,'server');
@@ -272,6 +272,13 @@ test('start-server-play PrepareOnly读取v2身份和显式Node路径但不运行
     const text=fs.readFileSync(path.join(generated,'mcp.json'),'utf8');assert.doesNotMatch(text,/prepare-test-secret/);
     const configured=JSON.parse(text).mcpServers.minecraft;assert.equal(path.resolve(configured.command),path.resolve(process.execPath));
     const args=configured.args;assert.equal(args[args.indexOf('--body')+1],'server');assert.equal(args[args.indexOf('--username')+1],unique);assert.equal(args[args.indexOf('--world-id')+1],'prepare-world');
+    assert.ok(!args.includes('--appearance'),'没选外观就不传');
+    const look=spawnSync('pwsh',['-NoProfile','-File',path.join(ROOT,'start-server-play.ps1'),'-ConnectionFile',connectionFile,'-NodePath',process.execPath,'-Appearance','yes_steve_model:model=ds_whale.ysm','-PrepareOnly'],{encoding:'utf8',windowsHide:true});
+    assert.equal(look.status,0,look.stderr);
+    const lookArgs=JSON.parse(fs.readFileSync(path.join(generated,'mcp.json'),'utf8')).mcpServers.minecraft.args;
+    assert.equal(lookArgs[lookArgs.indexOf('--appearance')+1],'yes_steve_model:model=ds_whale.ysm');
+    const bad=spawnSync('pwsh',['-NoProfile','-File',path.join(ROOT,'start-server-play.ps1'),'-ConnectionFile',connectionFile,'-NodePath',process.execPath,'-Appearance','ds_whale.ysm','-PrepareOnly'],{encoding:'utf8',windowsHide:true});
+    assert.notEqual(bad.status,0,'外观格式不对就拒绝');
   }finally{
     assert.equal(path.dirname(path.resolve(generated)),path.resolve(ROOT,'runtime/server-play'));assert.equal(path.basename(generated),unique);fs.rmSync(generated,{recursive:true,force:true});cleanup(dir);
   }

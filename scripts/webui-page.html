@@ -263,6 +263,7 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
   <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="服务器的 config/mcbot-server-control/connection.json" required><button type="button" id="c-check">检查</button></div><span class="hint" id="h-conn">游戏里的角色名和世界从这个文件读</span></div>
   <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家可以用昵称叫它</span></div>
   <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用仓库里的 memory 目录"><span class="hint" id="h-mem">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
+  <div class="f" id="f-appearance" hidden><label for="c-appearance">外观</label><select id="c-appearance" hidden></select><span class="hint" id="h-appearance">服务器上的模型；每次启动托管时套用</span></div>
 </div>
 <h3>保护玩家</h3>
 <div class="fields">
@@ -500,6 +501,26 @@ function opts(select, list, label) { select.replaceChildren(...list.map((v) => {
 const agentDD = dropdown($('#c-agent'));
 const effortDD = dropdown($('#c-effort'), (v) => EFFORT_DESC[v] || '');
 const accountCombo = combo($('#c-configDir'), () => (cfg?.accounts[$('#c-agent').value] || []).map((v) => ({ value: v, label: v })));
+const appearanceDD = dropdown($('#c-appearance'));
+let appearanceWant = '', appearanceSeq = 0;
+const appearanceLabel = (v) => { if (!v) return '不设置（保持服务器上现在的）'; const i = v.indexOf('='); const src = v.slice(0, i); return (src === 'yes_steve_model:model' ? 'YSM：' : src + '：') + v.slice(i + 1); };
+/** Models the server offers (YSM adapter installed); hidden when there are none and nothing was picked before. */
+async function loadAppearances() {
+  const seq = ++appearanceSeq, want = appearanceWant;
+  const file = $('#c-connectionFile').value.trim();
+  const r = file ? await post('/api/appearances', { file }) : { ok: false, error: '' };
+  if (seq !== appearanceSeq) return;
+  const list = [];
+  if (r.ok) for (const s of r.sources) for (const c of s.choices) list.push(s.id + '=' + c);
+  if (want && !list.includes(want)) list.push(want);
+  $('#f-appearance').hidden = !list.length;
+  opts($('#c-appearance'), ['', ...list], appearanceLabel);
+  $('#c-appearance').value = want; appearanceDD.sync();
+  const h = $('#h-appearance');
+  h.textContent = r.ok ? '服务器上的模型；每次启动托管时套用' : '读不到服务器上的模型列表（' + r.error + '），先保留已选的';
+  h.className = 'hint' + (r.ok ? '' : ' errc');
+}
+$('#c-appearance').addEventListener('change', () => { appearanceWant = $('#c-appearance').value; });
 const modelCombo = combo($('#c-model'), () => {
   const list = models?.models?.length ? models.models : (cfg?.agents[$('#c-agent').value]?.fallbackModels || []).map((v) => ({ value: v, label: v, desc: '别名，总是最新版' }));
   return list.map((m) => ({ value: m.value, label: m.label, code: m.value, desc: m.desc }));
@@ -572,6 +593,7 @@ function fill(p) {
   for (const k of NUMS) $('#c-' + k).value = p[k] ?? '';
   for (const k of SWITCHES) $('#c-' + k).checked = p[k] !== false;
   guardGear();
+  appearanceWant = p.appearance || ''; loadAppearances();
   $('#c-agent').value = p.agent || 'claude'; agentDD.sync();
   onAgent(p.effort);
   const h = $('#h-conn');
@@ -597,6 +619,7 @@ function collect() {
   for (const k of TEXTS) o[k] = $('#c-' + k).value.trim();
   for (const k of NUMS) { const v = $('#c-' + k).value.trim(); o[k] = v === '' ? null : Number(v); }
   for (const k of SWITCHES) o[k] = $('#c-' + k).checked;
+  o.appearance = $('#c-appearance').value;
   return o;
 }
 async function save() { const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); say('已保存'); return cur; }
@@ -627,6 +650,7 @@ $('#c-new').onclick = () => { cur = null; fill(blank()); renderProfiles(); rende
 $('#c-check').onclick = async () => {
   const r = await post('/api/connection', { file: $('#c-connectionFile').value.trim() }), h = $('#h-conn');
   h.textContent = r.ok ? '角色 ' + r.username + '，世界 ' + r.worldId + '，控制口 ' + r.endpoint : r.error; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
+  loadAppearances();
 };
 $('#c-launch').onclick = async () => {
   const p = await save(); if (!p) return;

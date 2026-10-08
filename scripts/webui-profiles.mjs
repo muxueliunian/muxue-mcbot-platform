@@ -13,6 +13,8 @@ const FILE = 'webui-profiles.json';
 const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
 const ID_RE = /^[0-9a-f]{8}$/;
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$/;
+// 外观：<来源>=<选项>，比如 yes_steve_model:model=ds_whale.ysm；选项不能带引号、反斜杠和控制字符
+const APPEARANCE_RE = /^[a-z0-9_.-]+:[a-z0-9_/.-]+=[^"\\\u0000-\u001f\u007f]{1,128}$/;
 const LOG_TAIL_BYTES = 4096;
 
 export const AGENTS = Object.freeze({
@@ -47,7 +49,7 @@ export const GUARD_OPTIONS = Object.freeze({
 });
 
 const KEYS = new Set(['id', 'label', 'agent', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'nodePath',
-  'credential', 'updatedAt', ...Object.keys(SESSION_OPTIONS), ...Object.keys(GUARD_OPTIONS)]);
+  'credential', 'updatedAt', 'appearance', ...Object.keys(SESSION_OPTIONS), ...Object.keys(GUARD_OPTIONS)]);
 
 const plainText = (v) => typeof v === 'string' && !/[\u0000-\u001f\u007f]/.test(v);
 export const expandHome = (v) => /^~(?=$|[\\/])/.test(v) ? path.join(os.homedir(), v.slice(1)) : v;
@@ -77,11 +79,13 @@ export function normalizeProfile(input) {
   if (model && !MODEL_RE.test(model)) throw new Error('模型名只能有字母、数字和 . _ - : / [ ]');
   const nickname = String(input.nickname ?? '').trim();
   if (nickname && (!plainText(nickname) || nickname.length > 16 || nickname.startsWith('-'))) throw new Error('昵称最多 16 个字，不能以 - 开头');
+  const appearance = String(input.appearance ?? '').trim();
+  if (appearance && !APPEARANCE_RE.test(appearance)) throw new Error('外观要从服务器给的列表里选');
   const credential = input.credential ?? { kind: 'login' };
   if (credential?.kind !== 'login' || Object.keys(credential).length !== 1) throw new Error('凭据目前只支持「用本机已有登录」，API key 以后再做');
   const out = {
     id: input.id && ID_RE.test(input.id) ? input.id : crypto.randomBytes(4).toString('hex'),
-    label, agent, effort, model, nickname,
+    label, agent, effort, model, nickname, appearance,
     connectionFile: checkPath(input.connectionFile, '连接文件', true),
     configDir: checkPath(input.configDir, '账号目录'),
     memoryDir: checkPath(input.memoryDir, '记忆目录'),
@@ -171,6 +175,29 @@ export function inspectMemory(dir, agent = 'claude', root = ROOT) {
   return { ok: true, persona, players, text: `找到小克的人设${players.length ? '；玩家档案：' + players.join('、') : ''}` };
 }
 
+/**
+ * 服务器提供的外观（比如装了 YSM 适配时的模型列表）：用连接文件里的令牌问一次 hello，只返回外观部分。
+ * 令牌不返回给网页；服务器没开时说一声，网页照样能保存已选的外观。
+ */
+export async function appearanceChoices(file, fetchImpl = fetch) {
+  const conn = inspectConnection(file);
+  if (!conn.ok) return conn;
+  let c;
+  try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return { ok: false, error: '连接文件读不了' }; }
+  let hello;
+  try {
+    const r = await fetchImpl(c.endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3000),
+      headers: { authorization: `Bearer ${c.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ method: 'hello', params: {} }) });
+    const v = await r.json();
+    if (!r.ok || v?.ok !== true) return { ok: false, error: `服务器拒绝了：${v?.error?.code || r.status}` };
+    hello = v.result;
+  } catch { return { ok: false, error: '服务器没开或连不上' }; }
+  const sources = (Array.isArray(hello?.appearances) ? hello.appearances : [])
+    .filter((s) => typeof s?.id === 'string' && Array.isArray(s.choices))
+    .map((s) => ({ id: s.id, choices: s.choices.filter((x) => typeof x === 'string' && APPEARANCE_RE.test(`${s.id}=${x}`)) }));
+  return { ok: true, sources };
+}
+
 /** 本机用户目录里像账号目录的文件夹（只列名字，不读里面的东西）。 */
 export function accountDirs(home = os.homedir()) {
   let names = [];
@@ -187,6 +214,7 @@ export function launchArgs(profile, script = path.join(ROOT, 'start-server-play.
   if (profile.memoryDir) a.push('-MemoryDir', profile.memoryDir);
   if (profile.model) a.push('-Model', profile.model);
   if (profile.nodePath) a.push('-NodePath', profile.nodePath);
+  if (profile.appearance) a.push('-Appearance', profile.appearance);
   for (const [k, o] of Object.entries(SESSION_OPTIONS)) if (profile[k] !== null && profile[k] !== undefined) a.push(o.flag, String(profile[k]));
   for (const [k, o] of Object.entries(GUARD_OPTIONS)) {
     if (o.kind === 'switch') a.push(o.flag, profile[k] === false ? 'off' : 'on');

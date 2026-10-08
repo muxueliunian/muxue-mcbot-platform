@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -68,6 +68,7 @@ final class ServerController implements ControlSession.Game {
     private final Consumer<net.neoforged.neoforge.event.entity.player.SweepAttackEvent> sweepGuard=SurvivalActions::guardNativeSweep;
     private final Consumer<net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent> friendlyFireGuard=this::guardFriendlyFire;
     private final IdleGaze gaze=new IdleGaze();
+    private final BodyEmotes emotes=new BodyEmotes();
     private ServerPlayer speaker;
     private long spokeAt,gazeHold;
     private final ArrayDeque<JsonObject> chat=new ArrayDeque<>();
@@ -170,6 +171,7 @@ final class ServerController implements ControlSession.Game {
         hello.add("interactions",ItemInteractions.ids(interactions));
         hello.add("itemInteractions",ItemInteractions.itemIds(interactions));
         hello.add("adapters",ModAdapters.containerIds());
+        BodyEmotes.describe(hello,server);
         if(validationProtection.enabled()) hello.add("validationFixture",validationProtection.json());
         return hello;
     }
@@ -185,6 +187,8 @@ final class ServerController implements ControlSession.Game {
         JsonObject result=obj("connected",true,"username",config.username(),"dimension",player.serverLevel().dimension().location().toString(),"health",player.getHealth(),"food",player.getFoodData().getFoodLevel(),"position",position(player.position()),"yaw",player.getYRot(),"pitch",player.getXRot(),"inventory",inventory,"selectedSlot",player.getInventory().selected,"entities",entities,"chat",chat,"chatCursor",chatSequence,"container",survival.container(),"source","server-observed");
         result.addProperty("sleeping",player.isSleeping());
         result.add("time",obj("dayTime",player.serverLevel().getDayTime()%24000,"canSleep",player.level().dimensionType().natural()&&!player.level().isDay()));
+        // What the body would notice: the sky overhead (not underground or indoors), rain and thunder, for scene hints.
+        result.add("weather",obj("natural",player.level().dimensionType().natural(),"sky",player.level().canSeeSky(BlockPos.containing(player.getEyePosition())),"raining",player.level().isRaining(),"thundering",player.level().isThundering()));
         JsonObject drops=groundItems();drops.entrySet().forEach(entry->result.add(entry.getKey(),entry.getValue()));
         pickups.observation().entrySet().forEach(entry->result.add(entry.getKey(),entry.getValue()));
         if(params.has("block")) {
@@ -297,6 +301,18 @@ final class ServerController implements ControlSession.Game {
         gazeHold=now()+IdleGaze.HOLD_AFTER_ACTION_MS;
         JsonObject args=operation.args;
         if(player.isSleeping()&&!Set.of("send-chat","wake-up").contains(operation.name)) throw error("SLEEPING","Body is asleep in a bed; call wake-up first");
+        // A looping add-on animation ends when the body does anything else; talking and looking keep it going.
+        if(!Set.of("send-chat","look-at","emote","set-appearance").contains(operation.name)) emotes.stopAnimation();
+        if(operation.name.equals("emote")) {
+            if(operation.args.has("player")&&!operation.args.has("source")) {
+                ServerPlayer facing=findPlayer(string(operation.args,"player"));
+                if(facing==null) throw error("PLAYER_NOT_VISIBLE","Named player is not within 32 blocks in this dimension");
+                look(facing.getEyePosition());
+            }
+            if(emotes.begin(operation,player,now())) { player.stopInput();active=operation; }
+            return;
+        }
+        if(operation.name.equals("set-appearance")) { operation.finish("succeeded","Appearance applied",BodyEmotes.setAppearance(operation.args,player,server)); return; }
         if(operation.name.equals("wake-up")) { operation.finish("succeeded","Body is awake",NativeSleep.wake(player)); return; }
         if(operation.name.equals("sleep-in-bed")) { beginSleep(operation); return; }
         if(survival.handles(operation.name)) { survival.begin(operation);return; }
@@ -377,6 +393,7 @@ final class ServerController implements ControlSession.Game {
         }
         lastDriveTick=server.getTickCount();
         if(survival!=null) survival.tick();
+        emotes.tick(now());
         if(active==null) { body.stopInput(); idleGaze(body); return; }
         if(!session.mayDrive(active)) { stop(); return; }
         if(companion!=null) {
@@ -410,6 +427,11 @@ final class ServerController implements ControlSession.Game {
             catch(Protocol.Error e){JsonObject result=farm!=null?farm.progress():breed.progress();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
             catch(RuntimeException e){finish("failed","Farm task failed: "+e.getClass().getSimpleName());return;}
             if(active!=null&&!active.status.equals("running"))stop();
+            return;
+        }
+        if(emotes.gesturing()){
+            JsonObject result=emotes.gestureResult();
+            if(emotes.tickGesture(body))finish("succeeded","Emote done",result);
             return;
         }
         if(travel!=null){
@@ -555,7 +577,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;pillar=null;if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     @Override public boolean leave() {
         if(player==null)return false;
@@ -563,6 +585,7 @@ final class ServerController implements ControlSession.Game {
     }
     void remove() {
         session.revokeCurrent("Server body removed");
+        emotes.stopAnimation();
         BodyPlayer old=player; VirtualConnection oldSink=sink; player=null; sink=null;survival=null;
         if(old!=null) {
             old.stopInput();

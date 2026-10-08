@@ -25,6 +25,7 @@ async function main(): Promise<void> {
     nickname: { type: 'string' }, 'runtime-dir': { type: 'string', default: 'runtime' }, 'bot-players': { type: 'string', default: '' },
     'memory-dir': { type: 'string' }, 'memory-agent': { type: 'string' }, hosted: { type: 'boolean', default: false },
     guard: { type: 'string', default: 'on' }, 'guard-radius': { type: 'string' }, 'guard-low-health': { type: 'string' }, 'guard-bow': { type: 'string', default: 'on' }, 'guard-shield': { type: 'string', default: 'on' },
+    appearance: { type: 'string' },
   } });
   const guardDefaults = guardSetting(values);
   if (!['client', 'server'].includes(values.body!)) throw new Error('--body 只允许 client 或 server');
@@ -94,6 +95,7 @@ async function main(): Promise<void> {
       } })
       : await ClientBody.connect({ ...shared, connection: await readConnection(values['connection-file']) });
     if (closing) { await body.close(); return; }
+    if (values.appearance) await applyAppearance(body, values.appearance);
     events = new EventJournal(values.hosted ? runtimeDir : undefined, values.username, values['bot-players']!.split(',').filter(Boolean), lease?.chatCursor);
     const places = new PlaceBook(runtimeDir, values['world-id']);
     events.useHome(() => places.home());
@@ -124,6 +126,25 @@ async function main(): Promise<void> {
     await server.connect(transport);
     monitor.start();
   } catch (error) { await shutdown(error as Error); }
+}
+/**
+ * The look the hosting person picked (WebUI → --appearance <source>=<choice>), applied each time control is taken so a
+ * changed pick or a server that forgot it is set again. A failure only warns: the body works the same without it.
+ */
+async function applyAppearance(body: Body, value: string): Promise<void> {
+  const at = value.indexOf('=');
+  const source = value.slice(0, at), choice = value.slice(at + 1);
+  try {
+    if (at <= 0 || !choice) throw new BodyError('INVALID_ARGUMENT', '--appearance 应为 <来源>=<选项>');
+    const offered = body.hello.appearances?.find(s => s.id === source);
+    if (!body.hello.capabilities.includes('set-appearance') || !offered) throw new BodyError('UNSUPPORTED', `服务器没有装外观来源 ${source}`);
+    if (!offered.choices.includes(choice)) throw new BodyError('INVALID_ARGUMENT', `服务器上没有 ${choice}`);
+    const operation = await body.act('set-appearance', { source, choice });
+    if (operation.status !== 'succeeded') throw new BodyError('UNSUPPORTED', operation.summary);
+    process.stderr.write(`外观：${source} ${choice}\n`);
+  } catch (error) {
+    process.stderr.write(`外观没有套用（${(error as BodyError).code || 'ERROR'}）：${(error as Error).message}\n`);
+  }
 }
 /** Companion guard defaults from the command line (the WebUI passes them through start-server-play.ps1). */
 function guardSetting(values: Record<string, unknown>): GuardOptions | false {

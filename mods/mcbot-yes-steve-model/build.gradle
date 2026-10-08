@@ -1,0 +1,41 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.147'
+}
+version = mod_version
+group = 'com.mcbot.addon.yessteve'
+base { archivesName = 'mcbot-yes-steve-model' }
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+repositories { mavenCentral() }
+// Only the MCBOT API is needed at compile time. Yes Steve Model is reached through its own server commands, so this
+// add-on contains none of its code and works with nothing but the commands YSM itself offers to operators.
+def core = file('../mcbot-server-control/build/libs/mcbot-server-control-0.1.0.jar')
+dependencies {
+    compileOnly files(core)
+    testImplementation files(core)
+}
+neoForge {
+    version = project.neo_version
+    parchment { mappingsVersion = '2024.11.17'; minecraftVersion = '1.21.1' }
+    mods { mcbot_yes_steve_model { sourceSet(sourceSets.main) } }
+}
+var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    inputs.property 'mod_version', mod_version
+    expand mod_version: mod_version
+    from 'src/main/templates'
+    into 'build/generated/sources/modMetadata'
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+sourceSets.test.compileClasspath += sourceSets.main.compileClasspath
+sourceSets.test.runtimeClasspath += sourceSets.main.runtimeClasspath
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+tasks.named('compileJava') { doFirst { if (!core.exists()) throw new GradleException('Build mods/mcbot-server-control first (its jar provides the MCBOT API)') } }
+tasks.register('adapterTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.mcbot.addon.yessteve.YsmCommandsTest'
+    jvmArgs '-ea'
+}
+tasks.named('check') { dependsOn 'adapterTest' }
+tasks.named('test') { enabled = false }

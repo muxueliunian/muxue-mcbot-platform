@@ -174,6 +174,32 @@ export function createMcpServer(body: Body, events: EventJournal, options: { cha
     });
     register('wake-up', 'Get out of bed now. Succeeds when already awake.', {}, async () => operationResult(await body.act('wake-up', {})));
   }
+  if (serverObserved && body.hello.capabilities.includes('emote')) {
+    const gestures = body.hello.emotes?.builtin ?? [];
+    const sources = body.hello.emotes?.sources ?? [];
+    const sourceText = sources.length ? ` Add-on animations (pass source): ${sources.map(s => `${s.id}${s.hint ? ` - ${s.hint}` : ''}`).join('; ')}. An add-on animation plays for seconds (default 6) and stops when you do anything else; chatting and looking keep it going.` : '';
+    register('emote', `A small body gesture everyone in the game sees, to react like a person: ${gestures.join(', ')} (wave swings the arm, nod/shake move the head, crouch bobs down and up, spin turns around). player: turn to face that player first. About a second; don't overuse it.${sourceText} While following, you stop for the emote and then keep following.`, {
+      name: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/).describe(sources.length ? 'A gesture name, or the animation name of the source' : 'Gesture name'),
+      ...(sources.length ? { source: z.enum(sources.map(s => s.id) as [string, ...string[]]).optional().describe('Play an add-on animation instead of a built-in gesture') } : {}),
+      player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional().describe('Face this player first (built-in gestures)'),
+      seconds: z.number().min(1).max(30).optional().describe('Add-on animation length'),
+      say: z.string().min(1).max(256).optional(),
+    }, async ({ say, ...args }) => {
+      tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
+      const following = !!companion && ['following', 'waiting'].includes(companion.snapshot().state);
+      if (following) await companion!.request({ action: 'pause' });
+      try {
+        if (say) await body.act('send-chat', { message: say });
+        const operation = await body.act('emote', args as import('./body.js').ActionArguments['emote']);
+        const done = await settle(operation, 3000);
+        // A looping add-on animation would stop as soon as following starts again; let it play out first.
+        if (following && args.source && done.status === 'succeeded') await new Promise(resolve => setTimeout(resolve, (args.seconds ?? 6) * 1000));
+        return operationResult(done);
+      } finally {
+        if (following && companion!.snapshot().state === 'paused') await companion!.request({ action: 'resume' }).catch(() => undefined);
+      }
+    });
+  }
   const idleBody = () => { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); };
   /** Wait a little for an action that usually ends quickly; a longer one stays running and its result arrives as a task event. */
   const settle = async (operation: import('./body.js').Operation, ms: number) => {

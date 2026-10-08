@@ -66,6 +66,8 @@ export interface Observation {
   groundItems?: GroundItem[]; groundItemsTruncated?: boolean; pickupCursor?: number; pickupOldestCursor?: number; pickupReceipts?: PickupReceipt[];
   /** ServerBody: the body is lying in a bed; time of day (0..23999) and whether beds work now. */
   sleeping?: boolean; time?: { dayTime: number; canSleep: boolean };
+  /** ServerBody: whether the sky is overhead (not underground or indoors), and the weather, for scene hints. */
+  weather?: { natural: boolean; sky: boolean; raining: boolean; thundering: boolean };
 }
 export interface BodyHello {
   protocol: 1 | 2; backend?: 'client' | 'server'; instanceId?: string; worldId?: string;
@@ -77,6 +79,10 @@ export interface BodyHello {
   itemInteractions?: string[];
   /** Mod container adapters the server has installed (e.g. ironfurnaces:iron_furnace); informational. */
   adapters?: string[];
+  /** ServerBody: built-in gestures and add-on animation sources for the emote action. */
+  emotes?: { builtin: string[]; sources: Array<{ id: string; hint: string }> };
+  /** ServerBody: looks the hosting person can pick (set-appearance), with the choices the server offers. */
+  appearances?: Array<{ id: string; choices: string[] }>;
 }
 /** What modify-item does to the referenced item; see the MCP tool for the fields each kind takes. */
 export type ModifyAction = { kind: 'enchant' | 'anvil' | 'grind' | 'smith' | 'loom' | 'cartography'; option?: number; with?: string; rename?: string; template?: string; addition?: string; dye?: string; pattern?: string; patternItem?: string };
@@ -118,6 +124,8 @@ export interface ActionArguments {
   'modify-item': { subject: string; action: ModifyAction; preview?: boolean; maxLevels?: number; expect?: string; station?: Position; timeoutMs?: number };
   'tend-crops': { survey?: boolean; player?: string; center?: Position; radius?: number; crops?: string[]; replant?: boolean; plant?: string; boneMeal?: number; till?: number; timeoutMs?: number };
   'use-bucket': Position & { action: 'pour' | 'scoop' };
+  'emote': { name: string; source?: string; player?: string; seconds?: number };
+  'set-appearance': { source: string; choice: string };
   'breed-animals': { animal: string; survey?: boolean; player?: string; center?: Position; radius?: number; food?: string; pairs?: number; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;

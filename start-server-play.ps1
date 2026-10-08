@@ -20,6 +20,8 @@ param(
     [ValidateRange(0, 16)][int]$GuardLowHealth = 0,
     [ValidateSet('on', 'off')][string]$GuardBow = 'on',
     [ValidateSet('on', 'off')][string]$GuardShield = 'on',
+    # 外观：<来源>=<选项>（WebUI 从服务器的列表里选，比如 yes_steve_model:model=ds_whale.ysm），每次接管时套用；留空不改
+    [string]$Appearance = '',
     [switch]$Headless,
     [switch]$PrepareOnly
 )
@@ -65,6 +67,10 @@ if ($GuardRadius -gt 0 -and $GuardRadius -lt 3) { throw 'GuardRadius 应为 3..1
 if ($GuardLowHealth -gt 0 -and $GuardLowHealth -lt 4) { throw 'GuardLowHealth 应为 4..16（0 表示默认）' }
 if ($GuardRadius -gt 0) { $config.mcpServers.minecraft.args += @('--guard-radius', [string]$GuardRadius) }
 if ($GuardLowHealth -gt 0) { $config.mcpServers.minecraft.args += @('--guard-low-health', [string]$GuardLowHealth) }
+if ($Appearance) {
+    if ($Appearance -notmatch '^[a-z0-9_.-]+:[a-z0-9_/.-]+=[^"\\\x00-\x1f\x7f]{1,128}$') { throw 'Appearance 应为 <来源>=<选项>' }
+    $config.mcpServers.minecraft.args += @('--appearance', $Appearance)
+}
 $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configFile -Encoding utf8
 Write-Host "ServerBody 配置：$configFile"
 Write-Host "角色：$Name；世界：$WorldId；Agent：$Agent；思考：$Effort"

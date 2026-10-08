@@ -21,6 +21,8 @@ public final class McbotApi {
     private static final List<ItemInteraction> INTERACTIONS = new ArrayList<>();
     private static final List<PickupSink> PICKUP_SINKS = new ArrayList<>();
     private static final List<WorkstationAdapter> WORKSTATIONS = new ArrayList<>();
+    private static final List<EmoteSource> EMOTES = new ArrayList<>();
+    private static final List<AppearanceSource> APPEARANCES = new ArrayList<>();
     private static final Set<String> IDS = new HashSet<>();
     private static boolean frozen;
 
@@ -51,6 +53,20 @@ public final class McbotApi {
         String id = checkId(Objects.requireNonNull(adapter, "adapter").id());
         Objects.requireNonNull(adapter.template(), "template");
         WORKSTATIONS.add(adapter);
+        IDS.add(id);
+    }
+
+    /** Animations the agent can play with the emote action; see {@link EmoteSource}. */
+    public static synchronized void registerEmotes(EmoteSource source) {
+        String id = checkId(Objects.requireNonNull(source, "source").id());
+        EMOTES.add(source);
+        IDS.add(id);
+    }
+
+    /** Looks the hosting person can pick for the body; see {@link AppearanceSource}. */
+    public static synchronized void registerAppearance(AppearanceSource source) {
+        String id = checkId(Objects.requireNonNull(source, "source").id());
+        APPEARANCES.add(source);
         IDS.add(id);
     }
 
@@ -94,8 +110,8 @@ public final class McbotApi {
     /** Snapshot of what add-ons registered. Internal: called by MCBOT when a server starts. */
     public static synchronized Registered freeze() {
         frozen = true;
-        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS));
+        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS), List.copyOf(EMOTES), List.copyOf(APPEARANCES));
     }
 
-    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations) {}
+    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances) {}
 }

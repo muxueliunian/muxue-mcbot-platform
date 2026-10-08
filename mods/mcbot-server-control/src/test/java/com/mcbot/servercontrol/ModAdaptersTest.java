@@ -168,6 +168,16 @@ final class ModAdaptersTest {
         PickupSink absent=new PickupSink(){public String id(){return "absent:sink";}public boolean installed(){return false;}public Map<String,Integer> stored(net.minecraft.server.level.ServerPlayer p){return Map.of();}};
         PickupSink live=new PickupSink(){public String id(){return "live:sink";}public boolean installed(){return true;}public Map<String,Integer> stored(net.minecraft.server.level.ServerPlayer p){return Map.of();}};
         check(ModAdapters.installedSinks(List.of(broken,absent,live)).equals(List.of(live)),"only installed sinks are used; a throwing installed() counts as absent");
+        // Emote and appearance sources: installed ones with an unused id, the rest absent or reported
+        record Source(String id,boolean on){}
+        List<String> sourceProblems=new ArrayList<>();
+        Set<String> taken=new HashSet<>(Set.of("testmod:crate"));
+        List<Source> kept=ModAdapters.installedUnique(List.of(new Source("ysm:animation",true),new Source("off:animation",false),new Source("ysm:animation",true),new Source("testmod:crate",true)),
+            Source::id,Source::on,taken,sourceProblems,"emote source");
+        check(kept.equals(List.of(new Source("ysm:animation",true))),"only installed sources with a fresh id are used");
+        check(sourceProblems.size()==2&&sourceProblems.stream().allMatch(p->p.startsWith("duplicate adapter id")),"a repeated id or one taken by another adapter is reported");
+        check(ModAdapters.installedUnique(List.of(new Source(null,true)),s->{throw new IllegalStateException();},Source::on,new HashSet<>(),sourceProblems,"appearance source").isEmpty()&&sourceProblems.get(2).contains("broken id"),"a throwing id() is skipped and reported");
+        check(BodyEmotes.GESTURES.containsAll(List.of("wave","nod","shake","crouch","jump","spin")),"built-in gestures are the vanilla ones");
 
         System.out.println("ModAdaptersTest: "+checks+" checks passed (registry, dispatch merge, JSON declarations; no Minecraft launch)");
     }

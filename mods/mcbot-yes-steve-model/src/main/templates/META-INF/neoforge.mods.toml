@@ -1,0 +1,34 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mods]]
+modId="mcbot_yes_steve_model"
+version="${mod_version}"
+displayName="MCBOT × Yes Steve Model"
+authors="muxue"
+description='''Example MCBOT add-on: lets the hosting person pick the bot's Yes Steve Model model, and lets the agent play the model's animations. It only runs YSM's own server commands (ysm model set, ysm play); verified only against Yes Steve Model 2.6.5, other versions stay unsupported. Contains no Yes Steve Model code, models or assets.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_yes_steve_model]]
+modId="mcbot_server_control"
+type="required"
+versionRange="[0.1.0,)"
+ordering="AFTER"
+side="BOTH"
+[[dependencies.mcbot_yes_steve_model]]
+modId="yes_steve_model"
+type="optional"
+versionRange="*"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_yes_steve_model]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_yes_steve_model]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"

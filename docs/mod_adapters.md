@@ -88,6 +88,9 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
 - `WorkstationAdapter`（`api.workstation` 包，10-07 新增，[设计](workstation_design.md)）：工作站。适配者只说明是哪个方块和界面、哪个格子是什么端口（原料、燃料、成品等）、配方从哪来、用哪种执行模板（`GRID_CRAFTER` 合成网格、`PROCESSOR` 放料→等→取的机器；另有 `OPTION_PICKER`、`IN_PLACE`、`MODIFIER`，目前只有原版切石机、酿造台、附魔台等内置适配在用，附属模组登记这三种还不会被 produce-item／modify-item 选中）；走过去、开界面、点格子、等待和核对都由核心做。登记后 `craft-item`、`smelt-item` 会自动用上。原版方块只由内置适配处理，附属模组不能接管。用 `McbotApi.registerWorkstation` 登记。这个包只用原版和 JDK 类型，以后的 Fabric 版也用同一套接口。
 
+- `EmoteSource`（10-08 新增，第 8j 步）：别的 Mod 提供的身体动画，比如玩家模型 Mod 的动作。AI 用 `emote` 工具，`source` 填来源 id、`name` 填动画名。核心先检查名字只含 `[A-Za-z0-9_.:-]`、最长 64，再问 `accepts`；开始时调 `play`，到 `seconds`（默认 6 秒，1～30）、Bot 开始做别的事（说话和转头除外）或下线时调 `stop`，因为模型动画一般会一直循环。`hint()` 是给 AI 看的一句说明，会写进 `emote` 工具的说明里。用 `McbotApi.registerEmotes` 登记。没有来源时，`emote` 只有内置的原版手势：wave、nod、shake、crouch、jump、spin。
+- `AppearanceSource`（10-08 新增）：Bot 的样子，比如玩家模型 Mod 的模型。`choices` 列出服务器上可选的（只读）；托管的人在 WebUI 里选一个，运行端每次接管后用 `set-appearance` 动作套用一次（`apply`）。AI 不能改，MCP 也不发布这个动作。用 `McbotApi.registerAppearance` 登记。
+
 在附属模组的构造函数里登记：
 
 ```java
@@ -106,12 +109,13 @@ public final class McbotExampleCook {
 - 内置的 Iron Furnaces 适配（`IronFurnaceAdapter`）：一个完整的 `ContainerAdapter`，用反射访问 Iron Furnaces，锁定 4.3.2 版。
 - [mcbot-kaleidoscope-cookery](../mods/mcbot-kaleidoscope-cookery/README.md)：独立的附属模组。用森罗厨房的炒锅做菜，包括放油、加料、翻炒、出锅四个交互。
 - [mcbot-sophisticated-backpacks](../mods/mcbot-sophisticated-backpacks/README.md)：独立的附属模组。打开手里的背包（对空使用）、把放在地上的背包当容器（物品处理器型存储）、拾取升级的记账（`PickupSink`）。
+- [mcbot-yes-steve-model](../mods/mcbot-yes-steve-model/README.md)：独立的附属模组。YSM 的模型（`AppearanceSource`）和动画（`EmoteSource`），只执行 YSM 自己的服务端指令。
 
 ## 测试
 
 - 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`IronFurnaceAdapterTest`。
 - 隔离服：`scripts/server-adapter-smoke.mjs`。测试服要临时装上 Iron Furnaces 4.3.2，并在 `interactions/` 里放一份正确的重生锚声明和一份故意写错的声明。
-- 示例附属模组：`scripts/server-cooking-smoke.mjs`（森罗厨房）、`scripts/server-backpack-smoke.mjs`（SB，开服前先运行 `scripts/server-backpack-fixture.mjs`）。
+- 示例附属模组：`scripts/server-cooking-smoke.mjs`（森罗厨房）、`scripts/server-backpack-smoke.mjs`（SB，开服前先运行 `scripts/server-backpack-fixture.mjs`）、`scripts/server-emote-smoke.mjs`（YSM，也测内置手势和场景提示）。
 
 ## 和其他 Mod 一起用时要注意
 

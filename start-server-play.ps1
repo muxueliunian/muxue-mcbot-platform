@@ -8,7 +8,7 @@ param(
     [string]$MemoryDir = '',
     [string]$Model = '',
     [string]$NodePath = '',
-    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')][string]$Effort = 'low',
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$Effort = 'low',
     # 会话选项，-1 表示用驱动器的默认值（见 scripts/companion.mjs 开头的说明）
     [ValidateRange(-1, 1440)][int]$IdleMinutes = -1,
     [ValidateRange(-1, 1440)][int]$ResumeWindowMin = -1,

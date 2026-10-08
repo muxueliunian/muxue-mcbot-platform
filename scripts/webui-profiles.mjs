@@ -17,13 +17,15 @@ const LOG_TAIL_BYTES = 4096;
 
 export const AGENTS = Object.freeze({
   claude: { label: 'Claude Code', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultNickname: '小克',
-    models: ['sonnet', 'opus', 'fable', 'haiku', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001'],
+    // 模型列表从本机 CLI 读（agent-models.mjs）；读不到时只给别名，别名总是指向最新版
+    fallbackModels: ['opus', 'sonnet', 'fable', 'haiku'],
     accountRe: /^\.claude(-[A-Za-z0-9_-]+)?$/, accountHint: 'Claude 的配置目录，比如 ~/.claude-b；留空用默认账号' },
-  codex: { label: 'Codex', efforts: ['low', 'medium', 'high', 'xhigh'], defaultNickname: 'Codex',
-    models: [], accountRe: /^\.codex(-[A-Za-z0-9_-]+)?$/, accountHint: 'CODEX_HOME 目录；留空用默认账号' },
+  // Codex 每个模型支持的档位不同（有的到 ultra），配置页按模型目录收窄；这里是允许的全集
+  codex: { label: 'Codex', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultNickname: 'Codex',
+    fallbackModels: [], accountRe: /^\.codex(-[A-Za-z0-9_-]+)?$/, accountHint: 'CODEX_HOME 目录；留空用默认账号' },
   // dsh 的思考强度只有 low、high、max（medium 会被当成 high）
   dsh: { label: 'dsh（DeepSeek）', efforts: ['low', 'high', 'max'], defaultNickname: 'DeepSeek',
-    models: ['deepseek-v4-flash', 'deepseek-v41-flash'], accountRe: /^\.dsh$/,
+    fallbackModels: [], accountRe: /^\.dsh$/,
     accountHint: 'DSH_HOME；留空用仓库里的 runtime/dsh/home，填 ~/.dsh 用桌面版配好的凭据' },
 });
 

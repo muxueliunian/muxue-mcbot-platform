@@ -1,0 +1,643 @@
+<!doctype html>
+<!-- mcbot 本地控制台。由 webui.mjs 读入后提供；单个文件，不加载外部资源（CSP 只放行内联脚本和样式）。
+     风格参考 NapCat WebUI：渐变背景加模糊光斑、透明侧栏、选中项右移带小胶囊、胶囊顶栏和按钮、半透明毛玻璃卡片。颜色、图标、字样都是自己的。 -->
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mcbot 控制台</title>
+<style>
+:root{color-scheme:light;--primary:#ec6a9c;--primary-strong:#d94f86;--primary-soft:rgba(236,106,156,.12);--primary-pale:#f9c9db;--secondary:#7fb6cb;
+--bg1:#eef1ff;--bg2:#ffffff;--bg3:#fdf0f6;--glass:rgba(255,255,255,.62);--glass-strong:rgba(255,255,255,.85);--pop:rgba(255,255,255,.96);--glass-line:rgba(255,255,255,.75);
+--text:#27272a;--muted:#71717a;--line:rgba(24,24,27,.07);--fill:rgba(24,24,27,.045);--fill-hover:rgba(24,24,27,.075);
+--ok:#17a865;--busy:#e3912b;--off:#a1a1aa;--err:#e0457b;--err-soft:rgba(224,69,123,.12);--ok-soft:rgba(23,168,101,.12);
+--chat:#14a39a;--reply:#6a8cf0;--tool:#a070e6;--event:#8a93a6;--shadow:0 8px 30px rgba(236,106,156,.10);--pop-shadow:0 14px 40px rgba(60,40,80,.16);
+--blob-a:rgba(249,201,219,.55);--blob-b:rgba(176,216,231,.5);--blob-c:rgba(251,207,232,.4);--spring:cubic-bezier(.2,.9,.3,1.2)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--primary:#f0679b;--primary-strong:#f58ab2;--primary-soft:rgba(240,103,155,.18);--primary-pale:#5b2a3f;
+--bg1:#111827;--bg2:#1c2230;--bg3:#111827;--glass:rgba(32,34,44,.58);--glass-strong:rgba(38,40,52,.9);--pop:rgba(36,38,50,.97);--glass-line:rgba(255,255,255,.07);
+--text:#ececf1;--muted:#a1a1aa;--line:rgba(255,255,255,.08);--fill:rgba(255,255,255,.06);--fill-hover:rgba(255,255,255,.1);--err-soft:rgba(224,69,123,.2);--ok-soft:rgba(23,168,101,.2);
+--shadow:0 8px 30px rgba(0,0,0,.25);--pop-shadow:0 14px 40px rgba(0,0,0,.45);--blob-a:rgba(240,103,155,.16);--blob-b:rgba(127,182,203,.13);--blob-c:rgba(160,112,230,.12)}}
+:root[data-theme="dark"]{color-scheme:dark;--primary:#f0679b;--primary-strong:#f58ab2;--primary-soft:rgba(240,103,155,.18);--primary-pale:#5b2a3f;
+--bg1:#111827;--bg2:#1c2230;--bg3:#111827;--glass:rgba(32,34,44,.58);--glass-strong:rgba(38,40,52,.9);--pop:rgba(36,38,50,.97);--glass-line:rgba(255,255,255,.07);
+--text:#ececf1;--muted:#a1a1aa;--line:rgba(255,255,255,.08);--fill:rgba(255,255,255,.06);--fill-hover:rgba(255,255,255,.1);--err-soft:rgba(224,69,123,.2);--ok-soft:rgba(23,168,101,.2);
+--shadow:0 8px 30px rgba(0,0,0,.25);--pop-shadow:0 14px 40px rgba(0,0,0,.45);--blob-a:rgba(240,103,155,.16);--blob-b:rgba(127,182,203,.13);--blob-c:rgba(160,112,230,.12)}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;color:var(--text);background:linear-gradient(135deg,var(--bg1),var(--bg2) 50%,var(--bg3));background-attachment:fixed;
+  font:14px/1.55 Quicksand,Nunito,"Segoe UI Variable Text","Segoe UI",system-ui,"Microsoft YaHei UI","PingFang SC",sans-serif;letter-spacing:.02em;-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:var(--primary-pale);color:var(--text)}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:rgba(236,106,156,.35);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:rgba(236,106,156,.6)}::-webkit-scrollbar-track{background:transparent}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* 背景光斑 */
+.blobs{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.blobs i{position:absolute;border-radius:50%;animation:drift 18s ease-in-out infinite alternate}
+.blobs i:nth-child(1){width:480px;height:480px;left:-120px;top:-140px;background:var(--blob-a);filter:blur(100px)}
+.blobs i:nth-child(2){width:400px;height:400px;right:-10%;top:20%;background:var(--blob-b);filter:blur(90px);animation-delay:-6s}
+.blobs i:nth-child(3){width:560px;height:560px;left:22%;bottom:-18%;background:var(--blob-c);filter:blur(110px);animation-delay:-12s}
+@keyframes drift{to{transform:translate(40px,30px) scale(1.08)}}
+svg.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* 框架：侧栏、顶栏 */
+.shell{display:flex;height:100vh}
+aside{width:16rem;flex:none;display:flex;flex-direction:column;padding:22px 14px 16px;gap:4px}
+.brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;letter-spacing:.04em;padding:0 10px}
+.brand i{width:4px;height:20px;border-radius:4px;background:var(--primary);box-shadow:0 2px 8px var(--primary-soft)}
+.brand-sub{color:var(--muted);font-size:12px;padding:0 10px 0 24px;margin-bottom:18px}
+nav{display:flex;flex-direction:column;gap:6px}
+.nav-item{all:unset;box-sizing:border-box;position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;width:100%;padding:10px 14px;border-radius:14px;cursor:pointer;color:var(--text);transition:background .3s,color .3s,transform .3s var(--spring)}
+.nav-item:hover{background:var(--fill-hover);transform:translateX(4px)}
+.nav-item:active{transform:translateX(4px) scale(.97)}
+.nav-item.on{background:var(--primary-soft);color:var(--primary-strong);font-weight:600;transform:translateX(4px)}
+.nav-item .pip{width:12px;height:6px;border-radius:6px;margin-left:auto;background:var(--primary-pale);transition:all .35s var(--spring)}
+.nav-item.on .pip{background:var(--primary);width:18px;box-shadow:0 0 8px var(--primary-soft)}
+.nav-item.on svg{animation:wiggle .5s ease}
+@keyframes wiggle{30%{transform:rotate(-10deg) scale(1.1)}60%{transform:rotate(6deg)}}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.side-foot .note{color:var(--muted);font-size:12px;text-align:center}
+.scrim{display:none}
+.content{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px 8px 0}
+.topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;height:42px;padding:0 8px 0 10px;border-radius:999px;background:var(--glass);
+  backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);border:1px solid var(--glass-line);box-shadow:0 2px 12px var(--primary-soft)}
+.crumb{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}.crumb b{color:var(--text);font-weight:600;display:inline-block}
+.crumb b.swap{animation:crumb .35s ease}
+@keyframes crumb{from{opacity:0;transform:translateY(-8px)}}
+.topbar .grow{flex:1}.topbar .live{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;padding-right:6px}
+.view{flex:1;min-height:0;padding:14px 8px;overflow:auto}
+.view.enter{animation:enter .4s ease}
+@keyframes enter{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+
+/* 卡片 */
+.glass,.card{background:var(--glass);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid var(--glass-line);border-radius:18px;box-shadow:var(--shadow)}
+.grid{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start}
+#view-monitor .grid{height:100%;align-items:stretch}
+.col{display:flex;flex-direction:column;min-height:0}
+.col-title{font-size:13px;font-weight:600;color:var(--muted);margin:2px 6px 10px;display:flex;align-items:center;gap:8px;min-height:28px}
+.col-title::before{content:"";width:3px;height:12px;border-radius:3px;background:var(--secondary)}
+.col-title button{margin-left:auto}
+.list{display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0;padding:2px 2px 6px}
+.card{padding:14px;cursor:pointer;transition:transform .3s var(--spring),box-shadow .3s,border-color .3s}
+.card:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(236,106,156,.16)}
+.card:active{transform:translateY(-1px) scale(.99)}
+.card.sel{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary),var(--shadow)}
+.card .top{display:flex;align-items:center;gap:8px;font-weight:600}
+.pop-in{animation:popin .45s var(--spring) both;animation-delay:calc(var(--i,0) * 50ms)}
+@keyframes popin{from{opacity:0;transform:translateY(10px) scale(.97)}}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--off);flex:none;transition:background .3s,box-shadow .3s}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.dot.busy{background:var(--busy);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(227,145,43,.45)}100%{box-shadow:0 0 0 8px rgba(227,145,43,0)}}
+.meta{color:var(--muted);font-size:12px;margin-top:4px}
+.btns{display:flex;gap:8px;margin-top:12px}
+.empty{color:var(--muted);padding:28px;text-align:center;animation:popin .4s ease both}
+
+/* 按钮：悬停上浮、按下缩小、点击水波 */
+button{font:inherit;font-size:12px;padding:5px 14px;border-radius:999px;border:0;background:var(--primary-soft);color:var(--primary-strong);cursor:pointer;font-weight:500;
+  position:relative;overflow:hidden;transition:transform .2s var(--spring),box-shadow .25s,background .25s,color .25s,opacity .25s}
+button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 16px var(--primary-soft)}
+button:active:not(:disabled){transform:scale(.95)}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button.danger{background:var(--err-soft);color:var(--err)}
+button.primary{background:var(--primary);color:#fff;box-shadow:0 6px 16px rgba(236,106,156,.35)}
+button.primary:hover:not(:disabled){box-shadow:0 10px 24px rgba(236,106,156,.45)}
+button.ghost{background:transparent;color:var(--muted)}button.ghost:hover:not(:disabled){background:var(--fill-hover);color:var(--text);box-shadow:none}
+button.icon{padding:6px;display:inline-flex;border-radius:50%}
+button.wide{width:100%;padding:8px 14px;font-size:13px}
+button.small{font-size:11px;padding:3px 10px}
+.rip{position:absolute;border-radius:50%;background:currentColor;opacity:.22;transform:scale(0);animation:rip .6s ease-out forwards;pointer-events:none}
+@keyframes rip{to{transform:scale(2.5);opacity:0}}
+button .spin{display:inline-block;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 开关（替代勾选框） */
+input.sw{appearance:none;-webkit-appearance:none;margin:0;width:32px;height:18px;border-radius:999px;background:var(--fill-hover);position:relative;cursor:pointer;flex:none;transition:background .3s}
+input.sw::before{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .35s var(--spring),width .2s}
+input.sw:active::before{width:18px}
+input.sw:checked{background:var(--primary)}
+input.sw:checked::before{transform:translateX(14px)}
+input.sw:checked:active::before{transform:translateX(10px)}
+input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+/* 监控页的记录 */
+.feed{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.bar{display:flex;flex-wrap:wrap;gap:16px;padding:12px 16px;color:var(--muted);font-size:12px;align-items:center;border-bottom:1px solid var(--line)}
+#title{font-size:14px;font-weight:600;color:var(--text)}
+.bar label{display:flex;gap:8px;align-items:center;cursor:pointer;transition:color .2s}.bar label:hover{color:var(--text)}
+#now{background:var(--fill)}#now:empty{display:none}
+#rows{overflow:auto;padding:8px 6px;flex:1;min-height:300px}
+.row{display:grid;grid-template-columns:62px 48px 1fr;gap:10px;padding:4px 10px;align-items:baseline;border-radius:10px;transition:background .2s}
+.row:hover{background:var(--fill)}
+.row.new{animation:rowin .4s ease both}
+@keyframes rowin{from{opacity:0;transform:translateX(-8px)}}
+.t{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+.tag{--c:var(--event);font-size:11px;border-radius:999px;padding:0 6px;text-align:center;color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent);font-weight:600}
+.k-event-chat .tag{--c:var(--chat)}.k-reply .tag{--c:var(--reply)}.k-tool .tag{--c:var(--tool)}.k-error .tag,.k-turn.err .tag{--c:var(--err)}
+.k-turn .tag,.k-turn_start .tag{--c:var(--off)}
+.msg{white-space:pre-wrap;word-break:break-word}.k-tool .msg,.k-info .msg,.k-turn .msg,.k-turn_start .msg{color:var(--muted);font-size:13px}
+.k-reply .msg{font-weight:500}.err .msg{color:var(--err)}
+
+/* 表单：标题在上，两列 */
+.form{padding:22px 24px;max-width:880px}
+.form h2{font-size:17px;margin:0 0 4px}
+.form .sub{color:var(--muted);font-size:12px;margin-bottom:6px}
+.form h3{display:flex;align-items:center;gap:8px;font-size:13px;margin:24px 0 12px;color:var(--primary-strong);font-weight:600}
+.form h3::before{content:"";width:3px;height:12px;border-radius:3px;background:var(--primary)}
+.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+.fields.four{grid-template-columns:repeat(4,minmax(0,1fr))}
+.f{display:flex;flex-direction:column;gap:6px;min-width:0}
+.f.wide{grid-column:1/-1}
+.f>label,.f>.lb{font-size:12.5px;color:var(--muted);font-weight:500;transition:color .2s}
+.f:focus-within>label{color:var(--primary-strong)}
+.f .hint{font-size:12px;color:var(--muted);min-height:1em;transition:color .3s}
+.f .hint button{margin-left:6px;vertical-align:baseline}
+.inp,.f input:not([type=checkbox]):not([type=radio]){font:inherit;padding:9px 12px;border:1px solid transparent;border-radius:12px;background:var(--fill);color:var(--text);width:100%;min-width:0;outline:none;
+  transition:background .2s,border-color .25s,box-shadow .25s}
+.f input:hover{background:var(--fill-hover)}
+.f input:focus{border-color:var(--primary);background:var(--glass-strong);box-shadow:0 0 0 3px var(--primary-soft)}
+.f input::placeholder{color:var(--muted);opacity:.8}
+.inline{display:flex;gap:8px;align-items:center}.inline>input,.inline>.dd{flex:1;min-width:0}
+.okc{color:var(--ok)!important}.errc{color:var(--err)!important}
+
+/* 分段选择 */
+.seg{display:inline-flex;position:relative;background:var(--fill);border-radius:999px;padding:3px;align-self:flex-start;max-width:100%}
+.seg .thumb{position:absolute;top:3px;bottom:3px;border-radius:999px;background:var(--glass-strong);box-shadow:0 2px 8px rgba(0,0,0,.08);transition:left .35s var(--spring),width .35s var(--spring)}
+.seg button{background:transparent;color:var(--muted);z-index:1;font-size:13px;padding:6px 14px;white-space:nowrap}
+.seg button:hover:not(:disabled){box-shadow:none;transform:none;color:var(--text)}
+.seg button.on{color:var(--primary-strong);font-weight:600}
+
+/* 自定义下拉（替代原生 select 和 datalist） */
+.dd{position:relative}
+.dd-btn{all:unset;box-sizing:border-box;position:relative;overflow:hidden;display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border-radius:12px;background:var(--fill);border:1px solid transparent;cursor:pointer;
+  transition:background .2s,border-color .25s,box-shadow .25s}
+.dd-btn:hover{background:var(--fill-hover)}
+.dd.open .dd-btn,.dd-btn:focus-visible{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);background:var(--glass-strong)}
+.dd-btn .val{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-btn .val small{color:var(--muted);margin-left:6px}
+.chev{transition:transform .35s var(--spring);color:var(--muted)}
+.dd.open .chev{transform:rotate(180deg);color:var(--primary)}
+.dd.combo>input{padding-right:34px}
+.dd.combo>.chev{position:absolute;right:10px;top:50%;margin-top:-9px;pointer-events:none}
+.pop{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;background:var(--pop);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--glass-line);border-radius:14px;
+  box-shadow:var(--pop-shadow);padding:6px;max-height:320px;overflow:auto;opacity:0;visibility:hidden;transform:translateY(-8px) scale(.97);transform-origin:top center;pointer-events:none;
+  transition:opacity .18s,transform .25s var(--spring),visibility 0s .25s}
+.dd.open>.pop{opacity:1;visibility:visible;transform:none;pointer-events:auto;transition:opacity .18s,transform .3s var(--spring)}
+.dd.up>.pop{top:auto;bottom:calc(100% + 6px);transform-origin:bottom center;transform:translateY(8px) scale(.97)}
+.dd.up.open>.pop{transform:none}
+.opt{display:flex;flex-direction:column;gap:1px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .15s,transform .2s var(--spring)}
+.dd.open .opt{animation:optin .3s var(--spring) both;animation-delay:calc(var(--i,0) * 22ms)}
+@keyframes optin{from{opacity:0;transform:translateY(-4px)}}
+.opt:hover,.opt.act{background:var(--primary-soft);transform:translateX(3px)}
+.opt .ol{display:flex;align-items:center;gap:8px}
+.opt .ol code{font:11px ui-monospace,Consolas,monospace;color:var(--muted);background:var(--fill);padding:1px 6px;border-radius:6px}
+.opt .od{font-size:12px;color:var(--muted)}
+.opt.sel .ol{color:var(--primary-strong);font-weight:600}
+.opt.sel .ol::after{content:"";margin-left:auto;width:14px;height:8px;border:2px solid var(--primary);border-top:0;border-right:0;transform:translateY(-2px) rotate(-45deg)}
+.opt.off{opacity:.45;cursor:default}
+.pop .note{padding:10px;color:var(--muted);font-size:12px;text-align:center}
+
+/* 折叠区 */
+.adv-btn{margin-top:22px;display:inline-flex;align-items:center;gap:6px}
+.adv-btn .chev{color:inherit}
+.adv-btn.open .chev{transform:rotate(180deg)}
+.collapse{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows .4s var(--spring),opacity .3s}
+.collapse.open{grid-template-rows:1fr;opacity:1}
+.collapse>div{overflow:hidden;min-height:0}
+.collapse>div>.fields{padding:14px 2px 2px}
+
+.actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;align-items:center}
+.actions button{font-size:13px;padding:8px 18px}
+#c-msg{font-size:12px;color:var(--muted);margin-top:10px;min-height:1em}#c-msg.err{color:var(--err)}
+#c-msg.show{animation:rowin .35s ease}
+.status{margin-top:12px;padding:12px 14px;border-radius:14px;background:var(--fill);font-size:13px;animation:popin .4s var(--spring) both}
+.status pre{margin:8px 0 0;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace;color:var(--muted)}
+
+@media (max-width:1100px){.grid{grid-template-columns:1fr}#view-monitor .grid{height:auto}#bots{max-height:40vh}.feed{min-height:60vh}}
+@media (max-width:900px){.fields.four{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:767px){
+  body{overflow:auto}.shell{height:auto;min-height:100vh}
+  aside{position:fixed;inset:0 auto 0 0;z-index:50;background:var(--glass-strong);backdrop-filter:blur(24px) saturate(1.5);-webkit-backdrop-filter:blur(24px) saturate(1.5);
+    border-radius:0 18px 18px 0;box-shadow:0 10px 40px rgba(0,0,0,.18);transform:translateX(-105%);transition:transform .4s var(--spring)}
+  body.nav-open aside{transform:none}
+  .scrim{display:block;position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.2);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .3s}
+  body.nav-open .scrim{opacity:1;pointer-events:auto}
+  .view{overflow:visible;padding-bottom:40px}.form{padding:18px 16px}}
+@media (max-width:640px){.fields,.fields.four{grid-template-columns:1fr}}
+@media (min-width:768px){#menu{display:none}}
+</style></head><body>
+<div class="blobs"><i></i><i></i><i></i></div>
+<div class="shell">
+<aside id="side"><div class="brand"><i></i>mcbot</div><div class="brand-sub">本地控制台</div>
+<nav><button class="nav-item on" id="tab-monitor"><svg class="i" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>监控<span class="pip"></span></button>
+<button class="nav-item" id="tab-config"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>配置<span class="pip"></span></button></nav>
+<div class="side-foot"><button class="wide" id="theme-btn">主题：跟随系统</button><div class="note">只在本机可见</div></div></aside>
+<div class="scrim" id="scrim"></div>
+<div class="content">
+<header class="topbar"><button class="icon ghost" id="menu" aria-label="菜单"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+<span class="crumb">mcbot<span>/</span><b id="crumb">监控</b></span><span class="grow"></span><span class="live" id="live"><span class="dot on"></span>每 1.5 秒刷新</span></header>
+
+<main class="view" id="view-monitor"><div class="grid">
+<div class="col"><div class="col-title">托管中的 Bot</div><section class="list" id="bots"></section></div>
+<section class="feed glass"><div class="bar"><span id="title">选择左边的 Bot</span><span style="flex:1"></span>
+<label><input type="checkbox" class="sw" id="f-tool" checked>工具调用</label><label><input type="checkbox" class="sw" id="f-info">驱动器提示</label><label><input type="checkbox" class="sw" id="f-auto" checked>自动滚动</label></div>
+<div class="bar" id="now"></div><div id="rows"></div></section></div></main>
+
+<section class="view" id="view-config" hidden><div class="grid">
+<div class="col"><div class="col-title">配置档案<button type="button" class="small" id="c-new">＋ 新建</button></div><section class="list" id="profiles"></section></div>
+<form class="form glass" id="cform" autocomplete="off"><h2 id="c-title">新配置</h2><div class="sub">保存后可以一键启动托管；配置存在本机 runtime 目录，不进仓库。</div>
+<h3>基本</h3>
+<div class="fields">
+  <div class="f"><label for="c-label">名称</label><input id="c-label" maxlength="40" required></div>
+  <div class="f"><label for="c-agent">Agent</label><select id="c-agent" hidden></select></div>
+</div>
+<h3>账号</h3>
+<div class="fields">
+  <div class="f"><span class="lb">凭据</span><div class="seg" id="c-cred"><span class="thumb"></span><button type="button" class="on">用本机已有的登录</button><button type="button" disabled title="以后支持">API key（以后支持）</button></div></div>
+  <div class="f"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空用默认账号"><span class="hint" id="h-account"></span></div>
+</div>
+<h3>模型</h3>
+<div class="fields">
+  <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空用 Agent 的默认模型"><span class="hint" id="h-model"></span></div>
+  <div class="f"><label for="c-effort">思考强度</label><select id="c-effort" hidden></select><span class="hint" id="h-effort">越高越聪明，也越慢、越费额度；试玩一般用 low</span></div>
+</div>
+<h3>角色和世界</h3>
+<div class="fields">
+  <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="服务器的 config/mcbot-server-control/connection.json" required><button type="button" id="c-check">检查</button></div><span class="hint" id="h-conn">游戏里的角色名和世界从这个文件读</span></div>
+  <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家可以用昵称叫它</span></div>
+  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空就不带人设"><span class="hint">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
+</div>
+<button type="button" class="ghost adv-btn" id="c-adv">高级选项<svg class="i chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+<div class="collapse" id="c-adv-box"><div>
+<div class="fields">
+  <div class="f wide"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空用 PATH 里的 node"></div>
+</div>
+<div class="fields four">
+  <div class="f"><label for="c-idleMinutes">空闲提醒（分钟）</label><input id="c-idleMinutes" type="number" min="0" max="1440" placeholder="0（关）"><span class="hint">空闲多久提醒 Agent</span></div>
+  <div class="f"><label for="c-resumeWindowMin">接着旧会话（分钟）</label><input id="c-resumeWindowMin" type="number" min="0" max="1440" placeholder="50"><span class="hint">0 表示总是接着</span></div>
+  <div class="f"><label for="c-rotateTokens">换新会话（tokens）</label><input id="c-rotateTokens" type="number" min="0" max="2000000" step="1000" placeholder="200000"><span class="hint">超过就整理记忆换会话；0 不换</span></div>
+  <div class="f"><label for="c-maxRestarts">最多重启（次）</label><input id="c-maxRestarts" type="number" min="0" max="100" placeholder="10"><span class="hint">连续崩溃后不再重启</span></div>
+</div></div></div>
+<div class="actions"><button type="submit">保存</button><button type="button" class="primary" id="c-launch">保存并启动托管</button><button type="button" class="danger" id="c-stop">停止托管</button><span style="flex:1"></span><button type="button" class="ghost" id="c-del">删除这份配置</button></div>
+<div id="c-msg"></div><div class="status" id="c-status" hidden></div>
+</form></div></section>
+</div></div>
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+const CHEV = '<svg class="i chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+const store = { get(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const fmt = (t) => new Date(t).toLocaleTimeString('zh-CN', { hour12: false });
+const ago = (t) => { if (!t) return '—'; const s = Math.round((Date.now() - t) / 1000); return s < 60 ? s + ' 秒前' : s < 3600 ? Math.round(s / 60) + ' 分钟前' : Math.round(s / 3600) + ' 小时前'; };
+async function api(p, opt) { const r = await fetch(p, opt); return r.json(); }
+async function post(p, b) { return api(p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }); }
+
+// ---- 点击水波 ----
+document.addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('button,.dd-btn,.nav-item');
+  if (!b || b.disabled) return;
+  const r = b.getBoundingClientRect(), d = Math.max(r.width, r.height);
+  const s = el('span', 'rip');
+  s.style.cssText = 'width:' + d + 'px;height:' + d + 'px;left:' + (e.clientX - r.left - d / 2) + 'px;top:' + (e.clientY - r.top - d / 2) + 'px';
+  b.append(s); setTimeout(() => s.remove(), 650);
+});
+
+// ---- 按 key 原地更新列表：已有的元素只改内容，新出现的才播入场动画 ----
+function keyed(box, list, key, make, update) {
+  const old = new Map([...box.children].filter((c) => c.dataset.key).map((c) => [c.dataset.key, c]));
+  let i = 0;
+  const nodes = list.map((x) => {
+    const k = key(x); let n = old.get(k);
+    if (!n) { n = make(x); n.dataset.key = k; n.classList.add('pop-in'); n.style.setProperty('--i', i++); n.addEventListener('animationend', () => n.classList.remove('pop-in'), { once: true }); }
+    update(n, x); return n;
+  });
+  const same = nodes.length === box.children.length && nodes.every((n, j) => box.children[j] === n);
+  if (!same) box.replaceChildren(...nodes);
+}
+function emptyIn(box, text) { if (box.firstChild?.className !== 'empty' || box.firstChild.textContent !== text) box.replaceChildren(el('div', 'empty', text)); }
+
+// ---- 下拉组件 ----
+const openDDs = new Set();
+function closeAll(except) { for (const d of [...openDDs]) if (d !== except) d.close(); }
+document.addEventListener('pointerdown', (e) => { for (const d of [...openDDs]) if (!d.root.contains(e.target)) d.close(); });
+function placePop(root) { const r = root.getBoundingClientRect(); root.classList.toggle('up', window.innerHeight - r.bottom < 280 && r.top > 300); }
+function optNode(item, i, selected) {
+  const o = el('div', 'opt' + (selected ? ' sel' : '') + (item.disabled ? ' off' : ''));
+  o.style.setProperty('--i', Math.min(i, 12));
+  const l = el('div', 'ol'); l.append(el('span', '', item.label));
+  if (item.code && item.code !== item.label) l.append(el('code', '', item.code));
+  o.append(l); if (item.desc) o.append(el('div', 'od', item.desc));
+  return o;
+}
+// 原生 select 只当数据存着（隐藏），外面是自己的按钮和弹出列表
+function dropdown(select, describe = () => '') {
+  const root = el('div', 'dd'), btn = el('button', 'dd-btn'), pop = el('div', 'pop');
+  btn.type = 'button'; btn.innerHTML = '<span class="val"></span>' + CHEV;
+  root.append(btn, pop); select.after(root);
+  if (select.id) { btn.id = select.id + '-btn'; const lb = document.querySelector('label[for="' + select.id + '"]'); if (lb) lb.htmlFor = btn.id; }
+  let act = -1;
+  const items = () => [...select.options].map((o) => ({ value: o.value, label: o.textContent, desc: describe(o.value), disabled: o.disabled }));
+  const self = {
+    root,
+    sync() { const o = select.selectedOptions[0]; const v = $('.val', btn); v.textContent = o ? o.textContent : '—'; const d = o && describe(o.value); if (d) v.append(el('small', '', d)); },
+    render() {
+      pop.replaceChildren(...items().map((it, i) => { const n = optNode(it, i, it.value === select.value); if (i === act) n.classList.add('act');
+        n.addEventListener('pointerdown', (e) => e.preventDefault()); n.onclick = () => { if (!it.disabled) self.pick(it.value); }; return n; }));
+    },
+    pick(v) { select.value = v; select.dispatchEvent(new Event('change')); self.sync(); self.close(); btn.focus(); },
+    open() { closeAll(self); act = [...select.options].findIndex((o) => o.value === select.value); self.render(); placePop(root); root.classList.add('open'); openDDs.add(self); },
+    close() { root.classList.remove('open'); openDDs.delete(self); },
+  };
+  btn.onclick = () => (root.classList.contains('open') ? self.close() : self.open());
+  btn.onkeydown = (e) => {
+    const n = select.options.length;
+    if (['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); if (!root.classList.contains('open')) return self.open(); act = (act + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; self.render(); }
+    else if (e.key === 'Enter' && root.classList.contains('open') && act >= 0) { e.preventDefault(); self.pick(select.options[act].value); }
+    else if (e.key === 'Escape') self.close();
+  };
+  new MutationObserver(() => { self.sync(); if (root.classList.contains('open')) self.render(); }).observe(select, { childList: true });
+  select.addEventListener('change', () => self.sync());
+  return self;
+}
+// 可输入的下拉：输入框加候选列表（模型、账号目录）
+function combo(input, getItems, { footer } = {}) {
+  const root = el('div', 'dd combo'), pop = el('div', 'pop');
+  input.replaceWith(root); root.append(input); root.insertAdjacentHTML('beforeend', CHEV); root.append(pop);
+  let act = -1, shown = [];
+  const self = {
+    root,
+    render() {
+      const q = input.value.trim().toLowerCase(), all = getItems();
+      shown = all.some((it) => it.value.toLowerCase() === q) || !q ? all : all.filter((it) => (it.value + ' ' + it.label + ' ' + (it.desc || '')).toLowerCase().includes(q));
+      const nodes = shown.map((it, i) => { const n = optNode(it, i, it.value === input.value.trim()); if (i === act) n.classList.add('act');
+        n.addEventListener('pointerdown', (e) => e.preventDefault()); n.onclick = () => self.pick(it.value); return n; });
+      if (!nodes.length) nodes.push(el('div', 'note', all.length ? '没有匹配的，保存时用你填的名字' : '没有可选项，可以直接填'));
+      const f = footer?.(); if (f) nodes.push(f);
+      pop.replaceChildren(...nodes);
+    },
+    pick(v) { input.value = v; input.dispatchEvent(new Event('change')); self.close(); },
+    open() { closeAll(self); act = -1; self.render(); placePop(root); root.classList.add('open'); openDDs.add(self); },
+    close() { root.classList.remove('open'); openDDs.delete(self); },
+    refresh() { if (root.classList.contains('open')) self.render(); },
+  };
+  input.addEventListener('focus', self.open);
+  input.addEventListener('click', () => root.classList.contains('open') || self.open());
+  input.addEventListener('input', () => { act = -1; if (!root.classList.contains('open')) self.open(); else self.render(); });
+  input.addEventListener('blur', () => setTimeout(() => { if (!root.contains(document.activeElement)) self.close(); }, 120));
+  input.addEventListener('keydown', (e) => {
+    if (!root.classList.contains('open')) return;
+    if (['ArrowDown', 'ArrowUp'].includes(e.key) && shown.length) { e.preventDefault(); act = (act + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length; self.render(); }
+    else if (e.key === 'Enter' && act >= 0) { e.preventDefault(); self.pick(shown[act].value); }
+    else if (e.key === 'Escape') self.close();
+  });
+  return self;
+}
+
+// ---- 监控页 ----
+let bots = [], sel = store.get('mcbot.sel', ''), offset = -1, items = [];
+const seenRows = new WeakSet();
+const TAG = { event: '事件', reply: '回复', tool: '工具', turn: '本轮', turn_start: '开始', info: '提示', error: '出错', halt: '叫停' };
+function botCard(b) {
+  const d = el('div', 'card');
+  d.innerHTML = '<div class="top"><span class="dot"></span><span class="nm"></span></div><div class="meta"></div><div class="meta"></div><div class="btns"><button class="halt">叫停</button><button class="danger stop">停止托管</button></div>';
+  const h = $('.halt', d), s = $('.stop', d);
+  h.title = '停下当前动作和推理，等你在游戏里给新任务'; s.title = '关掉托管，Bot 会下线';
+  h.onclick = (e) => { e.stopPropagation(); control('halt', d._b); };
+  s.onclick = (e) => { e.stopPropagation(); if (confirm('停止托管 ' + d._b.nickname + '？Bot 会下线')) control('stop', d._b); };
+  d.onclick = () => select(d._b.name);
+  return d;
+}
+function updateBot(d, b) {
+  d._b = b; d.classList.toggle('sel', b.name === sel);
+  $('.dot', d).className = 'dot ' + (b.running ? (b.busy ? 'busy' : 'on') : '');
+  $('.nm', d).textContent = b.nickname + '（' + b.name + '）';
+  const m = d.querySelectorAll('.meta');
+  m[0].textContent = (b.running ? (b.busy ? '思考中' : '在线') : '已停止') + ' · ' + (b.agent || '?') + ' · ' + (b.body || '?') + (b.worldId ? ' · ' + b.worldId : '');
+  m[1].textContent = '上下文 ' + (b.contextTokens ? Math.round(b.contextTokens / 1000) + 'k' : '—') + ' · 上次请求 ' + ago(b.lastRequestAt);
+  $('.halt', d).disabled = !b.running || b.body !== 'server'; $('.stop', d).disabled = !b.running;
+}
+function renderBots() { const box = $('#bots'); if (!bots.length) return emptyIn(box, '还没有托管记录'); keyed(box, bots, (b) => b.name, botCard, updateBot); }
+async function control(a, b) { const r = await api('/api/' + a + '?name=' + encodeURIComponent(b.name), { method: 'POST' }); if (!r.ok) alert(r.error || '失败'); }
+function select(n) { if (n === sel) return; sel = n; store.set('mcbot.sel', n); offset = -1; items = []; $('#rows').replaceChildren(); renderBots(); poll(); }
+function rowOf(it) {
+  const k = it.kind, chat = k === 'event' && (it.type === 'chat' || it.type === 'whisper');
+  const d = el('div', 'row k-' + k + (chat ? ' k-event-chat' : '') + (it.error ? ' err' : '') + (seenRows.has(it) ? '' : ' new'));
+  seenRows.add(it);
+  let text = it.text || '';
+  if (chat) text = (it.from ? it.from + '：' : '') + text;
+  if (k === 'tool') text = it.name + ' ' + (it.input || '');
+  if (k === 'turn_start') text = '开始一轮（' + (it.turnKind || '事件') + '）';
+  if (it.error && k === 'turn') text += '\n' + it.error;
+  d.append(el('span', 't', fmt(it.t)), el('span', 'tag', k === 'event' && it.type === 'chat' ? '聊天' : (TAG[k] || k)), el('span', 'msg', text));
+  return d;
+}
+function visible(it) { if (it.kind === 'tool') return $('#f-tool').checked; if (it.kind === 'info' || it.kind === 'turn_start') return $('#f-info').checked; return true; }
+// 从记录里推算现在的状态：最近的陪伴指令（叫停后清掉）、最近一次工具、最近一次出错
+function renderNow() {
+  let base = '', mode = '', tool = null, err = null;
+  for (const it of items) {
+    if (it.kind === 'tool') {
+      tool = it; let input = {}; try { input = JSON.parse(it.input || '{}') || {}; } catch {}
+      if (it.name === 'companion-mode') {
+        const a = input.action;
+        if (a === 'follow' || a === 'wait') { base = (input.mining ? '陪挖' : a === 'follow' ? '跟随' : '原地等待') + (input.player ? ' ' + input.player : '') + '（' + fmt(it.t) + '起）'; mode = base; }
+        else if (a === 'pause' && base) mode = base + '，暂停中'; else if (a === 'resume') mode = base;
+      }
+      if (it.name === 'stop-action') { base = ''; mode = ''; }
+    }
+    if (it.kind === 'halt') { base = ''; mode = ''; }
+    if (it.kind === 'error' || (it.kind === 'turn' && it.error)) err = it;
+  }
+  const parts = ['陪伴模式：' + (mode || '无'), '最近工具：' + (tool ? tool.name + '（' + fmt(tool.t) + '）' : '—')];
+  if (err) parts.push('最近出错：' + fmt(err.t) + ' ' + (err.error || err.text || '').slice(0, 80));
+  $('#now').textContent = sel ? parts.join('　·　') : '';
+}
+function renderRows() {
+  renderNow();
+  const box = $('#rows'), shown = items.filter(visible);
+  if (!shown.length) return emptyIn(box, sel ? '暂无记录' : '选择左边的 Bot');
+  box.replaceChildren(...shown.slice(-1500).map(rowOf));
+  if ($('#f-auto').checked) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+}
+async function poll() {
+  try {
+    const r = await api('/api/bots'); bots = r.bots || [];
+    if (!sel && bots.length) sel = (bots.find((b) => b.running) || bots[0]).name;
+    renderBots();
+    const b = bots.find((x) => x.name === sel); $('#title').textContent = b ? b.nickname + ' 的记录' : '选择左边的 Bot';
+    if (sel) {
+      const first = offset < 0;
+      const a = await api('/api/activity?name=' + encodeURIComponent(sel) + '&after=' + offset);
+      if (first) a.items.forEach((it) => seenRows.add(it));   // 第一次读到的旧记录不播动画
+      if (first || a.items.length) { items = items.concat(a.items).slice(-3000); renderRows(); }
+      offset = a.offset;
+    } else renderRows();
+  } catch (e) { $('#title').textContent = '连不上 WebUI 服务：' + e.message; }
+}
+for (const id of ['#f-tool', '#f-info']) $(id).onchange = () => { items.forEach((it) => seenRows.add(it)); renderRows(); };
+poll(); setInterval(poll, 1500);
+
+// ---- 配置页 ----
+let cfg = null, cur = null, cfgTimer = 0, models = null, modelsKey = '', modelsLoading = false;
+const NUMS = ['idleMinutes', 'resumeWindowMin', 'rotateTokens', 'maxRestarts'];
+const TEXTS = ['label', 'configDir', 'model', 'connectionFile', 'nickname', 'memoryDir', 'nodePath'];
+const EFFORT_DESC = { low: '快、省额度', medium: '均衡', high: '更仔细', xhigh: '很仔细', max: '最强', ultra: '最强，最慢' };
+function say(t, err) { const m = $('#c-msg'); m.textContent = t || ''; m.className = err ? 'err' : ''; if (t) { void m.offsetWidth; m.classList.add('show'); } }
+function opts(select, list, label) { select.replaceChildren(...list.map((v) => { const o = el('option'); o.value = v; o.textContent = label ? label(v) : v; return o; })); }
+
+const agentDD = dropdown($('#c-agent'));
+const effortDD = dropdown($('#c-effort'), (v) => EFFORT_DESC[v] || '');
+const accountCombo = combo($('#c-configDir'), () => (cfg?.accounts[$('#c-agent').value] || []).map((v) => ({ value: v, label: v })));
+const modelCombo = combo($('#c-model'), () => {
+  const list = models?.models?.length ? models.models : (cfg?.agents[$('#c-agent').value]?.fallbackModels || []).map((v) => ({ value: v, label: v, desc: '别名，总是最新版' }));
+  return list.map((m) => ({ value: m.value, label: m.label, code: m.value, desc: m.desc }));
+}, { footer: () => {
+  const f = el('div', 'note');
+  f.textContent = modelsLoading ? '正在从本机 CLI 读取模型…' : models?.ok ? '来自 ' + models.source + ' · ' + models.models.length + ' 个' : models?.error ? '读取失败：' + models.error : '';
+  return f.textContent ? f : null;
+} });
+
+// 模型列表：按 Agent 和账号目录从本机 CLI 读（服务端缓存 1 小时）
+async function loadModels(refresh) {
+  const agent = $('#c-agent').value, account = $('#c-configDir').value.trim(), key = agent + '|' + account;
+  if (!refresh && key === modelsKey && models) return;
+  modelsKey = key; modelsLoading = true; renderModelHint(); modelCombo.refresh();
+  let r;
+  try { r = await api('/api/models?agent=' + encodeURIComponent(agent) + '&account=' + encodeURIComponent(account) + (refresh ? '&refresh=1' : '')); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  if (key !== modelsKey) return;
+  models = r; modelsLoading = false; renderModelHint(); modelCombo.refresh(); updateEfforts();
+}
+function renderModelHint() {
+  const h = $('#h-model'); h.replaceChildren(); h.className = 'hint';
+  if (modelsLoading) { h.append(el('span', '', '正在从本机 CLI 读取模型…')); return; }
+  if (models?.ok) h.append(el('span', '', '来自 ' + models.source + '，' + models.models.length + ' 个' + (models.cached ? '（' + ago(models.fetchedAt) + '读取）' : '')));
+  else if (models?.error) { h.append(el('span', '', '读不到列表：' + models.error)); h.classList.add('errc'); }
+  else h.append(el('span', '', '留空用 Agent 的默认模型'));
+  const b = el('button', 'small ghost', '重新读取'); b.type = 'button'; b.onclick = () => loadModels(true); h.append(b);
+}
+function modelInfo() { const v = $('#c-model').value.trim(); return models?.models?.find((m) => m.value === v || m.value.toLowerCase() === v.toLowerCase()) || null; }
+// 思考强度跟着模型走：已知模型用它支持的档位，否则用这个 Agent 允许的全部档位
+function updateEfforts(want) {
+  const a = cfg.agents[$('#c-agent').value], info = modelInfo();
+  const list = info?.efforts?.length ? a.efforts.filter((e) => info.efforts.includes(e)) : a.efforts;
+  const keep = want || $('#c-effort').value;
+  opts($('#c-effort'), list);
+  $('#c-effort').value = list.includes(keep) ? keep : (info?.defaultEffort && list.includes(info.defaultEffort) ? info.defaultEffort : list[0]);
+  effortDD.sync();
+  const h = $('#h-effort');
+  h.textContent = info && !info.efforts.length ? '这个模型不支持调思考强度，设置会被忽略' : info ? info.label + ' 支持 ' + list.join('、') : '越高越聪明，也越慢、越费额度；试玩一般用 low';
+}
+// refill：重新填表单（第一次打开、保存或删除之后）；定时刷新只更新列表和状态，不动正在填的表单
+async function loadCfg(refill) {
+  try { cfg = await api('/api/profiles'); } catch (e) { say('连不上 WebUI 服务：' + e.message, true); return; }
+  if (!$('#c-agent').options.length) opts($('#c-agent'), Object.keys(cfg.agents), (k) => cfg.agents[k].label);
+  if (cur && cur.id) cur = cfg.profiles.find((x) => x.id === cur.id) || null;
+  if (refill || !$('#cform').dataset.filled) { if (!cur) cur = cfg.profiles[0] || null; fill(cur || blank()); }
+  renderProfiles(); renderStatus();
+}
+function blank() { return { agent: 'claude', effort: 'low', label: '新配置' }; }
+function profileCard() {
+  const d = el('div', 'card');
+  d.innerHTML = '<div class="top"><span class="dot"></span><span class="nm"></span></div><div class="meta"></div><div class="meta"></div>';
+  d.onclick = () => { cur = d._p; fill(d._p); renderProfiles(); renderStatus(); };
+  return d;
+}
+function updateProfile(d, p) {
+  d._p = p; d.classList.toggle('sel', !!(cur && cur.id === p.id));
+  const fail = p.launch && p.launch.exitCode !== null && !p.running;
+  $('.dot', d).className = 'dot ' + (p.running ? 'on' : '');
+  $('.nm', d).textContent = p.label;
+  const m = d.querySelectorAll('.meta');
+  m[0].textContent = cfg.agents[p.agent].label + ' · ' + (p.model || '默认模型') + ' · ' + p.effort;
+  m[1].textContent = (p.connection.ok ? p.connection.username + ' @ ' + p.connection.worldId : '连接文件有问题') + ' · ' + (p.running ? '在线' : fail ? '上次启动失败' : '未启动');
+}
+function renderProfiles() { const box = $('#profiles'); if (!cfg.profiles.length) return emptyIn(box, '还没有配置，点右上角新建'); keyed(box, cfg.profiles, (p) => p.id, profileCard, updateProfile); }
+function fill(p) {
+  $('#cform').dataset.filled = '1'; $('#c-title').textContent = p.id ? '编辑：' + p.label : '新配置';
+  for (const k of TEXTS) $('#c-' + k).value = p[k] || '';
+  for (const k of NUMS) $('#c-' + k).value = p[k] ?? '';
+  $('#c-agent').value = p.agent || 'claude'; agentDD.sync();
+  onAgent(p.effort);
+  const h = $('#h-conn');
+  h.textContent = p.connection ? (p.connection.ok ? '角色 ' + p.connection.username + '，世界 ' + p.connection.worldId : p.connection.error) : '游戏里的角色名和世界从这个文件读';
+  h.className = 'hint' + (p.connection ? (p.connection.ok ? ' okc' : ' errc') : '');
+  $('#c-del').disabled = !p.id; say('');
+}
+function onAgent(effort) {
+  const a = cfg.agents[$('#c-agent').value];
+  $('#h-account').textContent = a.accountHint; $('#c-nickname').placeholder = a.defaultNickname;
+  models = null; updateEfforts(effort); loadModels(false);
+}
+function collect() {
+  const o = { agent: $('#c-agent').value, effort: $('#c-effort').value, credential: { kind: 'login' } };
+  if (cur && cur.id) o.id = cur.id;
+  for (const k of TEXTS) o[k] = $('#c-' + k).value.trim();
+  for (const k of NUMS) { const v = $('#c-' + k).value.trim(); o[k] = v === '' ? null : Number(v); }
+  return o;
+}
+async function save() { const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); say('已保存'); return cur; }
+let lastStatus = '';
+function renderStatus() {
+  const box = $('#c-status'), p = cur && cur.id && cfg.profiles.find((x) => x.id === cur.id);
+  $('#c-stop').disabled = !(p && p.running); $('#c-launch').disabled = !!(p && p.running);
+  if (!p) { box.hidden = true; lastStatus = ''; return; }
+  const l = p.launch; let cls = '', text;
+  if (p.running) { text = '在线：' + p.connection.username + ' 正在托管，去「监控」看记录'; cls = 'okc'; }
+  else if (l && l.exitCode === null) text = '启动中…（' + Math.round((Date.now() - l.startedAt) / 1000) + ' 秒）';
+  else if (l) { text = '启动脚本已退出（退出码 ' + l.exitCode + '）' + (l.error ? '：' + l.error : ''); cls = l.exitCode === 0 ? '' : 'errc'; }
+  else { text = p.connection.ok ? '未启动' : p.connection.error; cls = p.connection.ok ? '' : 'errc'; }
+  const log = l && l.log && !p.running ? l.log : '';
+  const sig = cls + text.replace(/\d+ 秒/, '') + log;
+  if (sig === lastStatus && !box.hidden) { box.firstChild.textContent = text; return; }   // 只是秒数变了就不重画
+  lastStatus = sig; box.hidden = false;
+  box.replaceChildren(el('div', cls, text)); if (log) box.append(el('pre', '', log));
+  box.style.animation = 'none'; void box.offsetWidth; box.style.animation = '';
+}
+$('#cform').onsubmit = async (e) => { e.preventDefault(); await save(); };
+// 换 Agent 时模型和账号目录都不通用，清掉
+$('#c-agent').addEventListener('change', () => { $('#c-model').value = ''; $('#c-configDir').value = ''; onAgent(); });
+$('#c-model').addEventListener('change', () => updateEfforts());
+$('#c-model').addEventListener('input', () => updateEfforts());
+$('#c-configDir').addEventListener('change', () => loadModels(false));
+$('#c-new').onclick = () => { cur = null; fill(blank()); renderProfiles(); renderStatus(); $('#c-label').focus(); $('#c-label').select(); };
+$('#c-check').onclick = async () => {
+  const r = await post('/api/connection', { file: $('#c-connectionFile').value.trim() }), h = $('#h-conn');
+  h.textContent = r.ok ? '角色 ' + r.username + '，世界 ' + r.worldId + '，控制口 ' + r.endpoint : r.error; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
+};
+$('#c-launch').onclick = async () => {
+  const p = await save(); if (!p) return;
+  const r = await post('/api/profiles/launch', { id: p.id });
+  say(r.ok ? '已启动 ' + r.name + '（进程 ' + r.pid + '），等它连上游戏…' : r.error || '启动失败', !r.ok); loadCfg();
+};
+$('#c-stop').onclick = async () => {
+  const p = cur && cfg.profiles.find((x) => x.id === cur.id);
+  if (!p || !confirm('停止托管 ' + p.connection.username + '？Bot 会下线')) return;
+  const r = await api('/api/stop?name=' + encodeURIComponent(p.connection.username), { method: 'POST' }); say(r.ok ? '已发出停止' : r.error || '失败', !r.ok); loadCfg();
+};
+$('#c-del').onclick = async () => {
+  if (!cur || !cur.id || !confirm('删除配置「' + cur.label + '」？不影响正在托管的 Bot')) return;
+  const r = await post('/api/profiles/delete', { id: cur.id }); if (!r.ok) { say(r.error || '删除失败', true); return; } cur = null; loadCfg(true);
+};
+$('#c-adv').onclick = () => { const o = $('#c-adv-box').classList.toggle('open'); $('#c-adv').classList.toggle('open', o); store.set('mcbot.adv', o ? '1' : ''); };
+if (store.get('mcbot.adv', '')) { $('#c-adv-box').classList.add('open'); $('#c-adv').classList.add('open'); }
+// 分段选择的滑块
+function placeThumb(seg) { const on = $('button.on', seg), t = $('.thumb', seg); if (!on || !on.offsetWidth) return; t.style.left = on.offsetLeft + 'px'; t.style.width = on.offsetWidth + 'px'; }
+
+// ---- 页面切换、菜单、主题 ----
+function setTab(t) {
+  $('#view-monitor').hidden = t !== 'monitor'; $('#view-config').hidden = t !== 'config';
+  $('#tab-monitor').classList.toggle('on', t === 'monitor'); $('#tab-config').classList.toggle('on', t === 'config');
+  store.set('mcbot.tab', t); clearInterval(cfgTimer); closeAll();
+  const c = $('#crumb'); c.textContent = t === 'config' ? '配置' : '监控'; c.classList.remove('swap'); void c.offsetWidth; c.classList.add('swap');
+  $('#live').hidden = t !== 'monitor'; document.body.classList.remove('nav-open');
+  const v = $(t === 'config' ? '#view-config' : '#view-monitor'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
+  if (t === 'config') { loadCfg(); cfgTimer = setInterval(() => loadCfg(), 3000); requestAnimationFrame(() => placeThumb($('#c-cred'))); }
+}
+$('#tab-monitor').onclick = () => setTab('monitor'); $('#tab-config').onclick = () => setTab('config');
+$('#menu').onclick = () => document.body.classList.toggle('nav-open'); $('#scrim').onclick = () => document.body.classList.remove('nav-open');
+window.addEventListener('resize', () => placeThumb($('#c-cred')));
+// 主题：跟随系统 → 亮色 → 暗色，记在本浏览器里
+const THEMES = { auto: '跟随系统', light: '亮色', dark: '暗色' };
+let themeNow = 'auto';
+function setTheme(m) { themeNow = m; if (m === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = m; $('#theme-btn').textContent = '主题：' + THEMES[m]; store.set('mcbot.theme', m); }
+const theme0 = store.get('mcbot.theme', 'auto'); setTheme(THEMES[theme0] ? theme0 : 'auto');
+$('#theme-btn').onclick = () => { const ks = Object.keys(THEMES); setTheme(ks[(ks.indexOf(themeNow) + 1) % ks.length]); };
+setTab(store.get('mcbot.tab', 'monitor'));
+</script></body></html>

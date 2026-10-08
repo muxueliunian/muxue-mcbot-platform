@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createWebServer, listBots, readActivity, requestControl, parseWebArgs } from '../../scripts/webui.mjs';
+import { claudeModelsFrom, codexModelsFrom, dshModelsFrom, createModelCatalog } from '../../scripts/agent-models.mjs';
 import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, launchArgs, createLauncher, accountDirs } from '../../scripts/webui-profiles.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-webui-'));
@@ -122,7 +123,8 @@ test('配置档案：只收认识的字段，不存 API key；思考强度按 Ag
     assert.throws(() => normalizeProfile(profile(dir, { agent: 'gemini' })), /Agent/);
     assert.throws(() => normalizeProfile(profile(dir, { agent: 'dsh', effort: 'medium' })), /low、high、max/);
     assert.equal(normalizeProfile(profile(dir, { effort: 'max' })).effort, 'max');
-    assert.throws(() => normalizeProfile(profile(dir, { agent: 'codex', effort: 'max' })), /思考强度/);
+    assert.equal(normalizeProfile(profile(dir, { agent: 'codex', effort: 'ultra' })).effort, 'ultra');
+    assert.throws(() => normalizeProfile(profile(dir, { effort: 'ultra' })), /思考强度/);
     assert.throws(() => normalizeProfile(profile(dir, { nickname: '-Headless' })), /不能以 - 开头/);
     assert.throws(() => normalizeProfile(profile(dir, { model: 'a b' })), /模型名/);
     assert.throws(() => normalizeProfile(profile(dir, { memoryDir: 'memory' })), /完整路径/);
@@ -228,5 +230,65 @@ test('配置接口：要 JSON、查来源；保存后列表不带令牌，启动
     assert.equal((await post('/api/profiles/launch', { id: 'ffffffff' })).status, 404);
     assert.equal((await post('/api/profiles/delete', { id: saved.profile.id })).status, 200);
     assert.equal(loadProfiles(dir).length, 0);
+  } finally { await web.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('模型列表：三家 CLI 的返回整理成同一种格式，只留模型名、说明和思考强度', () => {
+  const claude = claudeModelsFrom({ account: { email: 'x@y' }, models: [
+    { value: 'default', displayName: 'Default' },
+    { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus 5.5', description: 'Best', supportsEffort: true, supportedEffortLevels: ['low', 'max'] },
+    { value: 'haiku', displayName: 'Haiku 4.5' },
+  ] });
+  assert.deepEqual(claude, [
+    { value: 'opus', label: 'Opus 5.5', desc: 'claude-opus-5-5 · Best', efforts: ['low', 'max'] },
+    { value: 'haiku', label: 'Haiku 4.5', desc: '', efforts: [] },
+  ]);
+  assert.doesNotMatch(JSON.stringify(claude), /x@y/);
+  const codex = codexModelsFrom({ models: [
+    { slug: 'gpt-6.1-sol', display_name: 'GPT-6.1-Sol', visibility: 'list', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'ultra' }], default_reasoning_level: 'low' },
+    { slug: 'gpt-reserve', visibility: 'hide', supported_reasoning_levels: [] },
+  ] });
+  assert.deepEqual(codex.map((m) => [m.value, m.efforts, m.defaultEffort]), [['gpt-6.1-sol', ['low', 'ultra'], 'low']]);
+  const dsh = dshModelsFrom([
+    { id: 'model', options: [{ name: 'deepseek-v4-flash', value: 'a' }, { group: 'x', options: [{ name: 'DeepSeek-V4-Pro', value: 'b' }, { name: 'deepseek-v4-flash', value: 'a2' }] }] },
+    { id: 'reasoning_effort', options: [{ value: 'off' }, { value: 'low' }, { value: 'high' }, { value: 'max' }] },
+  ]);
+  assert.deepEqual(dsh.map((m) => m.value), ['deepseek-v4-flash', 'DeepSeek-V4-Pro']);
+  assert.deepEqual(dsh[0].efforts, ['low', 'high', 'max']);
+});
+
+test('模型列表缓存：同一账号一小时内用缓存，refresh 重读，读失败时带上旧结果', async () => {
+  const dir = tmp();
+  try {
+    let calls = 0, fail = false;
+    const fetchers = { claude: async (configDir) => { calls++; if (fail) throw new Error('CLI 不在'); return [{ value: 'opus', label: configDir, desc: '', efforts: [] }]; } };
+    const cat = createModelCatalog({ runtime: dir, fetchers });
+    const [a, b] = await Promise.all([cat.get('claude', 'D1'), cat.get('claude', 'D1')]);
+    assert.equal(calls, 1, '同时的请求合并'); assert.equal(a.ok, true); assert.equal(b.models[0].label, 'D1');
+    assert.equal((await cat.get('claude', 'D1')).cached, true); assert.equal(calls, 1);
+    await cat.get('claude', 'D2'); assert.equal(calls, 2, '换账号目录要重读');
+    fail = true;
+    const r = await cat.get('claude', 'D1', true);
+    assert.equal(r.ok, false); assert.match(r.error, /CLI 不在/); assert.equal(r.stale, true); assert.equal(r.models[0].value, 'opus');
+    assert.equal((await createModelCatalog({ runtime: dir, fetchers }).get('claude', 'D2')).cached, true, '缓存存在 runtime 里，重启后还在');
+    assert.equal((await cat.get('nope')).ok, false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('模型接口：要令牌；账号目录要完整路径；结果原样返回', async () => {
+  const dir = tmp();
+  const asked = [];
+  const web = createWebServer({ runtime: dir, token: 'ef56', launcher: { launch: () => ({ ok: true }), status: () => null },
+    models: { get: async (agent, account, refresh) => { asked.push([agent, account, refresh]); return { ok: true, source: 'x', models: [{ value: 'opus' }] }; } } });
+  try {
+    const port = await web.listen(0);
+    const base = `http://127.0.0.1:${port}`;
+    assert.equal((await fetch(`${base}/api/models?agent=claude`)).status, 403);
+    const cookie = (await fetch(`${base}/?t=ef56`, { redirect: 'manual' })).headers.get('set-cookie').split(';')[0];
+    const get = (q) => fetch(`${base}/api/models?${q}`, { headers: { cookie } });
+    assert.equal((await (await get('agent=claude&account=~/.claude-r&refresh=1')).json()).models[0].value, 'opus');
+    assert.deepEqual(asked[0], ['claude', path.join(os.homedir(), '.claude-r'), true]);
+    assert.equal((await get('agent=claude&account=relative')).status, 400);
+    assert.equal((await get('agent=gemini')).status, 400);
   } finally { await web.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

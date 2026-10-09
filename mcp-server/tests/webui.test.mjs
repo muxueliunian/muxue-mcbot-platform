@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createWebServer, listBots, readActivity, requestControl, parseWebArgs } from '../../scripts/webui.mjs';
 import { claudeModelsFrom, codexModelsFrom, dshModelsFrom, createModelCatalog } from '../../scripts/agent-models.mjs';
 import { normalizeProfile, saveProfile, loadProfiles, deleteProfile, inspectConnection, inspectMemory, launchArgs, createLauncher, accountDirs, appearanceChoices } from '../../scripts/webui-profiles.mjs';
+import { connectionFileOf, readGameConfig } from '../../scripts/webui-games.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-webui-'));
 const heartbeat = (dir, name, extra = {}) => fs.writeFileSync(path.join(dir, `companion-${name}.json`),
@@ -103,12 +104,15 @@ test('WebUI 服务：只听本机，要令牌 Cookie，拒绝别的 Host', async
 });
 
 // ---- 配置页 ----
+// 配置只记游戏目录：连接文件在 <游戏目录>/config/mcbot-server-control/connection.json
+const gameOf = (dir) => path.join(dir, 'game');
 const connection = (dir, extra = {}) => {
-  const file = path.join(dir, 'connection.json');
+  const file = connectionFileOf(gameOf(dir));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ protocol: 2, backend: 'server', username: 'Claude', worldId: 'alpha', token: 'secret-token', endpoint: 'http://127.0.0.1:8767/v2', ...extra }));
   return file;
 };
-const profile = (dir, extra = {}) => ({ label: '小克试玩', agent: 'claude', effort: 'low', connectionFile: connection(dir), ...extra });
+const profile = (dir, extra = {}) => { connection(dir); return { label: '小克试玩', agent: 'claude', effort: 'low', gameDir: gameOf(dir), username: 'Claude', ...extra }; };
 
 test('配置档案：只收认识的字段，不存 API key；思考强度按 Agent 分；路径要完整', () => {
   const dir = tmp();
@@ -129,7 +133,17 @@ test('配置档案：只收认识的字段，不存 API key；思考强度按 Ag
     assert.throws(() => normalizeProfile(profile(dir, { model: 'a b' })), /模型名/);
     assert.throws(() => normalizeProfile(profile(dir, { memoryDir: 'memory' })), /完整路径/);
     assert.throws(() => normalizeProfile(profile(dir, { maxRestarts: 101 })), /maxRestarts/);
-    assert.throws(() => normalizeProfile({ ...profile(dir), connectionFile: '' }), /连接文件不能为空/);
+    assert.throws(() => normalizeProfile({ ...profile(dir), gameDir: '' }), /选一个游戏/);
+    assert.equal(normalizeProfile(profile(dir)).mode, 'lan', '没有 server.properties 是单人局域网');
+    assert.throws(() => normalizeProfile(profile(dir, { mode: 'remote' })), /模式/);
+    assert.throws(() => normalizeProfile(profile(dir, { username: '小克' })), /英文字母/);
+    assert.throws(() => normalizeProfile(profile(dir, { port: 80 })), /端口/);
+    assert.equal(normalizeProfile(profile(dir, { port: '8770' })).port, 8770);
+    // 旧档案只有 connectionFile：换成游戏目录；不在游戏目录里的要重新选
+    const { gameDir, ...legacy } = profile(dir);
+    const old = normalizeProfile({ ...legacy, connectionFile: connectionFileOf(gameDir) });
+    assert.deepEqual([old.gameDir, old.mode, 'connectionFile' in old], [gameDir, 'lan', false]);
+    assert.throws(() => normalizeProfile({ ...legacy, connectionFile: path.join(dir, 'connection.json') }), /重新选游戏/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -182,7 +196,8 @@ test('启动参数：每个值单独一项，带 --headless；没填的会话选
     const a = launchArgs(p, 'S.mjs');
     assert.equal(a[0], 'S.mjs');
     const after = (flag) => a[a.indexOf(flag) + 1];
-    assert.equal(after('--connection-file'), p.connectionFile); assert.equal(after('--agent'), 'claude');
+    assert.equal(after('--connection-file'), connectionFileOf(p.gameDir)); assert.equal(after('--agent'), 'claude');
+    assert.ok(a.includes('--wait'), '世界没开时等着'); assert.equal(after('--username'), 'Claude');
     assert.equal(after('--model'), 'opus'); assert.equal(after('--nickname'), '小克'); assert.equal(after('--max-restarts'), '0');
     assert.ok(a.includes('--headless')); assert.ok(!a.includes('--idle-minutes')); assert.ok(!a.includes('--config-dir'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -239,11 +254,15 @@ test('启动：在线的不再启动；脚本退出后能看到退出码和输�
     running = false;
     const r = launcher.launch(p);
     assert.equal(r.ok, true); assert.equal(r.name, 'Claude');
-    assert.match(launcher.launch(p).error, /正在启动/);
+    assert.match(launcher.launch(p).error, /已经启动了/);
+    assert.equal(readGameConfig(p.gameDir).username, 'Claude', '启动前把名字写进游戏');
     for (let i = 0; i < 100 && launcher.status('Claude').exitCode === null; i++) await new Promise((res) => setTimeout(res, 50));
     const s = launcher.status('Claude');
-    assert.equal(s.exitCode, 3); assert.match(s.log, /ARGS .*start-server-play\.mjs\|--connection-file\|.*--headless/);
-    assert.match(launcher.launch(normalizeProfile(profile(dir, { connectionFile: path.join(dir, 'none.json') }))).error, /不存在/);
+    assert.equal(s.exitCode, 3); assert.match(s.log, /ARGS .*start-server-play\.mjs\|--connection-file\|.*--headless\|--wait/);
+    assert.match(launcher.launch(normalizeProfile(profile(dir, { gameDir: path.join(dir, 'none') }))).error, /找不到这个游戏目录/);
+    // 世界还没开过（没有连接文件）也能启动：启动脚本会等
+    fs.rmSync(connectionFileOf(p.gameDir));
+    assert.equal(launcher.launch(normalizeProfile({ ...p, username: 'Other' })).ok, true);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -272,11 +291,14 @@ test('配置接口：要 JSON、查来源；保存后列表不带令牌，启动
     const saved = await (await post('/api/profiles/save', profile(dir))).json();
     assert.equal(saved.ok, true);
     const view = await (await fetch(`${base}/api/profiles`, { headers: { cookie } })).json();
-    assert.equal(view.profiles[0].connection.username, 'Claude'); assert.equal(view.profiles[0].running, false);
+    assert.equal(view.profiles[0].connection.username, 'Claude'); assert.equal(view.profiles[0].name, 'Claude'); assert.equal(view.profiles[0].running, false);
+    assert.equal(readGameConfig(gameOf(dir)).username, 'Claude', '保存时写进游戏');
     assert.deepEqual(view.agents.dsh.efforts, ['low', 'high', 'max']);
     assert.doesNotMatch(JSON.stringify(view), /secret-token/);
-    const conn = await (await post('/api/connection', { file: view.profiles[0].connectionFile })).json();
-    assert.equal(conn.worldId, 'alpha'); assert.doesNotMatch(JSON.stringify(conn), /secret-token/);
+    assert.equal((await post('/api/connection', { file: connectionFileOf(gameOf(dir)) })).status, 404, '不再有手动检查连接文件');
+    const renamed = await (await post('/api/profiles/save', { ...profile(dir), id: saved.profile.id, username: 'Xiaoke' })).json();
+    assert.deepEqual([renamed.ok, renamed.renamed, renamed.online], [true, true, false]);
+    assert.equal(readGameConfig(gameOf(dir)).username, 'Xiaoke');
     assert.equal((await post('/api/profiles/launch', { id: saved.profile.id })).status, 200);
     assert.deepEqual(launched, [saved.profile.id]);
     assert.equal((await post('/api/profiles/launch', { id: 'ffffffff' })).status, 404);

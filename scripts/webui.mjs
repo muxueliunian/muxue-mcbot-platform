@@ -9,8 +9,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createModelCatalog } from './agent-models.mjs';
-import { AGENTS, SESSION_OPTIONS, accountDirs, appearanceChoices, createLauncher, deleteProfile, expandHome, inspectConnection, inspectMemory, loadProfiles, saveProfile } from './webui-profiles.mjs';
-import { PERSONA_SAMPLE, addGameDir, gameDirOf, listGames, localAppearances, modelLabels, readPersona, removeGameDir, setBotName, writePersona } from './webui-games.mjs';
+import { AGENTS, MODES, SESSION_OPTIONS, accountDirs, appearanceChoices, applyToGame, createLauncher, deleteProfile, expandHome, inspectMemory, loadProfiles, normalizeProfile, profileConnection, profileName, saveProfile } from './webui-profiles.mjs';
+import { PERSONA_SAMPLE, addGameDir, connectionFileOf, gameOnline, listGames, localAppearances, modelLabels, readGameConfig, readPersona, removeGameDir, writePersona } from './webui-games.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
@@ -89,9 +89,9 @@ export function readActivity(runtime, name, after = -1) {
 }
 
 /** 叫停（停下动作等新任务）或停止托管（驱动器退出）：只放标记文件，驱动器自己处理。 */
-export function requestControl(runtime, name, action) {
+export function requestControl(runtime, name, action, { waiting = false } = {}) {
   const bot = listBots(runtime).find((b) => b.name === name);
-  if (!bot?.running) return { ok: false, error: `${name} 没有在托管` };
+  if (!bot?.running && !(waiting && action === 'stop')) return { ok: false, error: `${name} 没有在托管` };
   if (action === 'halt' && bot.body !== 'server') return { ok: false, error: '叫停目前只支持 ServerBody' };
   const suffix = action === 'halt' ? 'halt' : 'stop';
   fs.writeFileSync(path.join(runtime, `companion-${name}.${suffix}`), String(Date.now()));
@@ -110,14 +110,14 @@ const readBody = (req) => new Promise((resolve, reject) => {
 function profilesView(runtime, launcher) {
   const bots = listBots(runtime);
   const profiles = loadProfiles(runtime).map((p) => {
-    const conn = inspectConnection(p.connectionFile);
-    const name = conn.ok ? conn.username : '';
+    const conn = profileConnection(p);
+    const name = profileName(p) || (conn.ok ? conn.username : '');
     const bot = bots.find((b) => b.name === name);
-    return { ...p, connection: conn, running: !!bot?.running, launch: name ? launcher.status(name) : null };
+    return { ...p, name, connection: conn, running: !!bot?.running, launch: name ? launcher.status(name) : null };
   });
   const agents = Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [k, { label: a.label, efforts: a.efforts, fallbackModels: a.fallbackModels,
     defaultNickname: a.defaultNickname, accountHint: a.accountHint }]));
-  return { profiles, agents, accounts: accountDirs(), sessionOptions: Object.keys(SESSION_OPTIONS) };
+  return { profiles, agents, modes: MODES, accounts: accountDirs(), sessionOptions: Object.keys(SESSION_OPTIONS) };
 }
 
 const isAbsPath = (p) => path.isAbsolute(p) && !/[\u0000-\u001f]/.test(p);
@@ -149,7 +149,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     }
     if (!authed) return send(res, 403, { error: 'unauthorized' });
     if (req.method === 'POST' && !allowedOrigin(req.headers.origin)) return send(res, 403, { error: 'origin not allowed' });
-    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/connection' || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances') {
+    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances') {
       handleProfiles(req, res, url).catch((e) => send(res, 400, { ok: false, error: e.message }));
       return;
     }
@@ -161,7 +161,9 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     }
     if (req.method === 'POST' && (url.pathname === '/api/halt' || url.pathname === '/api/stop')) {
       if (!NAME_RE.test(name)) return send(res, 400, { error: 'bad name' });
-      const result = requestControl(runtime, name, url.pathname === '/api/halt' ? 'halt' : 'stop');
+      // 启动脚本还在等世界（托管还没起来）时也能停：它也看停止标记
+      const waiting = url.pathname === '/api/stop' && launcher.status(name)?.exitCode === null;
+      const result = requestControl(runtime, name, url.pathname === '/api/halt' ? 'halt' : 'stop', { waiting });
       return send(res, result.ok ? 200 : 409, result);
     }
     send(res, 404, { error: 'not found' });
@@ -181,12 +183,11 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     if (req.method !== 'POST') return send(res, 404, { error: 'not found' });
     if (!/^application\/json\b/.test(req.headers['content-type'] || '')) return send(res, 415, { ok: false, error: '要用 JSON' });
     const body = await readBody(req);
-    if (p === '/api/connection') {
-      return send(res, 200, inspectConnection(expandHome(String(body.file || ''))));
-    }
     if (p === '/api/appearances') {
-      const file = expandHome(String(body.file || '')), dir = gameDirOf(file);
-      let r = await appearanceChoices(file);
+      // 按选中的游戏目录问：连接文件在目录里的固定位置
+      const dir = path.normalize(expandHome(String(body.dir || '')));
+      if (!isAbsPath(dir)) return send(res, 200, { ok: false, error: '先在「连接配置」选游戏' });
+      let r = await appearanceChoices(connectionFileOf(dir));
       // 世界没开时退回游戏目录里的模型文件夹
       if (!r.ok && dir) { const local = localAppearances(dir); if (local.length) r = { ok: true, offline: true, sources: local }; }
       // 本机读得到模型文件夹时带上显示名（「Claude · 暖橙长裙」），网页做成卡片
@@ -195,12 +196,6 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     }
     if (p === '/api/games/add') return send(res, 200, addGameDir(runtime, body.dir));
     if (p === '/api/games/remove') return send(res, 200, removeGameDir(runtime, body.dir));
-    if (p === '/api/games/name') {
-      // 只改已列出的游戏目录里的 server.json，不接受任意路径
-      const list = await (games || listGames)(runtime), g = list.find((x) => x.dir.toLowerCase() === String(body.dir || '').toLowerCase());
-      if (!g) return send(res, 200, { ok: false, error: '不在游戏列表里的目录' });
-      return send(res, 200, { ...setBotName(g.dir, body.name), online: !!g.online });
-    }
     if (p === '/api/persona') {
       const opts = { agent: String(body.agent || ''), memoryDir: body.memoryDir ? expandHome(String(body.memoryDir)) : '', username: String(body.username || '') };
       if (!AGENTS[opts.agent]) return send(res, 400, { ok: false, error: '不认识的 Agent' });
@@ -209,7 +204,20 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       return send(res, 200, { ...readPersona(opts), sample: PERSONA_SAMPLE });
     }
     if (p === '/api/memory') return send(res, 200, inspectMemory(String(body.dir || ''), String(body.agent || 'claude')));
-    if (p === '/api/profiles/save') return send(res, 200, { ok: true, profile: saveProfile(runtime, body) });
+    if (p === '/api/profiles/save') {
+      // 先校验，再把 Bot 名和端口写进游戏（世界开着时要重进才生效）；独立身份的人设按名字放，改名时带过去
+      const input = normalizeProfile(body);
+      const before = readGameConfig(input.gameDir).username;
+      const applied = applyToGame(input);
+      if (!applied.ok) return send(res, 200, applied);
+      if (applied.renamed && AGENTS[input.agent]) {
+        const from = readPersona({ agent: input.agent, memoryDir: input.memoryDir, username: before });
+        const to = readPersona({ agent: input.agent, memoryDir: input.memoryDir, username: applied.username });
+        if (from.ok && from.exists && to.ok && !to.exists && from.file !== to.file) writePersona({ agent: input.agent, memoryDir: input.memoryDir, username: applied.username }, from.text);
+      }
+      const profile = saveProfile(runtime, { ...body, username: applied.username });
+      return send(res, 200, { ok: true, profile, renamed: applied.renamed, online: applied.renamed ? await gameOnline(connectionFileOf(profile.gameDir)) : false });
+    }
     const profile = loadProfiles(runtime).find((x) => x.id === body.id);
     if (!profile) return send(res, 404, { ok: false, error: '没有这份配置' });
     if (p === '/api/profiles/delete') { deleteProfile(runtime, profile.id); return send(res, 200, { ok: true }); }

@@ -1,6 +1,7 @@
 // WebUI 的「连接配置」和「灵魂设置」用到的本机文件：
 // - 找本机的游戏目录（Prism/ElyPrism/MultiMC 实例、.minecraft 和它的版本隔离目录、用户手动加的服务器或实例目录），
-//   看核心模组装没装、连接文件在不在、世界开着没有；用户点选后连接文件路径自动填好，不用自己找。
+//   看核心模组装没装、开没开过世界、世界开着没有。配置只记选中的游戏目录和模式（单人局域网或服务器），
+//   连接文件（模组写在 config/mcbot-server-control/connection.json）是内部细节，网页上不出现。
 // - 改 Bot 的游戏名：写游戏目录里 config/mcbot-server-control/server.json 的 username（模组启动世界时读，退出重进才生效）。
 // - 人设：读写托管时会带上的 persona.md（位置和 scripts/companion.mjs 的 resolveMemory 一致）。
 // - YSM 模型的显示名：读 config/yes_steve_model/custom/<模型>/ysm.json 的 metadata.name。
@@ -103,6 +104,12 @@ export function referenceCoreJar(root = ROOT) {
   return [path.join(root, 'mods', jar), path.join(root, 'mods', 'mcbot-server-control', 'build', 'libs', jar)].find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) || '';
 }
 
+/**
+ * 服务器目录（有 server.properties）还是玩家自己的游戏目录（单人开世界，再对局域网开放）。
+ * 两种都是在本机读连接文件：控制口只开在 127.0.0.1，服务器模式要在开服的那台电脑上运行。
+ */
+export const gameType = (dir) => (fs.existsSync(path.join(String(dir || ''), 'server.properties')) ? 'server' : 'lan');
+
 /** 一个游戏目录的状态：核心模组、Bot 名、连接文件（不带令牌）。 */
 export function inspectGame(game, refJar = referenceCoreJar()) {
   const mods = path.join(game.dir, 'mods');
@@ -117,7 +124,7 @@ export function inspectGame(game, refJar = referenceCoreJar()) {
   const conn = readJson(connectionFileOf(game.dir));
   const connOk = conn?.protocol === 2 && conn?.backend === 'server' && NAME_RE.test(conn?.username || '') && !!conn?.token;
   return {
-    dir: game.dir, kind: game.kind, name: game.name, manual: !!game.manual,
+    dir: game.dir, kind: game.kind, name: game.name, manual: !!game.manual, type: gameType(game.dir),
     core, coreJar: jars[0] || '',
     username: (NAME_RE.test(server?.username || '') ? server.username : '') || (connOk ? conn.username : ''),
     nameConfigurable: !!server,
@@ -147,14 +154,27 @@ export async function listGames(runtime, { env = process.env, fetchImpl = fetch,
   return games.sort((a, b) => rank(a) - rank(b));
 }
 
-/** 改 Bot 的游戏名：只改 server.json 的 username，其余字段原样保留；server.json 由模组第一次开世界时生成。 */
-export function setBotName(dir, name) {
-  if (!NAME_RE.test(String(name ?? ''))) return { ok: false, error: '游戏名只能用英文字母、数字和下划线，最多 16 个' };
-  const file = path.join(String(dir), CONTROL_DIR, 'server.json');
-  const data = readJson(file);
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return { ok: false, error: '这个目录还没有 server.json：装好核心模组后先进一次世界（单人要开局域网），再来改名' };
-  if (data.username === name) return { ok: true, changed: false };
-  data.username = name;
+export const DEFAULT_PORT = 8766;
+/** server.json 里现在的 Bot 名和端口（没有文件就是空的）。 */
+export function readGameConfig(dir) {
+  const data = readJson(path.join(String(dir), CONTROL_DIR, 'server.json'));
+  return { username: NAME_RE.test(data?.username || '') ? data.username : '', port: Number.isInteger(data?.port) ? data.port : DEFAULT_PORT };
+}
+/**
+ * 把配置里的 Bot 名和端口写进游戏目录的 server.json（模组开世界时读，世界开着时要退出重进才生效）。
+ * 只改 username 和 port，其余字段原样保留；还没有文件就按模组的默认值建一个（单人 worldId 用 auto，按存档区分）。
+ */
+export function writeGameConfig(dir, { username, port } = {}) {
+  if (!NAME_RE.test(String(username ?? ''))) return { ok: false, error: '游戏名只能用英文字母、数字和下划线，最多 16 个' };
+  const p = port ?? DEFAULT_PORT;
+  if (!Number.isInteger(p) || p < 1024 || p > 65535) return { ok: false, error: '端口要是 1024～65535 的整数' };
+  const control = path.join(String(dir), CONTROL_DIR), file = path.join(control, 'server.json');
+  let data = readJson(file);
+  if (fs.existsSync(file) && (!data || typeof data !== 'object' || Array.isArray(data))) return { ok: false, error: '游戏里的 server.json 读不了，先修好或删掉它' };
+  data ||= { worldId: gameType(dir) === 'server' ? 'serverbody-validation' : 'auto', username, uuid: '9c6882e0-e80c-4c3e-8f20-8e3f42c738a1', port: p, spawn: null };
+  if (data.username === username && data.port === p && fs.existsSync(file)) return { ok: true, changed: false };
+  data.username = username; data.port = p;
+  fs.mkdirSync(control, { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2)); fs.renameSync(tmp, file);
   return { ok: true, changed: true };

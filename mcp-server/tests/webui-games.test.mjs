@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { addGameDir, connectionFileOf, findGames, gameDirOf, gameOnline, inspectGame, localAppearances, modelLabels, personaFile, readPersona, removeGameDir, setBotName, writePersona } from '../../scripts/webui-games.mjs';
-import { endReason } from '../../scripts/webui-profiles.mjs';
+import { addGameDir, connectionFileOf, findGames, gameDirOf, gameOnline, inspectGame, localAppearances, modelLabels, personaFile, readPersona, gameType, readGameConfig, removeGameDir, writeGameConfig, writePersona } from '../../scripts/webui-games.mjs';
+import { endReason, waitingText } from '../../scripts/webui-profiles.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-games-'));
 const put = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
@@ -64,16 +64,25 @@ test('世界开着没有：用令牌问 hello，只回通不通', async () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('改游戏名：只改 server.json 的 username，其余字段原样；名字要合法；没有 server.json 先开世界', () => {
+test('写游戏配置：只改 server.json 的 username 和 port，其余字段原样；没有文件按模组默认值建；名字和端口要合法', () => {
   const dir = tmp();
   try {
-    assert.match(setBotName(dir, 'Xiaojing').error, /先进一次世界/);
+    assert.deepEqual(readGameConfig(dir), { username: '', port: 8766 });
+    assert.deepEqual(writeGameConfig(dir, { username: 'Claude' }), { ok: true, changed: true });
+    const fresh = JSON.parse(fs.readFileSync(control(dir, 'server.json'), 'utf8'));
+    assert.deepEqual([fresh.worldId, fresh.username, fresh.port, fresh.spawn], ['auto', 'Claude', 8766, null], '单人按存档区分世界');
     put(control(dir, 'server.json'), JSON.stringify({ worldId: 'auto', username: 'ServerBot', uuid: 'u', port: 8766, spawn: null }));
-    assert.match(setBotName(dir, '小鲸').error, /英文字母/);
-    assert.match(setBotName(dir, 'a'.repeat(17)).error, /16/);
-    assert.deepEqual(setBotName(dir, 'Xiaojing'), { ok: true, changed: true });
-    assert.deepEqual(JSON.parse(fs.readFileSync(control(dir, 'server.json'), 'utf8')), { worldId: 'auto', username: 'Xiaojing', uuid: 'u', port: 8766, spawn: null });
-    assert.deepEqual(setBotName(dir, 'Xiaojing'), { ok: true, changed: false });
+    assert.match(writeGameConfig(dir, { username: '小鲸' }).error, /英文字母/);
+    assert.match(writeGameConfig(dir, { username: 'a'.repeat(17) }).error, /16/);
+    assert.match(writeGameConfig(dir, { username: 'Xiaojing', port: 80 }).error, /端口/);
+    assert.deepEqual(writeGameConfig(dir, { username: 'Xiaojing', port: 8770 }), { ok: true, changed: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(control(dir, 'server.json'), 'utf8')), { worldId: 'auto', username: 'Xiaojing', uuid: 'u', port: 8770, spawn: null });
+    assert.deepEqual(writeGameConfig(dir, { username: 'Xiaojing', port: 8770 }), { ok: true, changed: false });
+    assert.deepEqual(readGameConfig(dir), { username: 'Xiaojing', port: 8770 });
+    const server = path.join(dir, 'srv'); put(path.join(server, 'server.properties'), '');
+    assert.equal(gameType(server), 'server'); assert.equal(gameType(dir), 'lan');
+    writeGameConfig(server, { username: 'Claude' });
+    assert.equal(JSON.parse(fs.readFileSync(control(server, 'server.json'), 'utf8')).worldId, 'serverbody-validation', '和模组给服务器的默认一样');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -114,4 +123,12 @@ test('托管退出原因：游戏关了算断开，跑了一阵才退出不算�
   assert.equal(endReason({ startedAt: t, endedAt: t + 500000, exitCode: 0 }, '正在退出…（收到停止标记）'), 'stopped');
   assert.equal(endReason({ startedAt: t, endedAt: t + 500000, exitCode: 1 }, 'boom'), 'crashed');
   assert.equal(endReason({ startedAt: t, endedAt: t + 3000, exitCode: 2 }, '找不到 dsh'), 'failed');
+  assert.equal(endReason({ startedAt: t, endedAt: t + 500000, exitCode: 0 }, '服务端停止通道：CONTROL_UNREACHABLE\n收到停止，不再等待'), 'stopped', '等待中点了停止');
+});
+
+test('等待中：日志里最后一行「[等待]」之后还没开始托管才算在等', () => {
+  assert.equal(waitingText('[等待] 等世界打开\n[等待] 世界开着，还差一步：按 Esc 点「对局域网开放」\n'), '世界开着，还差一步：按 Esc 点「对局域网开放」');
+  assert.equal(waitingText('[等待] 等世界打开\nServerBody 配置：x\n托管 小克'), '');
+  assert.equal(waitingText('ServerBody 配置：x\n[等待] 角色断开了，能连上时自动接上'), '角色断开了，能连上时自动接上');
+  assert.equal(waitingText(''), '');
 });

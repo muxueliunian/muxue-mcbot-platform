@@ -17,6 +17,8 @@
 //       --server-gone-minutes <N>（服务器连上过之后连续 N 分钟连不上就退出，默认 10）
 //       --server-wait-minutes <N>（启动后 N 分钟内服务器一直没起来就退出，默认 15；0 表示不检查服务器）
 //       --max-restarts <N>（agent 连续崩溃 N 次后不再重启，默认 10）
+//       --reconnect（ServerBody：身体断开（游戏关了、退出世界、角色死了）时以退出码 75 退出，
+//         由 start-server-play.mjs --wait 等世界重新打开、复活后再接管；不带时照旧把断开当事件交给 Agent）
 //       记忆和会话（docs/memory_plan.md，只在 <memory-dir>/<记忆目录>/persona.md 存在时启用整理）：
 //       --memory-dir <目录> / --memory-agent <子目录>（优先级：这里（或环境变量 COMPANION_MEMORY_DIR）> MCP 配置里的同名参数
 //         > 默认 memory/ 和 xiaoke；最后写进托管 MCP 配置，驱动器和 MCP 服务端用同一个位置）
@@ -63,6 +65,8 @@ const MAX_PENDING_EVENTS = 100;
 const NOTIFY_INTERVAL_MS = 5 * 60 * 1000;
 const QUOTA_PAUSE_MS = Number(process.env.COMPANION_QUOTA_PAUSE_MS) || 5 * 60 * 1000;
 const BOT_LOCK_WAIT_MS = 20000;
+// --reconnect 时身体断开的退出码：外层 start-server-play.mjs --wait 看到它就回去等世界、复活后重新接管
+export const RECONNECT_EXIT = 75;
 const MAX_CONSOLIDATE_ATTEMPTS = 2;
 // 整理排队时，普通事件最多让它等这么久，之后先整理
 const CONSOLIDATE_MAX_DEFER_MS = 5 * 60 * 1000;
@@ -89,6 +93,7 @@ export function parseArgs(argv) {
     else if (a === '--mcp-config') args.mcpConfig = path.resolve(next());
     else if (a === '--config-dir') args.configDir = path.resolve(next());
     else if (a === '--headless') args.headless = true;
+    else if (a === '--reconnect') args.reconnect = true;
     else if (a === '--mc-host') args.mcHost = next();
     else if (a === '--mc-port') args.mcPort = Number(next());
     else if (a === '--server-check-seconds') args.serverCheckSeconds = Number(next());
@@ -1290,6 +1295,12 @@ function main() {
   }
 
   function onEvent(e) {
+    // 身体断了（游戏关了、退出世界、角色死了）：MCP 里的控制已经终止，Agent 接着跑也动不了。
+    // 交给外层等世界重新打开、复活后重新接管（会话照常接着）。
+    if (args.body === 'server' && args.reconnect && e.type === 'disconnect') {
+      if (!shuttingDown) { info(`事件 disconnect: ${e.text}`); shutdown('角色断开，等重新连接', RECONNECT_EXIT); }
+      return;
+    }
     if (args.body === 'server' && waitingNewServerTask) return;
     const time = new Date(e.timestamp).toLocaleTimeString('zh-CN', { hour12: false });
     const text = `[${time}] ${e.type}: ${e.text}`;
@@ -1499,7 +1510,7 @@ function main() {
     }
   }
 
-  function shutdown(reason = '') {
+  function shutdown(reason = '', exitCode = 0) {
     if (shuttingDown) return;
     shuttingDown = true;
     info(`正在退出…${reason ? `（${reason}）` : ''}`);
@@ -1511,15 +1522,18 @@ function main() {
     const bodyArtifacts = captureBodyArtifacts(RUNTIME, args.name, serverControl?.capture());
     (async () => {
       if (serverControl) {
-        // 托管停了就让身体下线（原版照常存档），下次启动在原地重新上线，不在服务器里留一个不动的假人
-        await serverControl.revoke(undefined, { leave: true })
+        // 托管停了就让身体下线（原版照常存档），下次启动在原地重新上线，不在服务器里留一个不动的假人。
+        // 等重新连接时不下线：死了的身体要留着给外层原生复活
+        await serverControl.revoke(undefined, { leave: exitCode !== RECONNECT_EXIT })
           .then((r) => { if (r?.left) info('角色已下线'); })
           .catch((e) => info(`退出撤销：${e.code || '失败'}`));
       }
       await Promise.all([...procs].map((p) => endProc(p)));
       cleanupBodyArtifacts(bodyArtifacts);
       cleanupFiles();
-      process.exit(0);
+      // 等一下再退：agent 子进程刚退出时它的管道还在关，Windows 上马上 process.exit 会让 Node 断言崩掉（退出码
+      // 3221226505），外层就分不清是断开（75）还是崩了
+      setTimeout(() => process.exit(exitCode), 200);
     })();
   }
 
@@ -1610,7 +1624,7 @@ function main() {
       lastRequestAt = saved.lastRequestAt;
       contextTokens = saved.contextTokens;
       info(`接着上次的会话 ${conversationId}（${Math.round((Date.now() - lastRequestAt) / 60000)} 分钟前，上下文 ${Math.round(contextTokens / 1000)}k）`);
-      resumeNote = '托管刚重启过（一般是开发那边更新了程序）';
+      resumeNote = args.reconnect ? '刚重新连上游戏（游戏关过、退出过世界或者你死过一次），先看看现在的状态' : '托管刚重启过（一般是开发那边更新了程序）';
       startAgent();
     } else {
       startAgent();
@@ -1620,7 +1634,8 @@ function main() {
   // 死掉的角色接管不了（claim 会拒绝 DEAD_BODY），先走原生重生再启动 agent
   if (args.body === 'server') {
     void respawnIfDead(BODY_SCOPE).then((outcome) => {
-      if (outcome === 'respawned') {
+      // start-server-play --wait 等连接时已经复活过的，由环境变量告诉这里
+      if (outcome === 'respawned' || (outcome === 'alive' && process.env.MCBOT_RESPAWNED === '1')) {
         info('角色之前死了，已经原生重生（有床就在床边，没有就在世界出生点）');
         respawnNote = '【角色重生】你之前死了，托管启动时已在重生点复活。身上的东西可能掉在死的地方；先看看自己在哪、还剩什么。';
       } else if (outcome !== 'alive') info(`启动时没能检查角色是不是死了：${outcome}`);

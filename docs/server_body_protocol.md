@@ -210,7 +210,7 @@ node client-runtime/dist/main.js --body server --respawn-only --connection-file 
 
 此命令只执行 hello→respawn，不开启 MCP、不写租约控制文件、不调用 claim，不能带 --hosted。返回确认后还须显式启动新的 MCP 取得新 lease；原失效 MCP 保持终止态。重生请求超时先查 hello／实际角色，不盲目重试。
 
-托管驱动器（`scripts/companion.mjs`，WebUI 启动托管也走它）从 2026-10-08 起在启动 Agent 之前做同样的 hello→respawn 一次（`respawnIfDead`）：角色死了就原生重生，下一轮提示 Agent 自己死过、东西可能掉在死的地方；活着的角色服务端用 INVALID_ARGUMENT 拒绝，驱动器当作“不用重生”；服务器没开或身份不符只记日志，照常启动。它不 claim、不重试，托管途中死亡仍然不会自动重生。C 的真实模型陪玩与 D 的内容 Mod 验证分别验收，不由这些能力名称代表完成。
+托管驱动器（`scripts/companion.mjs`，WebUI 启动托管也走它）从 2026-10-08 起在启动 Agent 之前做同样的 hello→respawn 一次（`respawnIfDead`）：角色死了就原生重生，下一轮提示 Agent 自己死过、东西可能掉在死的地方；活着的角色服务端用 INVALID_ARGUMENT 拒绝，驱动器当作“不用重生”；服务器没开或身份不符只记日志，照常启动。它不 claim、不重试，驱动器自己仍然不在托管途中重生；10-10 起 `start-server-play.mjs --wait`（WebUI 启动托管用它）在驱动器外面做：驱动器带 `--reconnect`，收到 `disconnect` 事件（死亡、换世界、游戏关了）就撤销（不带 leave）并以 75 退出，启动脚本每 2 秒重读连接文件再做一次 hello→respawn，能接管了（`alive` 或 `respawned`）才重新启动驱动器、重新 claim；`SINGLEPLAYER_NOT_LAN`、`GAME_PAUSED`、连不上都只是继续等。仍然不靠自动重新 claim 绕过租约：每次都是新驱动器的显式 claim。C 的真实模型陪玩与 D 的内容 Mod 验证分别验收，不由这些能力名称代表完成。
 
 ServerBody 取得租约后，将本机 `runtimeDir/server-control-<username>.json` 原子写入：`{protocol:2,backend:"server",connectionFile,worldId,username,instanceId,sessionId,leaseId,stopToken,controllerId,chatCursor}`。不要写连接 token；宿主通过所选 connectionFile 读取。退出时只删除仍属于自身 lease 的文件，日志／MCP 工具不能泄漏 stopToken。宿主必须核对配置路径、世界、角色、服务实例与当前租约，避免旧控制文件影响其它任务。
 

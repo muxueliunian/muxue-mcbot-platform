@@ -79,12 +79,13 @@ node scripts/webui.mjs --open      # 默认端口 8770，--port 换端口，--ru
 - 页面上的「陪伴模式」「最近工具」「最近出错」是从记录里推算的。
 - 「叫停」放 `companion-<名字>.halt` 标记，驱动器按游戏里叫停的流程停下动作和推理，等玩家用名字或昵称给新任务（目前只支持 ServerBody）；「停止托管」放 `companion-<名字>.stop`，和 `stop-companion.ps1` 一样让驱动器退出。WebUI 不碰游戏，关掉它不影响托管。
 - 「配置」页（`scripts/webui-profiles.mjs`、`scripts/webui-games.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。10-10 按小白的操作顺序分成标签页（第一次给朋友试玩前用户要求的，一次只看一块，信息别太密），前四个是：
-  1. **连接配置**：自动列出本机的游戏目录（Prism、ElyPrism、MultiMC、PolyMC 的实例，`%APPDATA%\.minecraft` 和它 `versions` 下的版本隔离目录；找不到的手动粘贴目录添加，记在 `runtime/webui-games.json`），每个显示核心模组装没装、和包里的 jar 是否逐字节相同（不同多半是旧版）、开没开过世界、世界现在开着没有（用连接文件问一次 hello）。点一下连接文件就自动填好；手动指定连接文件挪到高级里。
-  2. **角色**：游戏名（写游戏目录里 `config/mcbot-server-control/server.json` 的 `username`，只改这一项，模组开世界时读，世界开着要退出重进）、昵称、外观卡片（YSM 模型的显示名读 `ysm.json`；世界没开时直接列 `config/yes_steve_model/custom` 里的模型，要装了 YSM 适配）。
+  1. **连接配置**：先选模式「单人 / 局域网」或「服务器」（有 `server.properties` 的目录算服务器），再从本机的游戏目录里点一个（Prism、ElyPrism、MultiMC、PolyMC 的实例，`%APPDATA%\.minecraft` 和它 `versions` 下的版本隔离目录；服务器和找不到的手动粘贴目录添加，记在 `runtime/webui-games.json`），每个显示核心模组装没装、和包里的 jar 是否逐字节相同（不同多半是旧版）、开没开过世界、世界现在开着没有（用连接文件问一次 hello）。地址固定是本机（控制口只开在 127.0.0.1，服务器模式要在开服的那台电脑上运行；远程地址以后单独做），端口可改（写 `server.json` 的 `port`，默认 8766）。10-10 起档案只存游戏目录、模式、名字和端口，**连接文件不出现在网页上**：它在 `<游戏目录>/config/mcbot-server-control/connection.json`，模组每次开世界都换令牌重写；旧档案的 `connectionFile` 读的时候换成游戏目录。
+  2. **角色**：游戏名（存在档案里，保存和启动托管时写进游戏目录的 `server.json`，只改 `username` 和 `port`，没有文件就按模组默认值建一个；模组开世界时读，世界开着要退出重进）、昵称、外观卡片（YSM 模型的显示名读 `ysm.json`；世界没开时直接列 `config/yes_steve_model/custom` 里的模型，要装了 YSM 适配）。
   3. **灵魂设置**：Agent、凭据、模型、思考强度、账号目录（新建 dsh 配置时有 `~/.dsh` 就默认用它）、人设。人设编辑的就是托管时带上的 `persona.md`，位置和 `companion.mjs` 的 `resolveMemory` 一致：Claude 是 `<记忆目录>/xiaoke/persona.md`，dsh、Codex 是 `<记忆目录，默认 runtime/<agent>-memory>/<游戏名小写>/persona.md`；改游戏名时把已有的人设带到新名字下。「填入示例」给一份带说话方式的人设（不报错误码、不说客服腔、短句），说话风格放在人设里，不写死在系统指令里。
   4. **行为**：保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)）。
-  「高级」标签里有凭据、连接文件、记忆目录、蓝图目录、Node 路径和会话选项；每项对应 `scripts/start-server-play.mjs` 的同名参数。托管退出后按日志区分「游戏关了，已结束」「已停止」「托管中途退出」「启动失败」，不再一律显示启动失败。「保存并启动托管」用跑 WebUI 的同一个 Node 执行 `scripts/start-server-play.mjs --headless`（10-10 起不再需要 PowerShell），脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换启动命令。
-- 配置页只存路径和参数，不存凭据：Agent 用账号目录里已有的登录；档案里出现 `apiKey` 这类不认识的字段会被拒绝。连接文件只读出角色、世界和地址，控制令牌不回传给网页。能从网页启动托管，就等于拿到令牌的人能用你的账号开托管，所以令牌地址不要发给别人。
+  「高级」标签里有凭据、记忆目录、蓝图目录、Node 路径和会话选项；每项对应 `scripts/start-server-play.mjs` 的同名参数。托管退出后按日志区分「游戏关了，已结束」「已停止」「托管中途退出」「启动失败」，不再一律显示启动失败。「保存并启动托管」用跑 WebUI 的同一个 Node 执行 `scripts/start-server-play.mjs --headless --wait --username <名字>`（10-10 起不再需要 PowerShell），脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。
+  - **先开托管还是先开世界都行**（10-10 实测反馈：先开托管再开局域网进不来、改名没生效、死了不复活）：`--wait` 时启动脚本每 2 秒重新读连接文件，用 `respawn` 探一次能不能接管——服务端在接管前检查单人有没有开局域网、是不是暂停，死了的角色顺便原生复活，活着的回 `INVALID_ARGUMENT`。没开世界、没开局域网、暂停、世界里的名字和配置不一样时页面显示「等待中：…」，「停止托管」也能停（启动脚本看 `companion-<名字>.stop`）。能接管了才启动驱动器；驱动器带 `--reconnect`，身体断开（游戏关了、退出世界、角色死了，运行端发 `disconnect` 事件）就撤销（不让角色下线）并以退出码 75 退出，启动脚本回去等，能连上时重新启动驱动器（会话照常接着，复活过的告诉 Agent 自己死过）。一连上就断的按次数退避，最多 60 秒一次；别的退出码（停止、崩溃）直接结束。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换启动命令。
+- 配置页只存路径和参数，不存凭据：Agent 用账号目录里已有的登录；档案里出现 `apiKey` 这类不认识的字段会被拒绝。连接文件只在本机读出角色、世界和地址，控制令牌不回传给网页。能从网页启动托管，就等于拿到令牌的人能用你的账号开托管，所以令牌地址不要发给别人。
 
 ## 打包绿色版
 

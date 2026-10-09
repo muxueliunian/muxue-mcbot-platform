@@ -1,12 +1,15 @@
 // WebUI 的托管配置：按档案存在 runtime/webui-profiles.json（被 git 忽略），用 node scripts/start-server-play.mjs --headless 启动（不需要 PowerShell）。
 // 只存启动参数和路径，不存凭据：Agent 用本机已有的登录或配置目录；API key 以后再做（credential.kind 预留）。
-// 连接文件里的控制令牌只在这里校验，不返回给网页。
+// 档案只记游戏目录和模式（lan：玩家自己的游戏开单人世界再对局域网开放；server：本机的服务器目录），
+// 连接文件由游戏目录推出来（模组写在 config/mcbot-server-control/connection.json），里面的控制令牌只在这里校验，不返回给网页。
+// 旧档案存的是 connectionFile，读的时候换成游戏目录。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { connectionFileOf, gameDirOf, gameType, readGameConfig, writeGameConfig } from './webui-games.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FILE = 'webui-profiles.json';
@@ -48,7 +51,8 @@ export const GUARD_OPTIONS = Object.freeze({
   guardShield: { flag: '--guard-shield', kind: 'switch' },
 });
 
-const KEYS = new Set(['id', 'label', 'agent', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'blueprintDir', 'nodePath',
+export const MODES = Object.freeze({ lan: '单人 / 局域网', server: '服务器' });
+const KEYS = new Set(['id', 'label', 'agent', 'gameDir', 'mode', 'username', 'port', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'blueprintDir', 'nodePath',
   'credential', 'updatedAt', 'appearance', ...Object.keys(SESSION_OPTIONS), ...Object.keys(GUARD_OPTIONS)]);
 
 const plainText = (v) => typeof v === 'string' && !/[\u0000-\u001f\u007f]/.test(v);
@@ -63,6 +67,33 @@ function checkPath(v, label, required = false) {
   const expanded = expandHome(v);
   if (!path.isAbsolute(expanded)) throw new Error(`${label}要填完整路径（可以用 ~ 开头）`);
   return path.normalize(expanded);
+}
+
+/** 游戏目录和模式；旧档案只有 connectionFile 时从它推出游戏目录，模式看目录里有没有 server.properties。 */
+function gameOf(input) {
+  let gameDir = checkPath(input.gameDir, '游戏目录');
+  if (!gameDir && input.connectionFile) {
+    gameDir = gameDirOf(checkPath(input.connectionFile, '连接文件'));
+    if (!gameDir) throw new Error('旧配置的连接文件不在游戏目录里，请在「连接配置」重新选游戏');
+  }
+  if (!gameDir) throw new Error('先在「连接配置」选一个游戏');
+  const mode = input.mode === undefined || input.mode === null || input.mode === '' ? gameType(gameDir) : input.mode;
+  if (!MODES[mode]) throw new Error('模式只能是单人局域网或服务器');
+  return { gameDir, mode };
+}
+
+/** Bot 的游戏名：存在档案里，启动托管前写进游戏的 server.json。旧档案没有就留空，启动时用游戏里现在的名字。 */
+function botName(v) {
+  const name = String(v ?? '').trim();
+  if (name && !NAME_RE.test(name)) throw new Error('游戏名只能用英文字母、数字和下划线，最多 16 个');
+  return name;
+}
+/** 控制口端口（只在本机）；null 表示沿用游戏里现在的（默认 8766）。 */
+function portOf(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1024 || n > 65535) throw new Error('端口要是 1024～65535 的整数');
+  return n;
 }
 
 /** 校验并整理一份档案；不认识的字段（比如 apiKey）直接拒绝，避免明文凭据被存下来。 */
@@ -86,7 +117,9 @@ export function normalizeProfile(input) {
   const out = {
     id: input.id && ID_RE.test(input.id) ? input.id : crypto.randomBytes(4).toString('hex'),
     label, agent, effort, model, nickname, appearance,
-    connectionFile: checkPath(input.connectionFile, '连接文件', true),
+    ...gameOf(input),
+    username: botName(input.username),
+    port: portOf(input.port),
     configDir: checkPath(input.configDir, '账号目录'),
     memoryDir: checkPath(input.memoryDir, '记忆目录'),
     blueprintDir: checkPath(input.blueprintDir, '蓝图目录'),
@@ -151,7 +184,7 @@ export function deleteProfile(runtime, id) {
 export function inspectConnection(file) {
   let c;
   try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
-    return { ok: false, error: e.code === 'ENOENT' ? '连接文件不存在' : '连接文件读不了或不是 JSON' };
+    return e.code === 'ENOENT' ? { ok: false, code: 'missing', error: '连接文件不存在' } : { ok: false, error: '连接文件读不了或不是 JSON' };
   }
   if (c?.protocol !== 2 || c?.backend !== 'server') return { ok: false, error: '不是协议 2 的 ServerBody 连接文件' };
   if (!NAME_RE.test(c.username || '') || !c.worldId || !c.token) return { ok: false, error: '连接文件缺少有效的 username、worldId 或令牌' };
@@ -159,6 +192,37 @@ export function inspectConnection(file) {
   try { endpoint = new URL(c.endpoint); } catch { return { ok: false, error: '连接文件里的地址不对' }; }
   if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(endpoint.hostname)) return { ok: false, error: '目前只支持本机 http 控制口' };
   return { ok: true, username: c.username, worldId: String(c.worldId), endpoint: endpoint.origin };
+}
+
+/** 档案对应的游戏现在能不能连：错误说成玩家能照着做的话，不提连接文件。 */
+export function profileGame(profile) {
+  const server = profile.mode === 'server';
+  let isDir = false;
+  try { isDir = fs.statSync(profile.gameDir).isDirectory(); } catch { /* 不存在 */ }
+  if (!isDir) return { ok: false, error: server ? '找不到这个服务器目录，在「连接配置」重新选' : '找不到这个游戏目录，在「连接配置」重新选' };
+  if (server !== (gameType(profile.gameDir) === 'server')) return { ok: false, error: server ? '这个目录不是服务器（没有 server.properties），在「连接配置」重新选' : '这是服务器目录，要用「服务器」模式' };
+  return { ok: true };
+}
+/** Bot 名：档案里填的，没填就用游戏里现在的。 */
+export const profileName = (profile) => profile.username || readGameConfig(profile.gameDir).username;
+
+/** 把档案里的 Bot 名和端口写进游戏（保存和启动托管时都写）；返回写之后的名字。 */
+export function applyToGame(profile) {
+  const game = profileGame(profile);
+  if (!game.ok) return game;
+  const now = readGameConfig(profile.gameDir), username = profile.username || now.username;
+  if (!username) return { ok: false, error: '先在「角色」里填 Bot 的游戏名' };
+  const r = writeGameConfig(profile.gameDir, { username, port: profile.port ?? now.port });
+  return r.ok ? { ...r, username, renamed: !!now.username && now.username !== username } : r;
+}
+
+export function profileConnection(profile) {
+  const server = profile.mode === 'server';
+  const game = profileGame(profile);
+  if (!game.ok) return game;
+  const conn = inspectConnection(connectionFileOf(profile.gameDir));
+  if (conn.ok || conn.code !== 'missing') return conn;
+  return { ok: false, error: server ? '服务器还没开过：装好核心模组后先开一次服务器' : '还没开过世界：进游戏开世界，按 Esc 选「对局域网开放」' };
 }
 
 /**
@@ -208,7 +272,10 @@ export function accountDirs(home = os.homedir()) {
 
 /** 拼 scripts/start-server-play.mjs 的参数。每个值都是单独一项，不经过 shell；值不会以 - 开头（路径是绝对路径，其余已校验）。 */
 export function launchArgs(profile, script = path.join(ROOT, 'scripts', 'start-server-play.mjs')) {
-  const a = [script, '--connection-file', profile.connectionFile, '--agent', profile.agent, '--effort', profile.effort, '--headless'];
+  // --wait：世界没开、没开局域网时一直等，断开了自动重连，死了先复活（见 start-server-play.mjs）
+  const a = [script, '--connection-file', connectionFileOf(profile.gameDir), '--agent', profile.agent, '--effort', profile.effort, '--headless', '--wait'];
+  const name = profileName(profile);
+  if (name) a.push('--username', name);
   if (profile.nickname) a.push('--nickname', profile.nickname);
   if (profile.configDir) a.push('--config-dir', profile.configDir);
   if (profile.memoryDir) a.push('--memory-dir', profile.memoryDir);
@@ -238,13 +305,24 @@ const tail = (file) => {
 
 /**
  * 托管进程退出的原因，给网页显示：跑过一阵才退出的不算「启动失败」。
- * 游戏关了或退出世界时驱动器报连接断开（TRANSPORT_LOST、CONTROL_UNREACHABLE）。
+ * 用户点了停止的先认（等待期间断开过的日志里也会有断开字样）；没带 --wait 的旧托管在游戏关了或退出世界时报连接断开。
  */
 export function endReason(rec, log = '') {
+  if (/收到停止|stop marker/i.test(log)) return 'stopped';
   if (/TRANSPORT_LOST|CONTROL_UNREACHABLE|超时或断开/.test(log)) return 'disconnected';
-  if (/收到停止标记|stop marker/i.test(log)) return 'stopped';
   if (rec.exitCode === 0) return 'stopped';
   return (rec.endedAt || 0) - rec.startedAt > 60000 ? 'crashed' : 'failed';
+}
+
+/** 启动脚本在等什么：日志里最后一行「[等待] …」之后还没开始托管就算在等。 */
+export function waitingText(log = '') {
+  const lines = log.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^\[等待\] (.+)$/.exec(lines[i].trim());
+    if (m) return m[1];
+    if (/^ServerBody 配置：/.test(lines[i].trim())) return '';
+  }
+  return '';
 }
 
 /** 启动记录：同一个 WebUI 进程里启动过的，记下进程和退出码；脚本的输出写进 runtime/webui-launch-<角色>.log。 */
@@ -252,12 +330,13 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
   const launches = new Map();
   return {
     launch(profile) {
-      const conn = inspectConnection(profile.connectionFile);
-      if (!conn.ok) return conn;
-      const name = conn.username;
+      // 世界开没开不用管：启动脚本会等。这里只把名字和端口写进游戏
+      const applied = applyToGame(profile);
+      if (!applied.ok) return applied;
+      const name = applied.username;
       if (isRunning(name)) return { ok: false, error: `${name} 已经在托管了，先停止再启动` };
       const last = launches.get(name);
-      if (last && last.exitCode === null && Date.now() - last.startedAt < 30000) return { ok: false, error: `${name} 正在启动` };
+      if (last && last.exitCode === null) return { ok: false, error: `${name} 已经启动了（在等世界或者在托管），先停止再启动` };
       fs.mkdirSync(runtime, { recursive: true });
       const logFile = path.join(runtime, `webui-launch-${name}.log`);
       const fd = fs.openSync(logFile, 'w');
@@ -285,9 +364,10 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
     status(name) {
       const rec = launches.get(name);
       if (!rec) return null;
-      const log = rec.exitCode === null ? '' : tail(rec.logFile);
+      const log = tail(rec.logFile);
       return { profileId: rec.profileId, startedAt: rec.startedAt, endedAt: rec.endedAt || 0, exitCode: rec.exitCode,
-        error: rec.error || '', log, ended: rec.exitCode === null ? '' : endReason(rec, log) };
+        error: rec.error || '', log: rec.exitCode === null ? '' : log, ended: rec.exitCode === null ? '' : endReason(rec, log),
+        waiting: rec.exitCode === null ? waitingText(log) : '' };
     },
   };
 }

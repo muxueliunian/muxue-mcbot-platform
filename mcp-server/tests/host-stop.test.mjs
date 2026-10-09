@@ -376,3 +376,37 @@ test('真实分类器接入watch：旧watch的叫停不能撤销新租约', asyn
     assert.equal(f.state.lease.leaseId, 'next');
   } finally { control.close(); await f.close(); }
 });
+
+test('宿主 --reconnect：身体断开（游戏关了或角色死了）就以 75 退出，撤销时不让角色下线，交给外层重连', async () => {
+  const f = await fixture();
+  const runtime = path.join(f.dir, 'runtime'); fs.mkdirSync(runtime);
+  const config = path.join(f.dir, 'mcp.json');
+  fs.writeFileSync(config, JSON.stringify({ mcpServers: { minecraft: { command: process.execPath,
+    args: ['not-executed.mjs', '--body', 'server', '--connection-file', f.scope.connectionFile, '--world-id', f.scope.worldId] } } }));
+  const F = runtimeFiles(runtime, f.scope.username), agentLog = path.join(f.dir, 'agent.jsonl');
+  const turns = () => { try { return fs.readFileSync(agentLog, 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter(r => r.kind === 'turn'); } catch { return []; } };
+  let output = '';
+  const driver = spawn(process.execPath, [path.join(ROOT, 'scripts/companion.mjs'), '--agent', 'claude',
+    '--body', 'server', '--name', f.scope.username, '--nickname', '小克', '--mcp-config', config, '--headless', '--reconnect'], {
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env,
+      COMPANION_RUNTIME_DIR: runtime, COMPANION_MEMORY_DIR: path.join(f.dir, 'memory'),
+      COMPANION_AGENT_CMD: JSON.stringify([process.execPath, path.join(ROOT, 'mcp-server/tests/fixtures/fake-server-agent.mjs')]),
+      FAKE_SERVER_AGENT: 'claude', FAKE_AGENT_LOG: agentLog,
+    },
+  });
+  driver.stdout.on('data', data => { output += data; }); driver.stderr.on('data', data => { output += data; });
+  const exited = new Promise((resolve, reject) => { driver.once('exit', resolve); driver.once('error', reject); });
+  try {
+    await waitFor(() => f.state.claims === 1 && turns().length === 1, '启动轮');
+    fs.appendFileSync(F.events, JSON.stringify({ session: 'regression-journal', seq: 1, timestamp: Date.now(), type: 'disconnect',
+      text: '服务端拒绝请求（WORLD_CHANGED）' }) + '\n');
+    await waitFor(() => driver.exitCode !== null, '断开后退出', 15000);
+    assert.equal(driver.exitCode, 75, output);
+    assert.match(output, /角色断开，等重新连接/);
+    assert.ok(f.state.calls.filter(c => c.method === 'revoke').every(c => !c.leave), '等重连时不让角色下线（死了的要留着复活）');
+    assert.equal(fs.existsSync(F.lock), false, '退出释放宿主锁，外层能马上重新启动');
+  } finally {
+    if (driver.exitCode === null) driver.kill('SIGKILL');
+    await exited; await f.close();
+  }
+});

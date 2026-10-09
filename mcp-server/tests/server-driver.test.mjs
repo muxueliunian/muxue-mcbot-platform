@@ -326,6 +326,41 @@ test('start-server-play.mjs只要Node：参数和ps1一样转进mcp.json和驱�
     assert.throws(()=>prepareServerPlay(parseArgs(['--connection-file',connectionFile]),{root:dir}),/找不到运行端/,'没构建就说清楚');
     const cli=spawnSync(process.execPath,[path.join(ROOT,'scripts/start-server-play.mjs'),'--connection-file',path.join(dir,'none.json')],{encoding:'utf8',windowsHide:true});
     assert.equal(cli.status,2);assert.match(cli.stderr,/connection\.json/);
+    const waiting=prepareServerPlay(parseArgs(['--connection-file',connectionFile,'--wait','--prepare-only']),{root:dir});
+    assert.ok(waiting.driverArgs.includes('--reconnect'),'--wait 时驱动器断开就退出，交给外层重连');
+  }finally{cleanup(dir);}
+});
+
+test('start-server-play --wait：等到能接管才启动托管，断开（75）回去等，别的退出码直接结束；等待时也能停',async()=>{
+  const {supervise,readiness}=await import('../../scripts/start-server-play.mjs');
+  const {RECONNECT_EXIT}=await import('../../scripts/companion.mjs');
+  const dir=temp();const connectionFile=path.join(dir,'connection.json');
+  try{
+    // readiness：每次重新读连接文件；名字对不上等玩家重进世界；没开局域网、暂停、连不上都等
+    assert.equal((await readiness(connectionFile,'Claude',{respawn:async()=>'alive'})).code,'NO_CONNECTION_FILE');
+    fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'t',worldId:'sp-w',username:'ServerBot'}));
+    const pending=await readiness(connectionFile,'Claude',{respawn:async()=>{throw new Error('名字不对时不该去问');}});
+    assert.equal(pending.code,'NAME_PENDING');assert.match(pending.wait,/还叫 ServerBot.*Claude/);
+    let seen;
+    assert.match((await readiness(connectionFile,'ServerBot',{respawn:async(s)=>{seen=s;return 'SINGLEPLAYER_NOT_LAN';}})).wait,/对局域网开放/);
+    assert.deepEqual(seen,{connectionFile,username:'ServerBot',worldId:'sp-w'});
+    assert.match((await readiness(connectionFile,'ServerBot',{respawn:async()=>'CONTROL_UNREACHABLE'})).wait,/等世界打开/);
+    assert.deepEqual(await readiness(connectionFile,'ServerBot',{respawn:async()=>'respawned'}),{ok:true,respawned:true});
+    // supervise：没好就等，好了就跑；75 回去等，第二次正常退出就结束
+    const states=[{ok:false,wait:'等世界打开'},{ok:false,wait:'等世界打开'},{ok:true,respawned:false},{ok:false,wait:'等世界打开'},{ok:true,respawned:true}];
+    const runs=[],logs=[],codes=[RECONNECT_EXIT,0];
+    const fakePrepare={'connection-file':connectionFile,username:'ServerBot',wait:true};const prepare=()=>({lines:['ServerBody 配置：x']});
+    const code=await supervise(fakePrepare,{runtime:dir,prepare,check:async()=>states.shift(),run:async(p,respawned)=>{runs.push(respawned);return codes.shift();},sleep:async()=>{},log:(l)=>logs.push(l),pollMs:0});
+    assert.equal(code,0);assert.deepEqual(runs,[false,true],'复活过的告诉驱动器');
+    assert.equal(logs.filter(l=>l==='[等待] 等世界打开').length,2,'同一句等待只在变化时说');
+    assert.ok(logs.some(l=>/角色断开了/.test(l)));assert.ok(logs.some(l=>/已经原生复活/.test(l)));
+    // 等待中放停止标记：不启动就退出
+    fs.writeFileSync(path.join(dir,'companion-ServerBot.stop'),'1');
+    let ran=false;
+    assert.equal(await supervise(fakePrepare,{runtime:dir,prepare,check:async()=>({ok:false,wait:'x'}),run:async()=>{ran=true;return 0;},sleep:async()=>{},log:()=>{},pollMs:0}),0);
+    assert.equal(ran,false);assert.equal(fs.existsSync(path.join(dir,'companion-ServerBot.stop')),false,'停止标记用掉了');
+    // 托管自己出错（不是断开）不重启
+    assert.equal(await supervise(fakePrepare,{runtime:dir,prepare,check:async()=>({ok:true}),run:async()=>3,sleep:async()=>{},log:()=>{},pollMs:0}),3);
   }finally{cleanup(dir);}
 });
 

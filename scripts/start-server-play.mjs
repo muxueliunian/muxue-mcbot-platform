@@ -2,10 +2,15 @@
 // 接入已启动的 ServerBody 控制口并启动托管；Agent 默认在本机现有登录环境运行。
 // 只要 Node，不需要 PowerShell：WebUI 和绿色版都用这个；start-server-play.ps1 只是把参数转过来。
 // 用法：node scripts/start-server-play.mjs --connection-file <connection.json> [--agent claude|codex|dsh] [--effort low] [--prepare-only] ...
+// --wait（WebUI 用）：世界没开、没对局域网开放、游戏暂停时一直等，能接管了再启动托管；角色断开（游戏关了、退出世界、
+// 死了）就回去等，能连上时自动接上，死了的先原生复活。--username <名字> 是配置里的 Bot 名，世界里的名字不一样时等玩家重进世界；
+// 等待期间 runtime/companion-<名字>.stop 一样能停。
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { respawnIfDead } from './server-body-control.mjs';
+import { RECONNECT_EXIT } from './companion.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const AGENTS = ['claude', 'codex', 'dsh'];
@@ -15,8 +20,8 @@ const NICKNAMES = { claude: '小克', dsh: 'DeepSeek', codex: 'Codex' };
 // 会话选项，-1（或不填）表示用驱动器的默认值（见 scripts/companion.mjs 开头的说明）
 const SESSION = { 'idle-minutes': 1440, 'resume-window-min': 1440, 'rotate-tokens': 2000000, 'max-restarts': 100 };
 const VALUE_FLAGS = ['connection-file', 'agent', 'nickname', 'config-dir', 'memory-dir', 'model', 'node-path', 'effort',
-  'guard', 'guard-radius', 'guard-low-health', 'guard-bow', 'guard-shield', 'appearance', 'blueprint-dir', ...Object.keys(SESSION)];
-const SWITCHES = ['headless', 'prepare-only'];
+  'guard', 'guard-radius', 'guard-low-health', 'guard-bow', 'guard-shield', 'appearance', 'blueprint-dir', 'username', ...Object.keys(SESSION)];
+const SWITCHES = ['headless', 'prepare-only', 'wait'];
 
 export function parseArgs(argv) {
   const o = {};
@@ -113,15 +118,91 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   if (options.model) driverArgs.push('--model', options.model);
   for (const [flag, value] of Object.entries(session)) if (value !== undefined && value >= 0) driverArgs.push(`--${flag}`, String(value));
   if (options.headless) driverArgs.push('--headless');
+  if (options.wait) driverArgs.push('--reconnect');
   const lines = [`ServerBody 配置：${configFile}`, `角色：${name}；世界：${worldId}；Agent：${agent}；思考：${effort}`,
     `默认沿用本机现有 Agent 登录。停止托管：在 WebUI 点「停止托管」（从仓库运行时也可用 stop-companion.ps1 ${name}），角色保留`,
     `叫停后，请用角色名或昵称明确提出新任务，例如：${nickname}，查询状态。`];
   return { name, worldId, configFile, nodePath, driverArgs, lines, prepareOnly };
 }
 
+const WAIT_TEXT = {
+  closed: '等世界打开：进游戏开世界（单人还要按 Esc 点「对局域网开放」），或者把服务器开起来',
+  SINGLEPLAYER_NOT_LAN: '世界开着，还差一步：按 Esc 点「对局域网开放」',
+  GAME_PAUSED: '游戏暂停着，回到游戏里就行',
+};
+
+/**
+ * 现在能不能接管：每次重新读连接文件（模组每次开世界都换令牌），问一次 respawn——服务端在接管前检查
+ * 单人有没有开局域网、是不是暂停，死了的角色顺便原生复活，活着的回 INVALID_ARGUMENT（当作 alive）。
+ */
+export async function readiness(connectionPath, expected = '', { respawn = respawnIfDead } = {}) {
+  let c = null;
+  try { c = JSON.parse(fs.readFileSync(connectionPath, 'utf8').replace(/^﻿/, '')); } catch { return { ok: false, wait: WAIT_TEXT.closed, code: 'NO_CONNECTION_FILE' }; }
+  const username = String(c?.username ?? ''), worldId = String(c?.worldId ?? '');
+  if (expected && username && username !== expected) {
+    return { ok: false, code: 'NAME_PENDING', wait: `世界里的 Bot 还叫 ${username}，配置里是 ${expected}：退出世界再进来（服务器要重开）就会换成新名字` };
+  }
+  const outcome = await respawn({ connectionFile: connectionPath, username, worldId });
+  if (outcome === 'alive') return { ok: true, respawned: false };
+  if (outcome === 'respawned') return { ok: true, respawned: true };
+  return { ok: false, code: outcome, wait: WAIT_TEXT[outcome] || WAIT_TEXT.closed };
+}
+
+function runDriver(prepared, respawned) {
+  return new Promise((resolve) => {
+    const child = spawn(prepared.nodePath, prepared.driverArgs, { cwd: ROOT, stdio: 'inherit', windowsHide: true,
+      env: { ...process.env, ...(respawned ? { MCBOT_RESPAWNED: '1' } : {}) } });
+    child.on('error', (e) => { console.error(`驱动器没能启动：${e.message}`); resolve(1); });
+    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+  });
+}
+
+/** --wait：等到能接管再启动托管，断开了回去等；返回最后的退出码。 */
+export async function supervise(options, { runtime = process.env.COMPANION_RUNTIME_DIR ? path.resolve(process.env.COMPANION_RUNTIME_DIR) : path.join(ROOT, 'runtime'),
+  check = readiness, prepare = prepareServerPlay, run = runDriver, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log, now = Date.now, pollMs = 2000 } = {}) {
+  if (!options['connection-file']) throw new Error('请提供游戏目录里的 config/mcbot-server-control/connection.json（--connection-file）');
+  const connectionPath = full(options['connection-file']);
+  const expected = options.username || '';
+  if (expected && !/^[A-Za-z0-9_]{1,16}$/.test(expected)) throw new Error('--username 必须是 1～16 位英文、数字或下划线');
+  const stopFile = expected ? path.join(runtime, `companion-${expected}.stop`) : '';
+  const stopRequested = () => {
+    if (!stopFile || !fs.existsSync(stopFile)) return false;
+    try { fs.rmSync(stopFile, { force: true }); } catch { /* 下一轮还会看到 */ }
+    return true;
+  };
+  let said = '', quickExits = 0;
+  for (;;) {
+    if (stopRequested()) { log('收到停止，不再等待'); return 0; }
+    const state = await check(connectionPath, expected);
+    if (!state.ok) {
+      if (state.wait !== said) { log(`[等待] ${state.wait}`); said = state.wait; }
+      await sleep(pollMs);
+      continue;
+    }
+    said = '';
+    // 每次连上都重新准备：世界可能换了（worldId 跟着连接文件走）
+    const prepared = prepare(options);
+    for (const line of prepared.lines) log(line);
+    if (state.respawned) log('角色之前死了，已经原生复活（有床就在床边，没有就在世界出生点）');
+    const started = now();
+    const code = await run(prepared, state.respawned);
+    if (code !== RECONNECT_EXIT) return code;
+    // 一连上就断的（比如身份对不上）别连得太勤
+    quickExits = now() - started < 30000 ? quickExits + 1 : 0;
+    log('[等待] 角色断开了，能连上时自动接上');
+    said = '';
+    await sleep(quickExits ? Math.min(60000, 5000 * quickExits) : 1000);
+  }
+}
+
 async function main() {
+  let options;
+  try { options = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
+  if (options.wait && !options['prepare-only']) {
+    try { process.exit(await supervise(options)); } catch (e) { console.error(e.message); process.exit(2); }
+  }
   let prepared;
-  try { prepared = prepareServerPlay(parseArgs(process.argv.slice(2))); } catch (e) { console.error(e.message); process.exit(2); }
+  try { prepared = prepareServerPlay(options); } catch (e) { console.error(e.message); process.exit(2); }
   for (const line of prepared.lines) console.log(line);
   if (prepared.prepareOnly) return;
   const child = spawn(prepared.nodePath, prepared.driverArgs, { cwd: ROOT, stdio: 'inherit', windowsHide: true });

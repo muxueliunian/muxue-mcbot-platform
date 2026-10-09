@@ -1,9 +1,11 @@
 package com.mcbot.servercontrol.api.workstation;
 
 import java.util.List;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
@@ -55,4 +57,11 @@ public interface WorkstationAdapter {
 
     /** Experience levels taking the current result would cost (anvil); 0 when free. */
     default int levelCost(AbstractContainerMenu menu) { return 0; }
+
+    /**
+     * Optional: the machine's contents and progress read from the block in a loaded chunk, without opening its menu
+     * (for "load it, leave, come back when it is done"). Read only; never change anything here. null when not
+     * supported; the core then only estimates by time.
+     */
+    default StationProgress progress(Level level, BlockPos pos, BlockState state) { return null; }
 }

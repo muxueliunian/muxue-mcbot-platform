@@ -126,7 +126,7 @@
 
 - **A（10-07 完成）**：见交付计划 8l。
 - **B、C（10-07 完成）**，实现时的取舍：
-  - 模板加了 `OPTION_PICKER`、`IN_PLACE`、`MODIFIER`；适配接口加了 `options`（按钮选项）、`levelCost`、`fuelLeft`，配方来源加了 `isIngredient`、`transform`（原地变化，酿造用）。原版切石机、酿造台、附魔台、铁砧（三种破损程度）、砂轮、锻造台、织布机、制图台都是内置适配。
+  - 模板加了 `OPTION_PICKER`、`IN_PLACE`、`MODIFIER`；适配接口加了 `options`（按钮选项）、`levelCost`、`fuelLeft`（10-09 又加了可选的 `progress`，不开界面读进度，见 8b），配方来源加了 `isIngredient`、`transform`（原地变化，酿造用）。原版切石机、酿造台、附魔台、铁砧（三种破损程度）、砂轮、锻造台、织布机、制图台都是内置适配。
   - 工具按设计是 `workstation-options`、`produce-item`、`modify-item`。预览不另开工具：`modify-item` 带 `preview:true` 就是预览，走过去、放进去、读结果和花费、全部拿回。
   - 物品引用（ref）是随机串，绑定那一格和那一叠的完整内容；预览或被拒绝后东西拿回来可能换了格子，ref 跟着指到拿回后的那一格（内容必须完全一样），提交后作废。
   - 花经验的确认：工具说明和启动 prompt 要求模型先预览、告诉玩家花多少级、玩家同意后再做，服务端只按 `maxLevels` 卡上限、按 `expect` 卡结果。设计里说的“来自玩家或服主的可信确认”还没做，现在模型自己传的 maxLevels 就是放行条件。也就是说，“先预览、问过玩家再做”目前只是提示词约定，程序不验证玩家是否真的同意。

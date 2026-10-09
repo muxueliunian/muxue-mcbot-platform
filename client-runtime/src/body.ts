@@ -133,7 +133,13 @@ export interface ActionArguments {
   'breed-animals': { animal: string; survey?: boolean; player?: string; center?: Position; radius?: number; food?: string; pairs?: number; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;
-export type OperationStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+/** machine-status: a loaded machine's contents and progress; unloaded machines do not work (their time stands still). */
+export interface MachineStatus {
+  position: { x: number; y: number; z: number }; state: 'loaded' | 'unloaded'; id?: string; supported?: boolean; machine?: string;
+  inputs?: { item: string; count: number }[]; results?: { item: string; count: number }[]; fuel?: { item: string; count: number } | null;
+  working?: boolean; ticksLeft?: number; secondsLeft?: number; fuelTicks?: number; stalled?: boolean;
+}
+export type OperationStatus ='running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
 export interface Operation {
   operationId: string; sessionId: string; name: string; status: OperationStatus; summary: string; result?: unknown; controlGeneration?: number;
   operationBudget?: OperationBudget;
@@ -147,6 +153,7 @@ export interface Body {
   lookAround?(options?: { radius?: number }): Promise<Record<string, unknown>>;
   survivalState?(options?: { details?: boolean }): Promise<SurvivalState>;
   assessTool?(options: ToolAssessmentOptions): Promise<ToolAssessment>;
+  machineStatus?(position: Position): Promise<MachineStatus>;
   acquireTask?(taskToken: string): void;
   releaseTask?(taskToken: string): void;
   operation(operationId: string): Promise<Operation>;

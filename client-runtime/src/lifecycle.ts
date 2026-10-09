@@ -5,6 +5,7 @@ import { BodyError, type Body } from './body.js';
 import { EventJournal } from './events.js';
 import type { CompanionMode } from './companion-mode.js';
 import type { SurvivalReflexes } from './survival-reflexes.js';
+import type { MachineWatch } from './machines.js';
 
 export function pidAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -49,7 +50,7 @@ export class RuntimeMonitor {
   private senseTimer?: ReturnType<typeof setTimeout>;
   private closed = false;
   constructor(private readonly body: Body, private readonly events: EventJournal, private readonly options: {
-    intervalMs?: number; heartbeatFile?: string; heartbeatFresh?: () => boolean; companion?: CompanionMode; reflexes?: SurvivalReflexes; onFatal: (error: Error) => void;
+    intervalMs?: number; heartbeatFile?: string; heartbeatFresh?: () => boolean; companion?: CompanionMode; reflexes?: SurvivalReflexes; machines?: MachineWatch; onFatal: (error: Error) => void;
   }) {}
   start(): void { this.schedule(); this.scheduleSense(); }
   private scheduleSense(): void {
@@ -90,6 +91,8 @@ export class RuntimeMonitor {
       const observation = await this.body.observe();
       if (this.closed) return;
       this.events.ingest(observation);
+      // Machine checks read the server on their own schedule; a slow read never holds up observing.
+      void this.options.machines?.tick(observation.dimension).catch(() => {});
       await this.options.companion?.update(observation, companionEpoch);
       for (const pending of this.body.pendingOperations()) {
         const operation = await this.body.operation(pending.operationId);

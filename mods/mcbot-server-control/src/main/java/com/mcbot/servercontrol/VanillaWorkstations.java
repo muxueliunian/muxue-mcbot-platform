@@ -3,12 +3,16 @@ package com.mcbot.servercontrol;
 import com.mcbot.servercontrol.api.workstation.*;
 import com.mcbot.servercontrol.platform.LoaderPlatform;
 import java.util.*;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.*;
 import net.minecraft.world.item.*;
 import net.minecraft.world.item.crafting.*;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
@@ -92,6 +96,17 @@ final class VanillaWorkstations {
         }
         public int burnTicks(BlockState state,ItemStack fuel){return LoaderPlatform.get().burnTime(fuel,type);}
         public boolean working(AbstractContainerMenu menu){return menu instanceof AbstractFurnaceMenu furnace&&furnace.isLit();}
+        /** Slots from the block entity; burn and cook times from its saved data (1.21.1 keys BurnTime, CookTime, CookTimeTotal). */
+        public StationProgress progress(Level level,BlockPos pos,BlockState state) {
+            if(!block(state)||!(level.getBlockEntity(pos) instanceof AbstractFurnaceBlockEntity furnace))return null;
+            ItemStack input=furnace.getItem(0),fuel=furnace.getItem(1),result=furnace.getItem(2);
+            var saved=furnace.saveWithoutMetadata(level.registryAccess());
+            int burning=saved.getShort("BurnTime"),cooked=saved.getShort("CookTime"),total=saved.getShort("CookTimeTotal");
+            boolean lit=state.hasProperty(AbstractFurnaceBlock.LIT)&&state.getValue(AbstractFurnaceBlock.LIT);
+            int left=input.isEmpty()?0:total<=0?-1:Math.max(0,input.getCount()*total-cooked);
+            int fuelTicks=burning+(fuel.isEmpty()?0:fuel.getCount()*burnTicks(state,fuel));
+            return new StationProgress(List.of(input),List.of(result),fuel,lit,left,fuelTicks);
+        }
     }
     static final WorkstationAdapter FURNACE=new Cooker("minecraft:furnace",Blocks.FURNACE,MenuType.FURNACE,RecipeType.SMELTING);
     static final WorkstationAdapter SMOKER=new Cooker("minecraft:smoker",Blocks.SMOKER,MenuType.SMOKER,RecipeType.SMOKING);

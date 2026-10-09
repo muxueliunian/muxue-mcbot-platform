@@ -234,7 +234,7 @@ final class WorkstationTask {
         ItemStack outSlot=menu.getSlot(outputSlot).getItem();
         output=outSlot.isEmpty()?null:outSlot.getItem();
         int taken=takeOutput(menu,outputSlot);
-        if(collectOnly) { closeMenu(player);finishSmelt(obj("collected",taken),"Collected "+taken+" from the furnace");return; }
+        if(collectOnly) { closeMenu(player);finishSmelt(obj("furnace",pos(pos),"type",BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString(),"collected",taken),"Collected "+taken+" from the furnace");return; }
         var recipe=recipeFor(adapter,block,input);
         if(recipe.isEmpty()){closeMenu(player);skipped.add(obj("furnace",pos(pos),"reason","cannot cook "+id(input)));next();return;}
         output=recipe.get().result().getItem();

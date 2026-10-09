@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
-import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions } from './body.js';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus } from './body.js';
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -140,7 +140,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -277,6 +277,18 @@ export class ServerBody implements Body {
     return summary;
   }
   survivalState(options: { details?: boolean } = {}): Promise<SurvivalState> { return this.survivalRead('survival-state', { details: options.details ?? true }, survivalSchema); }
+  /** Read only: a machine's contents and progress in a loaded chunk, without walking there or opening it. */
+  async machineStatus(position: Position): Promise<MachineStatus> {
+    const args = z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int() }).parse({ x: Math.floor(position.x), y: Math.floor(position.y), z: Math.floor(position.z) });
+    const stack = z.object({ item: z.string(), count: z.number().int() }).passthrough();
+    const { instanceId: _i, sessionId: _s, worldId: _w, controlGeneration: _g, operationBudget: _b, ...status } = await this.survivalRead('machine-status', args, z.object({
+      instanceId: identifier, sessionId: identifier, worldId: identifier, controlGeneration: generation, operationBudget: z.unknown().optional(),
+      position: z.object({ x: z.number(), y: z.number(), z: z.number() }), state: z.enum(['loaded', 'unloaded']), id: z.string().optional(), supported: z.boolean().optional(), machine: z.string().optional(),
+      inputs: z.array(stack).optional(), results: z.array(stack).optional(), fuel: stack.nullable().optional(), working: z.boolean().optional(),
+      ticksLeft: z.number().int().optional(), secondsLeft: z.number().optional(), fuelTicks: z.number().int().optional(), stalled: z.boolean().optional(),
+    }));
+    return status;
+  }
   assessTool(options: ToolAssessmentOptions): Promise<ToolAssessment> {
     const args = toolOptionsSchema.safeParse(options);
     if (!args.success) throw new BodyError('INVALID_ARGUMENT', '工具评估的目标或策略无效');

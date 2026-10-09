@@ -22,6 +22,7 @@ export class EventJournal {
   private deliveredOperations = new Set<string>();
   private notifiedOperations = new Set<string>();
   private tracedOperations = new Set<string>();
+  private operationListeners: ((operation: Operation) => void)[] = [];
   private sleepers?: Set<string>;
   private asleep?: boolean;
   private home?: () => Place | undefined;
@@ -73,9 +74,12 @@ export class EventJournal {
     if (operation.status === 'running') return;
     this.traceOperation(operation);
   }
+  /** Called once with every finished operation, whichever way its result arrived (machine bookkeeping). */
+  onOperation(listener: (operation: Operation) => void): void { this.operationListeners.push(listener); }
   private traceOperation(operation: Operation): void {
     if (this.tracedOperations.has(operation.operationId)) return;
     this.remember(this.tracedOperations, operation.operationId);
+    for (const listener of this.operationListeners) { try { listener(operation); } catch { /* bookkeeping never breaks delivery */ } }
     if (this.operationTraceFile) {
       if (fs.existsSync(this.operationTraceFile) && fs.statSync(this.operationTraceFile).size > 5_000_000) {
         fs.renameSync(this.operationTraceFile, `${this.operationTraceFile}.previous`);

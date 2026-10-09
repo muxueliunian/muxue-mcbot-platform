@@ -22,6 +22,7 @@ final class ControlSession {
         default JsonObject lookAround(JsonObject params) {throw error("UNSUPPORTED","Look-around summary is not available");}
         default JsonObject survivalState(JsonObject params) {throw error("UNSUPPORTED","Survival state is not available");}
         default JsonObject assessTool(JsonObject params) {throw error("UNSUPPORTED","Native tool assessment is not available");}
+        default JsonObject machineStatus(JsonObject params) {throw error("UNSUPPORTED","Machine status is not available");}
         JsonObject watch();
         long chatCursor();
         void begin(Operation operation);
@@ -176,7 +177,7 @@ final class ControlSession {
             case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return withOperationBudget(obj("ttlMs",TTL_MS,"controlGeneration",generation));
             case "release": revokeCurrent("Controller released control");requireNativeStopped(); return obj("released",true);
             case "stop": cancel("Stopped by controller");requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
-            case "observe", "nearby-blocks", "nearby-resources", "look-around", "survival-state", "assess-tool": {
+            case "observe", "nearby-blocks", "nearby-resources", "look-around", "survival-state", "assess-tool", "machine-status": {
                 if(!method.equals("observe")&&!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree(method)))
                     throw error("UNSUPPORTED","Nearby discovery capability is not available");
                 JsonObject observation=switch(method) {
@@ -185,6 +186,7 @@ final class ControlSession {
                     case "nearby-blocks" -> game.nearbyBlocks(p);
                     case "look-around" -> game.lookAround(p);
                     case "survival-state" -> game.survivalState(p);
+                    case "machine-status" -> game.machineStatus(p);
                     default -> game.assessTool(p);
                 };
                 observation.addProperty("instanceId",instanceId); observation.addProperty("sessionId",sessionId);

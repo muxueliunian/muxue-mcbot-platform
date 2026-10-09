@@ -16,6 +16,7 @@ import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop, companionReflexHooks } from './action-stop.js';
 import { BodyError, type Body, type GuardOptions } from './body.js';
 import { PlaceBook } from './places.js';
+import { MachineBook, MachineWatch } from './machines.js';
 import { BlueprintShelf } from './blueprints.js';
 
 async function main(): Promise<void> {
@@ -100,7 +101,10 @@ async function main(): Promise<void> {
     events = new EventJournal(values.hosted ? runtimeDir : undefined, values.username, values['bot-players']!.split(',').filter(Boolean), lease?.chatCursor);
     const places = new PlaceBook(runtimeDir, values['world-id']);
     events.useHome(() => places.home());
-    events.ingest(await body.observe());
+    const first = await body.observe(); events.ingest(first);
+    // Furnaces loaded and left: tracked per world, checked when due, a machine event when done (8b).
+    const machines = body.hello.capabilities.includes('smelt-item') ? new MachineWatch(new MachineBook(runtimeDir, values['world-id']), body, events) : undefined;
+    if (machines) { events.onOperation(operation => machines.operation(operation)); void machines.tick(first.dimension); }
     const gather = new GatherTasks(body, events);
     if (body.hello.capabilities.includes('follow-companion')) { companion = new CompanionMode(body, events, gather); companion.guardDefaults = guardDefaults; }
     const tasks = new ContainerTasks(body, Date.now, operation => events!.deliverOperation(operation));
@@ -112,11 +116,12 @@ async function main(): Promise<void> {
       return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
     } }) : undefined;
     if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
-    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent, places, blueprints: new BlueprintShelf(path.resolve(values['blueprint-dir'] ?? path.join(runtimeDir, 'blueprints'))) });
+    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent, places, machines, blueprints: new BlueprintShelf(path.resolve(values['blueprint-dir'] ?? path.join(runtimeDir, 'blueprints'))) });
     monitor = new RuntimeMonitor(body, events, {
       ...(values.hosted ? { heartbeatFile } : {}),
       companion,
       reflexes,
+      machines,
       onFatal: error => { if (error instanceof BodyError && error.code === 'HOST_LOST') void shutdown(error); else loseControl(error); },
     });
     const transport = new StdioServerTransport();

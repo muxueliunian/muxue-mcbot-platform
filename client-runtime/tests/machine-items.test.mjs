@@ -55,6 +55,12 @@ test('machine-items forwards its arguments; incomplete insert or extract never r
   assert.equal(acts().length, 4);
 });
 
+test('the read-only machine-status capability survives the hello filter', async t => {
+  const { body } = await setup(t, { capabilities: ['machine-items', 'machine-status'] });
+  assert.ok(body.hello.capabilities.includes('machine-status'));
+  assert.equal(typeof body.machineStatus, 'function');
+});
+
 test('the model sees the slots, sides and contents after a move, not only the counts', () => {
   const slots = [{ slot: 0, item: 'examplemod:ore', count: 3, limit: 64 }, { slot: 1, item: null, count: 0, limit: 64 }];
   const listed = summarizeOperation({ operationId: 'o1', name: 'machine-items', status: 'succeeded', summary: 'read', result: { block: { id: 'examplemod:mill' }, side: null, size: 2, sides: [{ side: null, slots: 2 }, { side: 'up', slots: 1 }], slots } });

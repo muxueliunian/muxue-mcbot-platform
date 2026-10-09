@@ -91,6 +91,7 @@ test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲�
   assert.match(prompt,/不为聊天停止跟随/);
   assert.match(prompt,/不自动 resume/);
   assert.equal(isWakeEvent({type:'bedtime',text:'天黑了，你在家附近'}),true,'bedtime 要叫醒模型去睡觉');
+  assert.equal(isWakeEvent({type:'machine',text:'furnace (1, 64, 2) 烧好了'}),true,'炉子烧好了要叫醒模型回去取');
 });
 
 test('startupPrompt 的 new-task 阶段去掉启动限制，其余内容不变',()=>{

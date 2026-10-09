@@ -13,6 +13,7 @@ import { PillarTasks } from './pillar.js';
 import { equipItem, interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 import { PlaceBook } from './places.js';
+import type { MachineWatch } from './machines.js';
 import { BlueprintShelf, resolveCells, type Rotation, type Shape } from './blueprints.js';
 
 const coordinate = z.coerce.number().finite();
@@ -22,7 +23,7 @@ const registryId = z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('Na
 const resourceSelector = z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('A block ID (minecraft:oak_log, biomesoplenty:fir_log) or a block tag (#minecraft:logs, #c:ores, #c:ores/iron, #c:stones)');
 const timeoutMs = z.number().int().min(500).max(120000).optional();
 /** chatFloor: ServerBody claim chatCursor; chat at or before it predates this control and is withheld from the model. */
-export function createMcpServer(rawBody: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: StopCurrent; places?: PlaceBook; blueprints?: BlueprintShelf } = {}): McpServer {
+export function createMcpServer(rawBody: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: StopCurrent; places?: PlaceBook; machines?: MachineWatch; blueprints?: BlueprintShelf } = {}): McpServer {
   const server = new McpServer({ name: 'mcbot-client-runtime', version: '0.1.0' });
   const serverObserved = rawBody.hello.backend === 'server';
   const tasks = options.tasks ?? new ContainerTasks(rawBody, Date.now, operation => events.deliverOperation(operation));
@@ -85,7 +86,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   };
   register('get-status', `Read the current ${observed} snapshot.${prediction} Inspect operation status to confirm action completion. When present, operationBudget reports the current lease's remaining distinct operation IDs; stop does not replenish it. Exhaustion needs explicit release/re-claim, never automatic task replay.`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => {
     const state = await body.observe(); events.ingest(state); const projected = { ...state, chat: currentChat(state.chat) };
-    return { ...(serverObserved && !details ? summarizeObservation(projected) as object : projected), platform: body.hello.platform, capabilities: body.hello.capabilities, ...(companion ? { companionMode: companion.read() } : {}), ...(reflexes ? { survivalPolicy: reflexes.read() } : {}) };
+    return { ...(serverObserved && !details ? summarizeObservation(projected) as object : projected), platform: body.hello.platform, capabilities: body.hello.capabilities, ...(companion ? { companionMode: companion.read() } : {}), ...(reflexes ? { survivalPolicy: reflexes.read() } : {}), ...(options.machines?.waiting().length ? { machines: options.machines.waiting() } : {}) };
   });
   register('get-position', `Read current ${observed} position and dimension.`, {}, async () => {
     const state = await body.observe(); return { position: state.position, dimension: state.dimension, sessionId: state.sessionId, source: state.source };
@@ -242,7 +243,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     });
   }
   if (serverObserved && body.hello.capabilities.includes('smelt-item')) {
-    register('smelt-item', 'Use a furnace, smoker or blast furnace within 16 blocks that can cook the input: walk there, take out any finished output, put in count input items and enough fuel (fuel: one item ID, or automatically coal/charcoal, then planks, logs, sticks; never the input), then close. Each item takes 10 s in a furnace, 5 s in a smoker or blast furnace. wait:true stands by the furnace until done and collects the output (running; the result arrives as a task event; stop-action ends it early). Without input it only collects finished output (come back later). furnace picks a specific one. NO_FUEL and MISSING_MATERIALS say what is missing.', {
+    register('smelt-item', 'Use a furnace, smoker or blast furnace within 16 blocks that can cook the input: walk there, take out any finished output, put in count input items and enough fuel (fuel: one item ID, or automatically coal/charcoal, then planks, logs, sticks; never the input), then close. Each item takes 10 s in a furnace, 5 s in a smoker or blast furnace. By default load it and go on with other things: when it should be done you get a machine event (done, out of fuel, or could not be read), then come back and call smelt-item with furnace and no input to collect. get-status lists machines still waiting. wait:true stands by the furnace until done and collects the output (only when the player asks you to wait; running; the result arrives as a task event; stop-action ends it early). Without input it only collects finished output. furnace picks a specific one. NO_FUEL and MISSING_MATERIALS say what is missing.', {
       input: registryId.optional(), count: z.number().int().min(1).max(64).optional(), fuel: registryId.optional(), wait: z.boolean().optional(),
       furnace: z.object(blockXyz).optional(), say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(1000).max(900000).optional(),
     }, async ({ say, ...args }) => {

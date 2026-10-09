@@ -78,12 +78,12 @@ node scripts/webui.mjs --open      # 默认端口 8770，--port 换端口，--ru
 - 只读驱动器写在 `runtime/` 里的文件：心跳 `companion-<名字>.json`（在线、是否在推理）、会话 `session-<名字>.json`（上下文大小、上次请求）、活动记录 `activity-<名字>.jsonl`（游戏事件和聊天、AI 回复、工具调用、每轮开始和结束、驱动器提示，超过 5MB 轮转）。三家 Agent 都走同一个驱动器，记录格式一样。
 - 页面上的「陪伴模式」「最近工具」「最近出错」是从记录里推算的。
 - 「叫停」放 `companion-<名字>.halt` 标记，驱动器按游戏里叫停的流程停下动作和推理，等玩家用名字或昵称给新任务（目前只支持 ServerBody）；「停止托管」放 `companion-<名字>.stop`，和 `stop-companion.ps1` 一样让驱动器退出。WebUI 不碰游戏，关掉它不影响托管。
-- 「配置」页（`scripts/webui-profiles.mjs`、`scripts/webui-games.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。10-10 按小白的操作顺序分成四步（第一次给朋友试玩前用户要求的）：
+- 「配置」页（`scripts/webui-profiles.mjs`、`scripts/webui-games.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。10-10 按小白的操作顺序分成标签页（第一次给朋友试玩前用户要求的，一次只看一块，信息别太密），前四个是：
   1. **连接配置**：自动列出本机的游戏目录（Prism、ElyPrism、MultiMC、PolyMC 的实例，`%APPDATA%\.minecraft` 和它 `versions` 下的版本隔离目录；找不到的手动粘贴目录添加，记在 `runtime/webui-games.json`），每个显示核心模组装没装、和包里的 jar 是否逐字节相同（不同多半是旧版）、开没开过世界、世界现在开着没有（用连接文件问一次 hello）。点一下连接文件就自动填好；手动指定连接文件挪到高级里。
   2. **角色**：游戏名（写游戏目录里 `config/mcbot-server-control/server.json` 的 `username`，只改这一项，模组开世界时读，世界开着要退出重进）、昵称、外观卡片（YSM 模型的显示名读 `ysm.json`；世界没开时直接列 `config/yes_steve_model/custom` 里的模型，要装了 YSM 适配）。
   3. **灵魂设置**：Agent、凭据、模型、思考强度、账号目录（新建 dsh 配置时有 `~/.dsh` 就默认用它）、人设。人设编辑的就是托管时带上的 `persona.md`，位置和 `companion.mjs` 的 `resolveMemory` 一致：Claude 是 `<记忆目录>/xiaoke/persona.md`，dsh、Codex 是 `<记忆目录，默认 runtime/<agent>-memory>/<游戏名小写>/persona.md`；改游戏名时把已有的人设带到新名字下。「填入示例」给一份带说话方式的人设（不报错误码、不说客服腔、短句），说话风格放在人设里，不写死在系统指令里。
   4. **行为**：保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)）。
-  高级里有连接文件、记忆目录、蓝图目录、Node 路径和会话选项；每项对应 `scripts/start-server-play.mjs` 的同名参数。托管退出后按日志区分「游戏关了，已结束」「已停止」「托管中途退出」「启动失败」，不再一律显示启动失败。「保存并启动托管」用跑 WebUI 的同一个 Node 执行 `scripts/start-server-play.mjs --headless`（10-10 起不再需要 PowerShell），脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换启动命令。
+  「高级」标签里有凭据、连接文件、记忆目录、蓝图目录、Node 路径和会话选项；每项对应 `scripts/start-server-play.mjs` 的同名参数。托管退出后按日志区分「游戏关了，已结束」「已停止」「托管中途退出」「启动失败」，不再一律显示启动失败。「保存并启动托管」用跑 WebUI 的同一个 Node 执行 `scripts/start-server-play.mjs --headless`（10-10 起不再需要 PowerShell），脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换启动命令。
 - 配置页只存路径和参数，不存凭据：Agent 用账号目录里已有的登录；档案里出现 `apiKey` 这类不认识的字段会被拒绝。连接文件只读出角色、世界和地址，控制令牌不回传给网页。能从网页启动托管，就等于拿到令牌的人能用你的账号开托管，所以令牌地址不要发给别人。
 
 ## 打包绿色版

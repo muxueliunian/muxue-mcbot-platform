@@ -1,6 +1,6 @@
 # Mod 适配接口（R5）
 
-Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、熔炉，以及登记过的右键交互。其他 Mod 的方块要靠适配器才能用。没有适配的方块，Bot 一律拒绝操作，不会去猜。
+Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、熔炉，以及登记过的右键交互。其他 Mod 的方块要靠适配器才能用。没有适配的方块，Bot 一律拒绝操作，不会去猜。服主也可以按 Mod 打开[通用物品槽适配](#通用物品槽适配8b)，让 Bot 不开界面、按物品槽放取那个 Mod 的机器。
 
 适配有两种办法：
 
@@ -58,6 +58,38 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
 什么效果都不声明的交互（不消耗、不变状态、不得物品、不掉耐久）永远不会成功，所以直接拒绝加载。会把方块换成另一种方块的交互（比如往炼药锅倒水，炼药锅会变成另一种方块），JSON 表达不了，要用 Java 适配。
 
+## 通用物品槽适配（8b）
+
+2026-10-09 加的。很多模组机器（粉碎机、模组炉、储物方块）都通过 NeoForge 的物品槽能力（`Capabilities.ItemHandler.BLOCK`，漏斗和管道也用它）放取东西。对这类没有专门适配的方块，Bot 可以用 `machine-items` 动作直接查看、放入、取出，不开界面。细节和回执见[协议](server_body_protocol.md)。
+
+默认关闭。服主在 `config/mcbot-server-control/item-handlers.json` 里按 mod id 开启，版本要写确切的，对不上就不开（启动日志记一条 `MCBOT adapter: ...`）：
+
+```json
+{
+  "note": "粉碎机和模组炉都试过，放取正常",
+  "mods": { "examplemod": "1.2.3" }
+}
+```
+
+| 键 | 必填 | 含义 |
+| --- | --- | --- |
+| `mods` | 是 | `{ "mod id": "确切版本" }`。方块 id 的命名空间就是这里的 mod id。不能写 `minecraft` |
+| `note` | 否 | 写给人看的说明 |
+
+没有这个文件就什么都不开；写错一处（不认识的键、版本不是字符串等）整个文件跳过并记日志。开了的 Mod 列在 `hello.itemHandlerMods`，启动日志的 `MCBOT adapters: ...` 也会列出来；运行端只在有开了的 Mod 时才给 AI 发布 `machine-items` 工具。
+
+分派顺序：原版方块只走内置规则（`open-container`、工作站工具）；有专门适配的方块（`ContainerAdapter`，比如 Iron Furnaces，或附属模组登记的 `WorkstationAdapter`）用专门适配，即使它的 Mod 也开了通用适配；剩下的方块，它的 Mod 开了才用通用适配，没开就拒绝。
+
+和其他适配一样的安全规则：Bot 要看得见、够得着这个方块；动手前像右键方块一样问服务器（出生点保护、世界边界、NeoForge 的右键方块事件，保护类模组靠取消这个事件拦人），不让用就拒绝，内容也不读。放入、取出按物品槽自己的规则来（`isItemValid`、先模拟再真放／真取），回执写实际移动的数量，部分成功不算成功；物品槽抛异常时，还没真动东西就拒绝，真动时出错记为 `unknown`。
+
+物品槽常常分方向面：比如上面是原料、侧面是燃料、下面是成品，和漏斗、管道看到的一样。`side` 不给就用不分面的那份（大多数 Mod 给的是整台机器），`list` 会列出哪些面有物品槽。
+
+注意：
+
+- 通用适配不知道哪一格是原料、哪一格是成品，也不知道要烧多久；“放好就走、到时回来取”和酿造台留在 8b 的后续部分。
+- 问保护模组让不让用，是真的发一次右键方块事件（不真的右键）。有的模组监听这个事件自己做事（比如右键收割），对机器一般不会，但没实测过。
+- 只在离线测试里验证过，还没有在装了真实模组的服务器上跑过；开哪个 Mod 之前，服主最好自己先试一下放取。
+
 ## Java 附属模组
 
 公开接口都在 `com.mcbot.servercontrol.api` 包里：
@@ -113,7 +145,7 @@ public final class McbotExampleCook {
 
 ## 测试
 
-- 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`IronFurnaceAdapterTest`。
+- 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`IronFurnaceAdapterTest`、`GenericItemSlotsTest`（通用物品槽适配：配置、分派、方向面、放入取出、出错）。
 - 隔离服：`scripts/server-adapter-smoke.mjs`。测试服要临时装上 Iron Furnaces 4.3.2，并在 `interactions/` 里放一份正确的重生锚声明和一份故意写错的声明。
 - 示例附属模组：`scripts/server-cooking-smoke.mjs`（森罗厨房）、`scripts/server-backpack-smoke.mjs`（SB，开服前先运行 `scripts/server-backpack-fixture.mjs`）、`scripts/server-emote-smoke.mjs`（YSM，也测内置手势和场景提示）。
 

@@ -39,8 +39,8 @@ public final class McbotServerControl {
             // Add-on registration closes here; JSON interactions are read from config/mcbot-server-control/interactions.
             var adapters=ModAdapters.load(directory);
             for(String problem:adapters.problems()) LOGGER.warn("MCBOT adapter: {}",problem);
-            LOGGER.info("MCBOT adapters: containers {}, interactions {}, workstations {}",adapters.containers().stream().map(a->a.id()).toList(),
-                ItemInteractions.ids(ItemInteractions.installed()),ModAdapters.workstationIds());
+            LOGGER.info("MCBOT adapters: containers {}, interactions {}, workstations {}, generic item handlers {}",adapters.containers().stream().map(a->a.id()).toList(),
+                ItemInteractions.ids(ItemInteractions.installed()),ModAdapters.workstationIds(),ModAdapters.itemHandlerMods());
             controller=new ServerController(event.getServer(),config);
             bridge=new LocalHttpBridge(directory,config,event.getServer()::execute,controller::call);
             fixture=CommandFileFixture.start(server);

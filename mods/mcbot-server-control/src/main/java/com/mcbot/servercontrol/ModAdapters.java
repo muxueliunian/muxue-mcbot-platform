@@ -38,6 +38,7 @@ final class ModAdapters {
     private static volatile List<WorkstationAdapter> addonWorkstations=List.of();
     private static volatile List<EmoteSource> emoteSources=List.of();
     private static volatile List<AppearanceSource> appearances=List.of();
+    private static volatile Set<String> itemHandlerMods=Set.of();
 
     /** Freezes add-on registration and loads JSON interactions from {@code <config>/interactions}. */
     static synchronized Loaded load(Path configDirectory) {
@@ -50,6 +51,7 @@ final class ModAdapters {
         for(var w:addonWorkstations)ids.add(safeId(w::id));
         emoteSources=installedUnique(registered.emotes(),EmoteSource::id,EmoteSource::installed,ids,problems,"emote source");
         appearances=installedUnique(registered.appearances(),AppearanceSource::id,AppearanceSource::installed,ids,problems,"appearance source");
+        itemHandlerMods=GenericItemSlots.enabled(GenericItemSlots.load(configDirectory.resolve(GenericItemSlots.FILE),problems),McbotApi::versionsMatch,problems);
         loaded=new Loaded(combined.containers(),combined.interactions(),List.copyOf(problems),installedSinks(registered.pickupSinks()));
         return loaded;
     }
@@ -191,6 +193,20 @@ final class ModAdapters {
             try { if(adapter.block(state)) return adapter; } catch(RuntimeException | LinkageError broken) { /* not a match */ }
         }
         return null;
+    }
+    /** Mods the server owner enabled for generic item-handler access (pinned version installed). */
+    static Set<String> itemHandlerMods() {return itemHandlerMods;}
+    static JsonArray itemHandlerModIds() {JsonArray ids=new JsonArray();for(String mod:itemHandlerMods)ids.add(mod);return ids;}
+    /** The dedicated storage adapter (container or add-on workstation) of a block, or null. */
+    static String dedicatedAdapter(BlockState state) {
+        ContainerAdapter container=container(state);
+        if(container!=null) return safeId(container::id);
+        for(Template template:Template.values()) { WorkstationAdapter station=workstation(state,template);if(station!=null) return safeId(station::id); }
+        return null;
+    }
+    /** Why generic item-handler access is refused for this block, or null when it is allowed; dedicated adapters win. */
+    static String itemHandlerRefusal(BlockState state) {
+        return GenericItemSlots.refusal(BuiltInRegistries.BLOCK.getKey(state.getBlock()).getNamespace(),dedicatedAdapter(state),itemHandlerMods);
     }
     static boolean entityMatches(ContainerAdapter adapter,BlockEntity entity) {
         try { return adapter.entity(entity); } catch(RuntimeException | LinkageError broken) { return false; }

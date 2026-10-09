@@ -33,7 +33,7 @@ import static com.mcbot.servercontrol.Protocol.*;
 /** Ordinary player packet entry points, with authoritative preconditions and no client prediction. */
 final class SurvivalActions {
     private static final Map<ServerPlayer,NativeAttackScope> NATIVE_ATTACKS=new IdentityHashMap<>();
-    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","equip-item","defend-entity","use-bucket");
+    static final List<String> CAPABILITIES=List.of("dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","swap-inventory","eat-item","equip-item","defend-entity","use-bucket","machine-items");
     private final ServerPlayer player;
     private final ControlSession session;
     private final TargetTokens targets;
@@ -242,6 +242,8 @@ final class SurvivalActions {
                 case "use-item-on-block" -> useOnBlock(operation);
                 case "use-item" -> useItem(operation);
                 case "use-bucket" -> bucket(operation);
+                // Mod machines through their item handler (8b); no menu, so no menu may be open either.
+                case "machine-items" -> { worldAction();MachineItems.run(operation,player); }
                 default -> throw error("UNSUPPORTED","Unknown survival action");
             }
             },()->abort(operation));

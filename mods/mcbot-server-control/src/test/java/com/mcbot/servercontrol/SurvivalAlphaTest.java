@@ -56,12 +56,18 @@ final class SurvivalAlphaTest {
         JsonArray after=before.deepCopy();JsonObject source=before.get(3).getAsJsonObject().deepCopy(),target=before.get(0).getAsJsonObject().deepCopy();source.addProperty("slot",0);target.addProperty("slot",3);after.set(0,source);after.set(3,target);
         check(InventorySwap.exact(before,after,3,0),"complete native swap conserves source, target, count and other inventory slots");
         after.get(1).getAsJsonObject().addProperty("count",99);check(!InventorySwap.exact(before,after,3,0),"unrelated native inventory mutation prevents an exact swap success");
-        check(FoodSafety.reason(true,true,4,4.8f,32,false,false)==null,"ordinary effect-free verified food facts are admitted");
-        check(FoodSafety.reason(true,false,4,4.8f,32,false,false)!=null,"special consume implementation facts are not auto-admitted");
-        check(FoodSafety.reason(true,true,4,4.8f,32,true,false)!=null,"food with effects is not auto-admitted");
-        check(FoodSafety.reason(true,true,4,4.8f,32,false,true)!=null,"protected food is not auto-admitted");
-        check(FoodSafety.reason(false,true,4,2,32,false,false)!=null,"unknown Mod food implementation remains unsupported");
-        check(FoodSafety.reason(true,true,4,Float.NaN,32,false,false)!=null,"non-finite food attributes are rejected");
+        check(FoodSafety.reason(true,true,4,4.8f,32,false)==null,"ordinary effect-free verified food facts are admitted");
+        check(FoodSafety.reason(true,false,4,4.8f,32,false)!=null,"special consume implementation facts are not auto-admitted");
+        check(FoodSafety.reason(true,true,4,4.8f,32,true)!=null,"food with effects is not auto-admitted");
+        check(FoodSafety.precious("minecraft:golden_apple")&&FoodSafety.precious("minecraft:enchanted_golden_apple")&&!FoodSafety.precious("minecraft:bread")&&!FoodSafety.precious("minecraft:rotten_flesh"),"only golden apples are precious");
+        check(FoodSafety.reason(true,true,4,9.6f,32,false)==null,"effect-free golden apple facts stay safe (precious is a flag, not a refusal)");
+        check(FoodSafety.reason(true,true,4,9.6f,32,true)!=null,"rotten flesh style effect food stays unsafe");
+        JsonObject gold=FoodSafety.metadata(3,"minecraft:golden_apple",11,4,9.6f,32,true,true,null);
+        check(gold.get("safe").getAsBoolean()&&gold.get("precious").getAsBoolean()&&!gold.has("reason"),"precious food metadata is safe with precious=true");
+        check(!FoodSafety.metadata(3,"minecraft:bread",1,5,6f,32,true,null).has("precious"),"ordinary food metadata has no precious flag");
+        check(!FoodSafety.metadata(3,"minecraft:rotten_flesh",1,4,0.8f,32,false,true,"FOOD_EFFECTS_NOT_ALLOWED").has("precious"),"unsafe food is never precious");
+        check(FoodSafety.reason(false,true,4,2,32,false)!=null,"unknown Mod food implementation remains unsupported");
+        check(FoodSafety.reason(true,true,4,Float.NaN,32,false)!=null,"non-finite food attributes are rejected");
         JsonObject metadata=FoodSafety.metadata(12,"minecraft:apple",3,4,4.8f,32,true,null);
         check(Math.abs(metadata.get("saturationModifier").getAsFloat()-0.6f)<0.0001f,"food metadata converts native saturation points to the actual modifier");
         for(JsonObject invalid:List.of(FoodSafety.metadata(12,"example:food",3,-1,1,32,true,null),FoodSafety.metadata(12,"example:food",3,4,Float.NaN,32,true,null),FoodSafety.metadata(12,"example:food",3,4,1,0,true,null)))

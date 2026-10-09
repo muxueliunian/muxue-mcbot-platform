@@ -53,14 +53,15 @@ test('emote forwards the gesture or animation; malformed names never reach the s
   assert.equal(acts().length, 2);
 });
 
-test('a gesture while following pauses companion mode, then resumes it', async t => {
+test('a gesture while following makes the follow step aside, and it is let back after the act', async t => {
   const { body, acts } = await setup(t, { capabilities: ['emote', 'follow-companion'] });
   const order = [];
-  let state = 'following';
-  const companion = { snapshot: () => ({ state }), read: () => ({ state }), request: async request => { order.push([request.action, acts().length]); state = request.action === 'pause' ? 'paused' : 'following'; return { state }; } };
+  let state = 'following', suspendedFor;
+  const companion = { snapshot: () => ({ state, suspendedFor }), read: () => ({ state, suspendedFor }),
+    yieldTo: async reason => { order.push(['yield', reason, acts().length]); state = 'paused'; suspendedFor = reason; return { release: async () => { order.push(['release', acts().length]); state = 'following'; suspendedFor = undefined; }, hold() {} }; } };
   const c = await client(t, body, { companion });
   await call(c, 'emote', { name: 'nod' });
-  assert.deepEqual(order, [['pause', 0], ['resume', 1]], 'paused before the act, resumed after it');
+  assert.deepEqual(order, [['yield', 'emote', 0], ['release', 1]], 'stepped aside before the act, let back after it');
 });
 
 test('scene hints: sunset, rain and thunder once each, only under the open sky; the first observation is a baseline', () => {

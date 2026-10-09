@@ -360,7 +360,9 @@ test('MCP advertises exactly two companion tools with new cap, queries are read-
   assert.equal((await call('get-status')).companionMode.intent, 'follow');
   assert.equal((await call('get-companion-mode')).intent, 'follow');
   assert.equal(f.mock.calls.filter(call => call.method === 'act').length, before);
-  assert.equal((await client.callTool({ name: 'look-at', arguments: { x: 1, y: 64, z: 0 } })).isError, true);
+  // A body tool is not refused any more: the follow steps aside for it and comes back (see companion-stateful.test.mjs).
+  assert.equal((await client.callTool({ name: 'look-at', arguments: { x: 1, y: 64, z: 0 } })).isError, undefined);
+  assert.equal(f.mode.snapshot().suspendedFor, 'look-at');
   assert.equal((await client.callTool({ name: 'send-chat', arguments: { message: '仍可聊天' } })).isError, undefined);
   assert.deepEqual(await call('stop-action'), { stopped: true });
   assert.deepEqual(await call('get-companion-mode'), { state: 'stopped' });

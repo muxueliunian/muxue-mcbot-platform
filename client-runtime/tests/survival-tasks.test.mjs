@@ -19,7 +19,9 @@ function fixture() {
     ['minecraft:bread', { nutrition: 5, saturationModifier: 0.6, eatDurationTicks: 32, safe: true }],
     ['minecraft:apple', { nutrition: 4, saturationModifier: 0.3, eatDurationTicks: 32, safe: true }],
     ['minecraft:cooked_beef', { nutrition: 8, saturationModifier: 0.8, eatDurationTicks: 32, safe: true }],
-    ['minecraft:golden_apple', { nutrition: 4, saturationModifier: 1.2, eatDurationTicks: 32, safe: true }],
+    ['minecraft:golden_apple', { nutrition: 4, saturationModifier: 1.2, eatDurationTicks: 32, safe: true, precious: true }],
+    ['minecraft:enchanted_golden_apple', { nutrition: 4, saturationModifier: 1.2, eatDurationTicks: 32, safe: true, precious: true }],
+    ['minecraft:rotten_flesh', { nutrition: 4, saturationModifier: 0.1, eatDurationTicks: 32, safe: false, reason: 'FOOD_EFFECTS_NOT_ALLOWED' }],
     ['minecraft:golden_carrot', { nutrition: 6, saturationModifier: 1.2, eatDurationTicks: 32, safe: true }],
     ['minecraft:pufferfish', { nutrition: 1, saturationModifier: 0.1, eatDurationTicks: 32, safe: false, reason: 'negative effects' }],
     ['minecraft:mushroom_stew', { nutrition: 6, saturationModifier: 0.6, eatDurationTicks: 32, safe: true }],
@@ -133,7 +135,7 @@ test('automatic eating fills selected hotbar when all slots occupied and never r
 });
 test('explicit safe precious food can be eaten, unsafe or unknown native food still refused', async () => {
   const f = fixture(); f.set(1, item('golden_apple'));
-  assert.equal((await f.tasks.eat()).result.code, 'NO_SAFE_FOOD'); assert.equal((await f.tasks.eat({ slot: 1 })).status, 'succeeded');
+  assert.equal((await f.tasks.eat()).result.code, 'ONLY_PRECIOUS_FOOD'); assert.equal((await f.tasks.eat({ slot: 1 })).status, 'succeeded');
   f.set(2, item('pufferfish')); assert.equal((await f.tasks.eat({ slot: 2 })).result.code, 'UNSAFE_FOOD');
   f.set(3, item('unknown_mod_food')); assert.equal((await f.tasks.eat({ slot: 3 })).result.code, 'UNSAFE_FOOD');
   assert.equal(f.calls.filter(call => call.name === 'eat-item').length, 1);
@@ -288,4 +290,27 @@ test('consumption receipt beyond deadline preserves real consumed count while ti
   f.body.afterAct = name => { if (name === 'eat-item') f.body.clock = 501; };
   const operation = await f.tasks.eat({ slot: 0, timeoutMs: 500 }); assert.equal(operation.status, 'unknown'); assert.equal(operation.result.consumedCount, 1);
   assert.equal(f.calls.filter(call => call.name === 'stop').length, 1); assert.equal(f.calls.filter(call => call.name === 'eat-item').length, 1); assert.equal(f.owner(), undefined);
+});
+
+test('precious food: never auto-eaten normally, ordinary food wins, emergency eats golden apple before enchanted', () => {
+  const f = fixture(); f.set(1, item('enchanted_golden_apple')); f.set(2, item('golden_apple')); f.set(3, item('rotten_flesh'));
+  let state = f.snapshot(); state.food = 4;
+  assert.equal(selectFood(state).reason, 'ONLY_PRECIOUS_FOOD'); assert.equal(selectFood(state).slot, undefined);
+  state.health = 9; assert.equal(selectFood(state, { lowHealth: 8 }).reason, 'ONLY_PRECIOUS_FOOD');
+  state.health = 8; const pick = selectFood(state, { lowHealth: 8 });
+  assert.equal(pick.slot, 2); assert.equal(pick.reason, 'EMERGENCY_PRECIOUS_FOOD'); assert.equal(pick.urgent, true);
+  f.set(2, item('air', 0)); f.state.inventory[2] = { slot: 2, id: 'minecraft:air', count: 0, components: {} };
+  state = f.snapshot(); state.food = 4; state.health = 3; assert.equal(selectFood(state).slot, 1);
+  f.set(4, item('bread')); state = f.snapshot(); state.food = 4; state.health = 3; assert.equal(selectFood(state).slot, 4);
+  state.food = 20; assert.equal(selectFood(state).reason, 'FULL');
+  const rotten = fixture(); rotten.set(3, item('rotten_flesh')); const rs = rotten.snapshot(); rs.health = 2; rs.food = 2;
+  assert.equal(selectFood(rs).reason, 'NO_SAFE_FOOD');
+});
+test('automatic eat() with only precious food and low health eats it; explicit rotten flesh is refused', async () => {
+  const f = fixture(); f.set(1, item('golden_apple')); f.state.health = 5; f.state.food = 3;
+  assert.equal((await f.tasks.eat({ policy: { lowHealth: 8 } })).status, 'succeeded');
+  f.set(2, item('rotten_flesh')); assert.equal((await f.tasks.eat({ slot: 2 })).result.code, 'UNSAFE_FOOD');
+  const g = fixture(); g.set(1, item('enchanted_golden_apple'));
+  assert.equal((await g.tasks.eat({ policy: { lowHealth: 8 } })).result.code, 'ONLY_PRECIOUS_FOOD');
+  assert.equal((await g.tasks.eat({ slot: 1 })).status, 'succeeded');
 });

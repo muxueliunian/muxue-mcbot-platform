@@ -4,7 +4,7 @@ import { z, type ZodRawShape } from 'zod';
 import { BodyError, type Body, type ActionArguments, type ActionName, type Observation } from './body.js';
 import { EventJournal } from './events.js';
 import { ContainerTasks } from './tasks.js';
-import { CompanionMode } from './companion-mode.js';
+import { CompanionMode, type CompanionRequest } from './companion-mode.js';
 import { GatherTasks } from './gather-tasks.js';
 import { SurvivalTasks } from './survival-tasks.js';
 import { SurvivalReflexes } from './survival-reflexes.js';
@@ -31,11 +31,13 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   const companion = rawBody.hello.capabilities.includes('follow-companion') ? options.companion ?? new CompanionMode(rawBody, events, gather) : undefined;
   const survival = options.survival ?? (['survival-state', 'swap-inventory', 'eat-item'].every(cap => rawBody.hello.capabilities.includes(cap)) ? new SurvivalTasks(rawBody, Date.now, operation => events.recordOperation(operation)) : undefined);
   const stopCurrent = options.stopCurrent ?? createActionStop(rawBody, tasks, gather, companion, survival);
-  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(rawBody, survival, events, { stopCurrent, ...companionReflexHooks(tasks, gather, companion), ordinaryBusy: () => {
+  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(rawBody, survival, events, { stopCurrent, stopWork: stopCurrent.keepCompanion, ...companionReflexHooks(tasks, gather, companion, stopCurrent.keepCompanion, survival), ordinaryBusy: () => {
     try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); } catch { return true; }
     return rawBody.isBusy?.() === true || rawBody.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
   } }) : undefined);
   if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
+  /** A follow/wait that stepped aside for a tool picks up again only when none of these is running any more. */
+  if (companion) companion.busyProbe = () => { try { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); } catch { return true; } return false; };
   /** A stop (explicit, reflex preemption or reconfiguration) ends every tool call admitted before it: their later body.act submissions are refused. */
   let localStops = 0;
   const stopEpoch = () => localStops + (stopCurrent.generation?.() ?? 0);
@@ -69,6 +71,19 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   let eventCursor = 0;
   const returnedSeqs = new Set<number>();
   const currentChat = (chat: Observation['chat']) => options.chatFloor === undefined ? chat : chat.filter(line => line.seq > options.chatFloor!);
+  /** Tools that use the body. A running follow/wait steps aside for them (state paused, suspendedFor = the tool) and picks up again by itself once nothing is running. */
+  const bodyTools = new Set(['prepare-item', 'eat-food', 'pillar-up', 'pillar-down', 'sleep-in-bed', 'wake-up', 'emote', 'craft-item', 'smelt-item', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'use-bucket', 'machine-items', 'breed-animals', 'build',
+    'travel-to', 'go-to-place', 'approach-container', 'container-list', 'container-withdraw', 'give-item', 'fetch-and-give', 'collect-items', 'gather-resources', 'use-item', 'equip-item', 'interact-block',
+    'look-at', 'move-to-position', 'follow-player', 'approach-player', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item']);
+  const withCompanionStepAside = async (name: string, run: () => Promise<unknown>): Promise<unknown> => {
+    if (!companion || !bodyTools.has(name)) return run();
+    const now = companion.snapshot();
+    if (!(['following', 'waiting'].includes(now.state) || (now.state === 'paused' && now.suspendedFor))) return run();
+    // A refused call must not move the follow.
+    tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
+    const lease = await companion.yieldTo(name);
+    try { return await run(); } finally { await lease.release(); }
+  };
   const register = (name: string, description: string, shape: ZodRawShape, handler: (args: any) => Promise<unknown>) => {
     server.registerTool(name, { description, inputSchema: shape }, async args => {
       try {
@@ -77,7 +92,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
           if (args.action !== 'follow' || args.pickup || (args.distance ?? 2.5) > args.mining.radius || new Set(args.mining.blockIds).size !== args.mining.blockIds.length) throw new BodyError('INVALID_ARGUMENT', '陪挖仅用于跟随，不能同时开启独立拾取，跟随距离须在陪挖半径内，矿石列表不能重复');
         }
         if (!readOnlyCall(name, args)) reflexes?.authorizeAction();
-        const result = await calls.run({ epoch: stopEpoch() }, () => handler(args));
+        const result = await calls.run({ epoch: stopEpoch() }, () => withCompanionStepAside(name, () => handler(args)));
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
       } catch (error) {
         return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ code: error instanceof BodyError ? error.code : 'ERROR', message: (error as Error).message }) }] };
@@ -114,7 +129,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   });
   if (survival) {
     register('prepare-item', 'Guardedly prepare the item currently in inventory slot 0..35 for use. Whole-stack native swap into hotbar, then select. Defaults to an empty hotbar slot; targetSlot explicitly permits swapping an occupied hotbar slot. Never discards or silently restores items.', { slot: z.number().int().min(0).max(35), targetSlot: z.number().int().min(0).max(8).optional() }, async args => operationResult(await survival.prepareItem(args)));
-    register('eat-food', 'Consume exactly one safe food using native use duration and authoritative consumption confirmation. Optional slot refers to whole main inventory; otherwise choose food by hunger, saturation and protection policy. Unknown never retries. Auto food does not consume protected precious items.', { slot: z.number().int().min(0).max(35).optional(), timeoutMs }, async args => operationResult(await survival.eat({ ...args, policy: reflexes?.read() })));
+    register('eat-food', 'Consume exactly one safe food using native use duration and authoritative consumption confirmation. Optional slot refers to whole main inventory; otherwise choose food by hunger, saturation and protection policy. Unknown never retries. Auto food skips precious food (golden apple, enchanted golden apple) unless health is at the low line and no ordinary food exists; naming a slot may eat it. Precious food: eat only when the player agrees or you are about to die. Code ONLY_PRECIOUS_FOOD means only precious food is left and it is not an emergency: ask the player.', { slot: z.number().int().min(0).max(35).optional(), timeoutMs }, async args => operationResult(await survival.eat({ ...args, policy: reflexes?.read() })));
   }
   if (reflexes && body.hello.capabilities.includes('defend-entity')) register('defend-self', 'One finite native defense using the same threat selection, policy, preparation and shared writer as automatic defense. Optional entityId restricts the current eligible hostile target; players, friendly, neutral and unknown targets are excluded. Stops ordinary work first, never pursues or resumes it. Low health and explosion preparation require safe retreat. Unknown remains blocked.', { entityId: z.string().uuid().optional() }, async ({ entityId }) => operationResult(await reflexes.defendSelf(entityId)));
   if (reflexes) register('set-reflexes', 'Change effective program policy with the current policy revision from get-survival-state. autoEat and supported autoDefend default on. armed:false disarms automatic behavior; armed:true explicitly rearms it. Hard stop disarms too. Reconfiguration first stops active tasks, so old policy cannot keep writing; it does not resume them. Defense takes priority over meals; each native action is bounded.', {
@@ -122,12 +137,12 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     ...(body.hello.capabilities.includes('defend-entity') ? { autoDefend: z.boolean().optional(), defenseRadius: z.number().finite().min(1).max(3).optional(), lowHealth: z.number().finite().min(1).max(20).optional(), excludedEntityIds: z.array(z.string().uuid()).max(64).optional(), maxAttacks: z.number().int().min(1).max(3).optional(), defenseTimeoutMs: z.number().int().min(500).max(5000).optional() } : {}),
   }, args => reflexes.configure(args));
   if (companion) {
-    register('companion-mode', `Start persistent follow of an explicitly named visible player on ${navigation}, or wait in place. Optional pickup only pursues listed drops. Optional mining requires companion-mining capability (${body.hello.capabilities.includes('companion-mining') ? 'available' : 'unavailable on this body'}): explicitly authorize a subset of six coal/iron/copper ores and a finite candidate-attempt budget. Each selected visible block is guarded against live player proximity and competing player mining, then mined and picked up before following resumes. No tunnels, support digging, arbitrary ores or automatic budget renewal. pickup and mining are mutually exclusive. maxBlocks caps attempted block candidates, not an item quantity promise; report confirmed mined blocks and native picked items separately, without claiming per-block drop provenance. Expiry/exhaustion disables mining but keeps following. pause/resume preserves used budget and the original deadline; unknown or blocked does not retry. Chat remains available. wait clears both options; stop-action discards intent. Only follow accepts player/distance/wander/pickup/mining.`, {
-      action: z.enum(['follow', 'wait', 'pause', 'resume']), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(),
+    register('companion-mode', `Following (or waiting in place) is a persistent state, not a task. Tools that use the body (travel, gather, craft, build, eat, emote, sleep...) make it step aside by themselves (get-companion-mode then shows state paused with suspendedFor = that tool) and it picks up again when they end, also after sleeping, so you never pause/resume around other work; if the player is out of sight by then it waits for them to come back. action pause is only a deliberate manual stop until resume. action stop ends the follow/wait for good and interrupts nothing else that is running. action guard (needs guard) turns protection on or off, or changes its options, on the current follow without a new follow; the setting stays while the follow steps aside. The player's halt (stop-action) still discards the intent. Start persistent follow of an explicitly named visible player on ${navigation}, or wait in place. Optional pickup only pursues listed drops. Optional mining requires companion-mining capability (${body.hello.capabilities.includes('companion-mining') ? 'available' : 'unavailable on this body'}): explicitly authorize a subset of six coal/iron/copper ores and a finite candidate-attempt budget. Each selected visible block is guarded against live player proximity and competing player mining, then mined and picked up before following resumes. No tunnels, support digging, arbitrary ores or automatic budget renewal. pickup and mining are mutually exclusive. maxBlocks caps attempted block candidates, not an item quantity promise; report confirmed mined blocks and native picked items separately, without claiming per-block drop provenance. Expiry/exhaustion disables mining but keeps following. pause/resume preserves used budget and the original deadline; unknown or blocked does not retry. Chat remains available. wait clears both options; stop-action discards intent. Only follow accepts player/distance/wander/pickup/mining.`, {
+      action: z.enum((body.hello.capabilities.includes('companion-guard') ? ['follow', 'wait', 'pause', 'resume', 'stop', 'guard'] : ['follow', 'wait', 'pause', 'resume', 'stop']) as [string, ...string[]]), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(),
       distance: z.number().finite().min(1.5).max(6).optional(), say: z.string().min(1).max(256).optional(),
       wander: z.boolean().optional().describe('Default true: while the followed player stands still, now and then stroll a few steps nearby and stay there until they move. Always off with pickup or mining.'),
       ...(body.hello.capabilities.includes('companion-guard') ? { guard: z.union([z.boolean(), z.object({ radius: z.number().finite().min(3).max(12).optional(), lowHealth: z.number().finite().min(4).max(16).optional(), bow: z.boolean().optional(), shield: z.boolean().optional() }).strict()]).optional()
-        .describe('Protect the followed player (on by default, settings from the WebUI): the game fights hostiles within radius of the player by itself, sword in reach, bow at range, shield up, backs off toward the player at lowHealth, never hits players, pets, villagers or named mobs, never chases beyond the leash. guard events report fights; no tool calls are needed for fighting. false only when the player asks not to fight.') } : {}),
+        .describe('Protect the followed player (on by default, settings from the WebUI): the game fights hostiles within radius of the player by itself, sword in reach, bow at range, shield up, backs off toward the player at lowHealth, never hits players, pets, villagers or named mobs, never chases beyond the leash. guard events report fights; no tool calls are needed for fighting. false only when the player asks not to fight. With action guard: true/false/options for the current follow.') } : {}),
       ...(body.hello.capabilities.includes('companion-pickup') ? { pickup: z.object({ items: z.array(registryId).min(1).max(8), radius: z.number().finite().min(1.5).max(4).default(3) }).optional() } : {}),
       mining: z.object({
         blockIds: z.array(resourceSelector).min(1).max(8).describe('Ores to mine: block IDs or tags, e.g. ["#c:ores"] for every ore (modded too) or ["#c:ores/iron","#c:ores/diamond"]. Non-ores are skipped.'),
@@ -136,7 +151,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       }).strict().optional(),
     }, async args => {
       if (args.mining && !body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体未声明持续陪挖保护，未降级为普通跟随');
-      tasks.assertIdle(); return companion.request(args);
+      tasks.assertIdle(); return companion.request(args as CompanionRequest);
     });
     register('get-companion-mode', 'Read the current persistent companion mode without starting, resuming or stopping any action.', {}, async () => companion.read());
   }
@@ -192,11 +207,10 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     register('pillar-down', 'Come back down the pillar built with pillar-up, digging its blocks out one by one from the top (they drop and are picked up). Only digs blocks it placed itself.', {}, async () => pillar.down());
   }
   if (serverObserved && body.hello.capabilities.includes('sleep-in-bed')) {
-    register('sleep-in-bed', 'Walk to the nearest free bed within 16 blocks (around the named player, or yourself) and lie down, like a player right-clicking it. Only at night or in a thunderstorm and in the Overworld; monsters nearby, an occupied or obstructed bed fail with a code. Lying down also sets your respawn point to that bed, as for any player. Pauses companion mode first; resume it after waking. While asleep every action except send-chat and wake-up is refused. You get up by yourself in the morning or when hurt (event woke); wake-up gets up earlier. running requires polling get-operation.', {
+    register('sleep-in-bed', 'Walk to the nearest free bed within 16 blocks (around the named player, or yourself) and lie down, like a player right-clicking it. Only at night or in a thunderstorm and in the Overworld; monsters nearby, an occupied or obstructed bed fail with a code. Lying down also sets your respawn point to that bed, as for any player. A follow/wait steps aside by itself and picks up again after you wake. While asleep every action except send-chat and wake-up is refused. You get up by yourself in the morning or when hurt (event woke); wake-up gets up earlier. running requires polling get-operation.', {
       player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional().describe('Look for a bed near this player, e.g. the one who just went to bed'), timeoutMs,
     }, async args => {
       tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
-      if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' });
       return operationResult(await body.act('sleep-in-bed', args));
     });
     register('wake-up', 'Get out of bed now. Succeeds when already awake.', {}, async () => operationResult(await body.act('wake-up', {})));
@@ -213,18 +227,14 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       say: z.string().min(1).max(256).optional(),
     }, async ({ say, ...args }) => {
       tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
-      const following = !!companion && ['following', 'waiting'].includes(companion.snapshot().state);
-      if (following) await companion!.request({ action: 'pause' });
-      try {
-        if (say) await body.act('send-chat', { message: say });
-        const operation = await body.act('emote', args as import('./body.js').ActionArguments['emote']);
-        const done = await settle(operation, 3000);
-        // A looping add-on animation would stop as soon as following starts again; let it play out first.
-        if (following && args.source && done.status === 'succeeded') await new Promise(resolve => setTimeout(resolve, (args.seconds ?? 6) * 1000));
-        return operationResult(done);
-      } finally {
-        if (following && companion!.snapshot().state === 'paused') await companion!.request({ action: 'resume' }).catch(() => undefined);
-      }
+      // The follow has stepped aside for the emote (suspendedFor) and picks up again after it.
+      const following = !!companion?.snapshot().suspendedFor;
+      if (say) await body.act('send-chat', { message: say });
+      const operation = await body.act('emote', args as import('./body.js').ActionArguments['emote']);
+      const done = await settle(operation, 3000);
+      // A looping add-on animation would stop as soon as following starts again; let it play out first.
+      if (following && args.source && done.status === 'succeeded') await new Promise(resolve => setTimeout(resolve, (args.seconds ?? 6) * 1000));
+      return operationResult(done);
     });
   }
   const idleBody = () => { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); };
@@ -282,21 +292,20 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       return operationResult(await settle(await body.act('modify-item', args), 40000));
     });
   }
-  const pauseCompanion = async () => { if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' }); };
   const area = {
     player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional().describe('Around this player (the one who said "my field", "these cows")'),
     center: z.object({ x: coordinate, y: coordinate, z: coordinate }).optional().describe('Around this point instead; default is around yourself'),
     radius: z.number().int().min(1).max(16).optional(),
   };
   if (serverObserved && body.hello.capabilities.includes('tend-crops')) {
-    register('tend-crops', 'Farm a field like a player: walk it, harvest every ripe crop in the area (wheat, carrots, potatoes, beetroot, nether wart, cocoa, modded crops tagged #minecraft:crops; sweet berries are picked; melons and pumpkins only where a stem grew them; sugar cane above its bottom block), pick up the drops and plant the same crop again with its seed (replant, default true). Unripe crops, stems and decorations are left alone; farmland is never trampled. plant: a seed item ID to also sow every empty farmland in the area. till: make new farmland with a hoe from the inventory: the N dirt or grass blocks nearest the centre that have air above and water within 4 blocks (pour water first with use-bucket); with plant they are sown in the same pass. boneMeal: how many bone meal it may spend on unripe crops (default 0). crops limits it to some kinds (block or item IDs, or #tags). survey:true only reports ripe/growing counts, empty farmland and tillable ground, touching nothing; use it to answer "is it ripe?". Pauses companion mode first (resume it after). running: the result (harvested per crop, replanted, tilled, inventoryChange, notPlanted reasons) arrives as a task event; stop-action ends it.', {
+    register('tend-crops', 'Farm a field like a player: walk it, harvest every ripe crop in the area (wheat, carrots, potatoes, beetroot, nether wart, cocoa, modded crops tagged #minecraft:crops; sweet berries are picked; melons and pumpkins only where a stem grew them; sugar cane above its bottom block), pick up the drops and plant the same crop again with its seed (replant, default true). Unripe crops, stems and decorations are left alone; farmland is never trampled. plant: a seed item ID to also sow every empty farmland in the area. till: make new farmland with a hoe from the inventory: the N dirt or grass blocks nearest the centre that have air above and water within 4 blocks (pour water first with use-bucket); with plant they are sown in the same pass. boneMeal: how many bone meal it may spend on unripe crops (default 0). crops limits it to some kinds (block or item IDs, or #tags). survey:true only reports ripe/growing counts, empty farmland and tillable ground, touching nothing; use it to answer "is it ripe?". A follow/wait steps aside by itself and picks up again when it ends. running: the result (harvested per crop, replanted, tilled, inventoryChange, notPlanted reasons) arrives as a task event; stop-action ends it.', {
       survey: z.boolean().optional(), ...area, crops: z.array(z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_./-]+$/)).min(1).max(8).optional(),
       replant: z.boolean().optional(), plant: registryId.optional(), boneMeal: z.number().int().min(0).max(64).optional(),
       till: z.number().int().min(1).max(64).optional().describe('How many blocks to till into new farmland; only when the player asked for a new field'),
       say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(5000).max(600000).optional(),
     }, async ({ say, ...args }) => {
       if (args.survey) return operationResult(await body.act('tend-crops', args));
-      idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
+      idleBody(); if (say) await body.act('send-chat', { message: say });
       return operationResult(await settle(await body.act('tend-crops', args), 15000));
     });
   }
@@ -320,12 +329,12 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     });
   }
   if (serverObserved && body.hello.capabilities.includes('breed-animals')) {
-    register('breed-animals', 'Breed animals of one kind like a player: feed pairs of grown animals that can breed now (not babies, not on the 5-minute cooldown) their breeding food from the inventory (wheat for cows and sheep, seeds for chickens, carrots for pigs...; the animal decides, modded animals too), then wait a few seconds for the babies. Only whole pairs; pairs defaults to 4 (1-8). Tamable animals and horses are not handled. survey:true only counts ready/babies/cooldown and which food you hold. NOT_READY and NO_FOOD say why. Pauses companion mode first. running: the result arrives as a task event.', {
+    register('breed-animals', 'Breed animals of one kind like a player: feed pairs of grown animals that can breed now (not babies, not on the 5-minute cooldown) their breeding food from the inventory (wheat for cows and sheep, seeds for chickens, carrots for pigs...; the animal decides, modded animals too), then wait a few seconds for the babies. Only whole pairs; pairs defaults to 4 (1-8). Tamable animals and horses are not handled. survey:true only counts ready/babies/cooldown and which food you hold. NOT_READY and NO_FOOD say why. A follow/wait steps aside by itself and picks up again when it ends. running: the result arrives as a task event.', {
       animal: registryId.describe('Entity type, e.g. minecraft:cow'), survey: z.boolean().optional(), ...area, food: registryId.optional(), pairs: z.number().int().min(1).max(8).optional(),
       say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(5000).max(300000).optional(),
     }, async ({ say, ...args }) => {
       if (args.survey) return operationResult(await body.act('breed-animals', args));
-      idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
+      idleBody(); if (say) await body.act('send-chat', { message: say });
       return operationResult(await settle(await body.act('breed-animals', args), 15000));
     });
   }
@@ -350,14 +359,14 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       if (!cells.length) throw new BodyError('INVALID_ARGUMENT', '给 blocks、shapes 或 blueprint');
       return cells;
     };
-    register('build', 'Build like a player: put blocks, shapes and/or a saved blueprint into the world (later entries win: blueprint < shapes < blocks; "air" clears). Each spot is checked first: already right is skipped; grass, flowers and snow give way; a wrong block or wrong state is dug out when replace allows (soft, the default: only plants and the same block in a wrong state; all: anything except liquids and blocks holding contents; none: nothing). Digs top down, then places bottom up, layer by layer, attached blocks (doors, torches, lanterns, carpets, plants) after their layer. Stairs, slabs, logs, doors, beds, torches... come out in the asked state: it turns and clicks the face and spot that make the game place exactly that, and checks afterwards (corners of stairs and fence links follow their neighbours). Walks to a spot in reach, never inside a block still to come; it does not climb or scaffold yet, so very high spots are reported. Blocks come from the inventory (plain stacks): use dryRun first for the material list (need/have/missing) and fetch or craft what is missing; a build missing materials fails before touching anything. Pauses companion mode first (resume after). running: the result arrives as a task event (placed, dug, already, skippedWhy, wrongState, inventoryChange); INCOMPLETE or TIMEOUT: calling build again with the same arguments continues; stop-action ends it.', {
+    register('build', 'Build like a player: put blocks, shapes and/or a saved blueprint into the world (later entries win: blueprint < shapes < blocks; "air" clears). Each spot is checked first: already right is skipped; grass, flowers and snow give way; a wrong block or wrong state is dug out when replace allows (soft, the default: only plants and the same block in a wrong state; all: anything except liquids and blocks holding contents; none: nothing). Digs top down, then places bottom up, layer by layer, attached blocks (doors, torches, lanterns, carpets, plants) after their layer. Stairs, slabs, logs, doors, beds, torches... come out in the asked state: it turns and clicks the face and spot that make the game place exactly that, and checks afterwards (corners of stairs and fence links follow their neighbours). Walks to a spot in reach, never inside a block still to come; it does not climb or scaffold yet, so very high spots are reported. Blocks come from the inventory (plain stacks): use dryRun first for the material list (need/have/missing) and fetch or craft what is missing; a build missing materials fails before touching anything. A follow/wait steps aside by itself and picks up again when it ends. running: the result arrives as a task event (placed, dug, already, skippedWhy, wrongState, inventoryChange); INCOMPLETE or TIMEOUT: calling build again with the same arguments continues; stop-action ends it.', {
       ...design, replace: z.enum(['none', 'soft', 'all']).optional(), dryRun: z.boolean().optional(),
       say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(10000).max(600000).optional(),
     }, async ({ say, replace, dryRun, timeoutMs, ...args }) => {
       const blocks = cellsOf(args);
       const request = { blocks, ...(replace ? { replace } : {}), ...(timeoutMs ? { timeoutMs } : {}) };
       if (dryRun) return operationResult(await body.act('build', { ...request, dryRun: true }));
-      idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
+      idleBody(); if (say) await body.act('send-chat', { message: say });
       return operationResult(await settle(await body.act('build', request), 15000));
     });
     if (shelf) {
@@ -377,14 +386,13 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   const canTravel = serverObserved && body.hello.capabilities.includes('travel-to');
   const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {
     idleBody();
-    if (companion && ['following', 'waiting'].includes(companion.snapshot().state)) await companion.request({ action: 'pause' });
     if (extra.say) await body.act('send-chat', { message: extra.say });
     return operationResult(await body.act('travel-to', { ...target, ...(extra.tolerance !== undefined ? { tolerance: extra.tolerance } : {}), ...(extra.timeoutMs !== undefined ? { timeoutMs: extra.timeoutMs } : {}) }));
   };
   if (canTravel) {
     const places = options.places ?? new PlaceBook();
     const walk = { tolerance: z.number().min(1).max(8).optional(), timeoutMs: z.number().int().min(5000).max(900000).optional(), say: z.string().min(1).max(256).optional() };
-    register('travel-to', 'Walk a long way (up to 2000 blocks) to a point, leg by leg over the surface; chunks load as the body goes. Finds the way round cliffs and out of valleys over the ground it can see (about 96 blocks around), swims across rivers and lakes like a player, steps down only one block at a time, opens and closes wooden doors; never digs or builds. Pauses companion mode first (resume it after). running: the result arrives as a task event: arrived, or NO_PATH with how far it got and how close the walkable ground comes (tell the player; a cliff or deep valley may need them); stop-action ends it.', { x: coordinate, y: coordinate.optional(), z: coordinate, ...walk }, async ({ x, y, z: zz, ...extra }) => travel({ x, z: zz, ...(y !== undefined ? { y } : {}) }, extra));
+    register('travel-to', 'Walk a long way (up to 2000 blocks) to a point, leg by leg over the surface; chunks load as the body goes. Finds the way round cliffs and out of valleys over the ground it can see (about 96 blocks around), swims across rivers and lakes like a player, steps down only one block at a time, opens and closes wooden doors; never digs or builds. A follow/wait steps aside by itself and picks up again when it ends (if the player is out of sight by then it waits for them to come back). running: the result arrives as a task event: arrived, or NO_PATH with how far it got and how close the walkable ground comes (tell the player; a cliff or deep valley may need them); stop-action ends it.', { x: coordinate, y: coordinate.optional(), z: coordinate, ...walk }, async ({ x, y, z: zz, ...extra }) => travel({ x, z: zz, ...(y !== undefined ? { y } : {}) }, extra));
     register('remember-place', 'Remember a named spot in this world for later (home/家, mine entrance, farm). Defaults to where you stand; player uses where that player stands; or give x/y/z. The same name overwrites. A place named home or 家 also makes you get a bedtime event at night when you are near it.', {
       name: z.string().min(1).max(32), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), x: coordinate.optional(), y: coordinate.optional(), z: coordinate.optional(), note: z.string().max(120).optional(),
     }, async ({ name, player, x, y, z: zz, note }) => {

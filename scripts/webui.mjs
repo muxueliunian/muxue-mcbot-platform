@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createModelCatalog } from './agent-models.mjs';
 import { AGENTS, SESSION_OPTIONS, accountDirs, appearanceChoices, createLauncher, deleteProfile, expandHome, inspectConnection, inspectMemory, loadProfiles, saveProfile } from './webui-profiles.mjs';
+import { PERSONA_SAMPLE, addGameDir, gameDirOf, listGames, localAppearances, modelLabels, readPersona, removeGameDir, setBotName, writePersona } from './webui-games.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
@@ -119,7 +120,9 @@ function profilesView(runtime, launcher) {
   return { profiles, agents, accounts: accountDirs(), sessionOptions: Object.keys(SESSION_OPTIONS) };
 }
 
-export function createWebServer({ runtime, token = crypto.randomBytes(24).toString('hex'), launcher, models }) {
+const isAbsPath = (p) => path.isAbsolute(p) && !/[\u0000-\u001f]/.test(p);
+
+export function createWebServer({ runtime, token = crypto.randomBytes(24).toString('hex'), launcher, models, games }) {
   let port = 0;
   launcher ||= createLauncher({ runtime, isRunning: (name) => !!listBots(runtime).find((b) => b.name === name)?.running });
   models ||= createModelCatalog({ runtime });
@@ -146,7 +149,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     }
     if (!authed) return send(res, 403, { error: 'unauthorized' });
     if (req.method === 'POST' && !allowedOrigin(req.headers.origin)) return send(res, 403, { error: 'origin not allowed' });
-    if (url.pathname.startsWith('/api/profiles') || url.pathname === '/api/connection' || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances') {
+    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/connection' || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances') {
       handleProfiles(req, res, url).catch((e) => send(res, 400, { ok: false, error: e.message }));
       return;
     }
@@ -166,6 +169,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
   async function handleProfiles(req, res, url) {
     const p = url.pathname;
     if (req.method === 'GET' && p === '/api/profiles') return send(res, 200, profilesView(runtime, launcher));
+    if (req.method === 'GET' && p === '/api/games') return send(res, 200, { ok: true, games: await (games || listGames)(runtime) });
     if (req.method === 'GET' && p === '/api/models') {
       const agent = url.searchParams.get('agent') || '';
       if (!AGENTS[agent]) return send(res, 400, { ok: false, error: '不认识的 Agent' });
@@ -180,7 +184,30 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     if (p === '/api/connection') {
       return send(res, 200, inspectConnection(expandHome(String(body.file || ''))));
     }
-    if (p === '/api/appearances') return send(res, 200, await appearanceChoices(expandHome(String(body.file || ''))));
+    if (p === '/api/appearances') {
+      const file = expandHome(String(body.file || '')), dir = gameDirOf(file);
+      let r = await appearanceChoices(file);
+      // 世界没开时退回游戏目录里的模型文件夹
+      if (!r.ok && dir) { const local = localAppearances(dir); if (local.length) r = { ok: true, offline: true, sources: local }; }
+      // 本机读得到模型文件夹时带上显示名（「Claude · 暖橙长裙」），网页做成卡片
+      if (r.ok) r.labels = modelLabels(dir, r.sources.flatMap((s) => s.choices));
+      return send(res, 200, r);
+    }
+    if (p === '/api/games/add') return send(res, 200, addGameDir(runtime, body.dir));
+    if (p === '/api/games/remove') return send(res, 200, removeGameDir(runtime, body.dir));
+    if (p === '/api/games/name') {
+      // 只改已列出的游戏目录里的 server.json，不接受任意路径
+      const list = await (games || listGames)(runtime), g = list.find((x) => x.dir.toLowerCase() === String(body.dir || '').toLowerCase());
+      if (!g) return send(res, 200, { ok: false, error: '不在游戏列表里的目录' });
+      return send(res, 200, { ...setBotName(g.dir, body.name), online: !!g.online });
+    }
+    if (p === '/api/persona') {
+      const opts = { agent: String(body.agent || ''), memoryDir: body.memoryDir ? expandHome(String(body.memoryDir)) : '', username: String(body.username || '') };
+      if (!AGENTS[opts.agent]) return send(res, 400, { ok: false, error: '不认识的 Agent' });
+      if (opts.memoryDir && !isAbsPath(opts.memoryDir)) return send(res, 200, { ok: false, error: '记忆目录要填完整路径' });
+      if (body.save) return send(res, 200, writePersona(opts, body.text));
+      return send(res, 200, { ...readPersona(opts), sample: PERSONA_SAMPLE });
+    }
     if (p === '/api/memory') return send(res, 200, inspectMemory(String(body.dir || ''), String(body.agent || 'claude')));
     if (p === '/api/profiles/save') return send(res, 200, { ok: true, profile: saveProfile(runtime, body) });
     const profile = loadProfiles(runtime).find((x) => x.id === body.id);

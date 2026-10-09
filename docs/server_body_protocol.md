@@ -176,11 +176,13 @@ guard只阻止后续驾驶，不能回滚普通物理已经发生的碰撞拾取
 
 ## Node 与宿主约定
 
-持续陪伴工具仅在 `follow-companion` 能力存在时发布：`companion-mode` 接受 `{action:"follow"|"wait"|"pause"|"resume",player?,distance?,pickup?,say?}`，只有新follow允许指定player／distance／pickup。follow先核验附近玩家身份，返回受理状态，原生动作在后台持续；wait原地等候，两者都持有与有限任务共用的写锁。pause确认身体停止后释放锁、保留意图，resume仅显式执行且重新核验同一会话／代次和玩家身份。切换先确认旧动作停止；有限任务须先pause或stop，任务结束不自动恢复陪伴。
+持续陪伴工具仅在 `follow-companion` 能力存在时发布：`companion-mode` 接受 `{action:"follow"|"wait"|"pause"|"resume"|"stop"|"guard",player?,distance?,pickup?,guard?,say?}`，只有新follow允许指定player／distance／pickup。follow先核验附近玩家身份，返回受理状态，原生动作在后台持续；wait原地等候，两者都持有与有限任务共用的写锁。切换先确认旧动作停止。
 
-`get-companion-mode` 与 `get-status.companionMode` 给出 `{state,intent?,player?,distance?,stage?,operationId?,code?,reason?}`。state为idle／following／waiting／paused／blocked／stopped；intent为follow／wait，stage为starting／active。受理不代表已开始移动。后台500ms监视更新状态，不让模型循环发起有限跟随；靠近／走远的正常切换不唤醒模型，受阻后给一次companion事件。显式切换记录companion_state供后续上下文，非唤醒事件；已向模型交付的终态按session／operationId去重，查询和异步通知不会各触发一轮。
+跟随（和原地等待）是持续状态，不是任务（10-10 起）：用身体的工具（走路、采集、合成、建造、进食、表情、睡觉……，`mcp.ts`的`bodyTools`）开始前，运行端自动让开——确认身体停止、释放写锁、保留意图，状态为`paused`并带`suspendedFor`（工具名）和`reason`；该工具／反射结束、身体上没有别的东西在跑（没有运行中的操作和容器／采集／生存任务、没有打开的菜单、没睡着）并空闲约0.8秒后，运行端自己恢复同一个意图（重新核验会话和玩家身份），模型不用调`resume`。返回`running`、结果稍后用task事件到来的操作，在它终止时才恢复；同时有几个在跑，按最后一个结束算。睡觉在醒来后恢复。恢复时玩家不在附近：继续让开、给一次companion事件，玩家回到附近自动接上，不算受阻。让开期间任务让身体停止过（控制代次后移）不算失控，同一实例／会话／世界／维度即可沿用意图。模型显式`pause`是手动暂停，一直到`resume`（让开期间再pause也转成手动暂停）。只有这几种情况真正结束跟随：玩家叫停的`stop-action`（丢弃意图，不恢复）、`companion-mode stop`（结束跟随／等待，不打断正在做的其他任务，回执`state:"stopped"`并说明已结束；本来没有跟随时原样返回）、显式换成别的`follow`／`wait`。`guard`动作（要`guard`参数：布尔或保护选项）在当前跟随上开／关／改保护，选项逐项并到现有选项上；正在跟随时按新选项重启服务端的follow-companion，让开期间只改意图、恢复时生效；等待中没有保护，会报`INVALID_STATE`。
 
-stop-action立即清除陪伴意图并推进身体控制代次；确认停止后无需等待旧动作HTTP回执才允许新任务，迟到回执由本地epoch及身体代次共同丢弃。后台观察也携观察开始时的epoch，暂停／切换前开始的旧观察不能误判新意图失控，转换中不启动新后台观察。失租约、宿主／Agent退出、身体会话变化终止意图且不保存为可恢复任务，重启只接受新的明确请求。持续路线采用文末统一导航预算；目标移动的重规划最少间隔500ms，行走3秒无进展触发有限重规划，搜索停驻另计；默认跟随只跟随，可选拾取由Node在原生follow与受保护pickup-item之间调度，见上节已验边界，不加入自动采矿／陪挖。显式有限采集另走以下入口。
+`get-companion-mode` 与 `get-status.companionMode` 给出 `{state,intent?,player?,distance?,guardEnabled?,suspendedFor?,stage?,operationId?,code?,reason?}`。state为idle／following／waiting／paused／blocked／stopped；intent为follow／wait，stage为starting／active；`guardEnabled`是跟随意图上的保护开关（保护进行时另带`guard`战斗状态）；`suspendedFor`有值表示跟随正为某个工具让开、会自动接上，没有就是手动暂停。让开和恢复都记`companion_state`事件。受理不代表已开始移动。后台500ms监视更新状态，不让模型循环发起有限跟随；靠近／走远的正常切换不唤醒模型，受阻后给一次companion事件。显式切换记录companion_state供后续上下文，非唤醒事件；已向模型交付的终态按session／operationId去重，查询和异步通知不会各触发一轮。
+
+stop-action立即清除陪伴意图（反射抢占和`set-reflexes`改策略只取消正在做的任务，让开中的跟随意图保留）并推进身体控制代次；确认停止后无需等待旧动作HTTP回执才允许新任务，迟到回执由本地epoch及身体代次共同丢弃。后台观察也携观察开始时的epoch，暂停／切换前开始的旧观察不能误判新意图失控，转换中不启动新后台观察。失租约、宿主／Agent退出、身体会话变化终止意图且不保存为可恢复任务，重启只接受新的明确请求。持续路线采用文末统一导航预算；目标移动的重规划最少间隔500ms，行走3秒无进展触发有限重规划，搜索停驻另计；默认跟随只跟随，可选拾取由Node在原生follow与受保护pickup-item之间调度，见上节已验边界，不加入自动采矿／陪挖。显式有限采集另走以下入口。
 
 follow的可选pickup仅在companion-pickup能力存在时发布，`items`明确1–8个物品ID、`radius`默认3且1.5–4，distance≤radius。靠近玩家waiting时选择当前可见白名单掉落，全程持外层token，单UUID子任务不另占锁或释放父锁、不发逐物品task事件。停止换代必须同一instance／session／world／dimension的下一代；观察revision独立防旧读穿越转换。暂停／恢复保留配置，wait／stop清除；范围越界复核同一玩家后回跟随，其他失败先确认停止再blocked。状态增加activity与pickup统计，格式见[运行端说明](../client-runtime/README.md)；外层按原生游标分组件变体累计，子任务不重复加数，自然收取其他UUID不导致单件任务误停，缺口标最后确认量。
 
@@ -267,7 +269,7 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - 回执：`follow-companion`运行中的结果多一个`guard:{state,target,targetId,hits,damage,shots,kills,retreats,options}`，`state`是 idle／approaching／fighting／aiming／shooting／retreating／evading；跟随本身的`state`多一个`guarding`。
 - 兜底：Bot 造成的任何伤害（挥击、箭、其他）落到上面那些不算目标的实体上时，服务端直接取消这次伤害。
 
-运行端：`companion-mode follow`默认带保护（`--guard on|off`、`--guard-radius`、`--guard-low-health`、`--guard-bow`、`--guard-shield`给默认值，WebUI「配置」页的「保护玩家」一栏和`scripts/start-server-play.mjs`的`--guard*`参数转过来），请求里`guard:false`关掉、对象逐项覆盖；身体没有该能力时不带，明确要求就拒绝。保护时运行端只把「开打（20 秒内只报一次）」「打完了，打倒几只」「血少在撤」「躲苦力怕」作为`guard`事件唤醒模型，`companion-mode`状态仍是 following／waiting，另带`guard`。保护进行时 3 格近身自卫不插手；自动进食和近身自卫遇到普通跟随／等待时改为先暂停、处理完再恢复同一个意图（以前是取消）。
+运行端：`companion-mode follow`默认带保护（`--guard on|off`、`--guard-radius`、`--guard-low-health`、`--guard-bow`、`--guard-shield`给默认值，WebUI「配置」页的「保护玩家」一栏和`scripts/start-server-play.mjs`的`--guard*`参数转过来），请求里`guard:false`关掉、对象逐项覆盖；身体没有该能力时不带，明确要求就拒绝。保护时运行端只把「开打（20 秒内只报一次）」「打完了，打倒几只」「血少在撤」「躲苦力怕」作为`guard`事件唤醒模型，`companion-mode`状态仍是 following／waiting，另带`guard`。保护进行时 3 格近身自卫不插手；自动进食和近身自卫遇到普通跟随／等待时改为先让开、处理完再恢复同一个意图（以前是取消）；让开期间任务在跑时，反射先取消那个任务（不重放），跟随意图保留。让开期间服务端的保护跟着跟随操作一起停了，只剩 3 格近身自卫。保护是跟随上的开关，用`companion-mode guard`改，不必重新follow。
 
 同一仲裁器在普通观察之外独立采样紧凑生存状态；模式切换、慢普通观察与原生战斗等待不能挤掉感知。防卫抢占前阻断新普通写入，撤销容器／采集／陪伴／进食后等待身体停止确认，再获得写锁；不新增第二个控制者或偷偷接纳外部generation。人工停止解除armed，读状态与危险仍存在都不能重新授权。危险事件只按有意义的状态变化生成，不因距离微调、每次挥击、空气补回或跳跃下落数值变化反复唤醒模型。
 

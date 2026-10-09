@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     const tasks = new ContainerTasks(body, Date.now, operation => events!.deliverOperation(operation));
     const survival = ['survival-state', 'swap-inventory', 'eat-item'].every(cap => body!.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events!.recordOperation(operation)) : undefined;
     const stopCurrent = createActionStop(body, tasks, gather, companion, survival);
-    const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, ...companionReflexHooks(tasks, gather, companion), ordinaryBusy: () => {
+    const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, stopWork: stopCurrent.keepCompanion, ...companionReflexHooks(tasks, gather, companion, stopCurrent.keepCompanion, survival), ordinaryBusy: () => {
       try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); }
       catch { return true; }
       return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);

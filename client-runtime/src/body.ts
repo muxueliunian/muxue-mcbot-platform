@@ -25,7 +25,7 @@ export interface NearbyBlocks {
   truncated?: boolean; budget?: unknown;
 }
 export interface Entity { id: string; type: string; name: string; position: Position; sleeping?: boolean }
-export interface FoodCandidate { slot: number; id: string; count: number; nutrition: number; saturationModifier: number; eatDurationTicks: number; safe: boolean; reason?: string }
+export interface FoodCandidate { slot: number; id: string; count: number; nutrition: number; saturationModifier: number; eatDurationTicks: number; safe: boolean; /** Valuable but safe food (golden apples): eat only when the player agrees or in an emergency. */ precious?: boolean; reason?: string }
 export interface Threat {
   entityId: string; type: string | null; classification: 'hostile' | 'attacking_self' | 'neutral' | 'friendly' | 'player' | 'unknown';
   hostilitySource: 'vanilla_hostile_allowlist' | 'native_target_self' | 'native_recent_attacker' | 'none' | 'unknown';

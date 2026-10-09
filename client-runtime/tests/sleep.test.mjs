@@ -44,13 +44,15 @@ test('sleep-in-bed forwards the player to search around; malformed arguments nev
   assert.equal(acts().length, 2);
 });
 
-test('sleep-in-bed pauses a running companion mode before walking to the bed', async t => {
+test('sleep-in-bed makes a running companion mode step aside before walking to the bed', async t => {
   const { body, acts } = await setup(t, ['sleep-in-bed', 'wake-up', 'follow-companion']);
   const order = [];
-  const companion = { snapshot: () => ({ state: 'following' }), read: () => ({ state: 'following' }), request: async request => { order.push(['companion', request.action, acts().length]); return { state: 'paused' }; } };
+  let state = 'following', suspendedFor;
+  const companion = { snapshot: () => ({ state, suspendedFor }), read: () => ({ state, suspendedFor }),
+    yieldTo: async reason => { order.push(['companion', 'yield', reason, acts().length]); state = 'paused'; suspendedFor = reason; return { release: async () => { order.push(['companion', 'release', acts().length]); }, hold() {} }; } };
   const c = await client(t, body, { companion });
   await call(c, 'sleep-in-bed', {});
-  assert.deepEqual(order, [['companion', 'pause', 0]], 'paused before any act');
+  assert.deepEqual(order, [['companion', 'yield', 'sleep-in-bed', 0], ['companion', 'release', 1]], 'stepped aside before any act; the runtime lets it back (after waking)');
   assert.deepEqual(acts().map(act => act.name), ['sleep-in-bed']);
 });
 

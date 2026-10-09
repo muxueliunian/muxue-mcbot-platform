@@ -71,9 +71,9 @@ node dist/main.js --body client --connection-file "C:/path/to/instance/config/mc
 
 走近限有界已加载平地，可绕有限障碍，不挖路／搭桥／传送；最大搜索32格不等于保证32格内任意路线成功，预算用尽明确拒绝。接收玩家绑定UUID，行走中位移超过0.5格停止；最终丢出前校验1.5格距离与视线。同坐标同状态换箱、双箱另一半替换和目标卸载会拒绝旧引用。容器任务仍需单个足量源栈和空快捷栏，不跨源栈；组件变体歧义拒绝。任务数量可为 `count` 或 `stacks` 二选一，最多256个，取物数量还须容纳于选定实际物品的一栈；99个交物会按64＋35分批，每批重读接收者和完整物品 guards，不能通过截断数量满足接口。交物的 `pickup` 仍是指定玩家拾取未确认，与后面的Bot原生拾取证据分开。旧服务端无新能力时保留明确标注的近距／state-only保护。
 
-持续陪伴增量：仅声明 `follow-companion` 的新服务端发布 `companion-mode({action:"follow"|"wait"|"pause"|"resume",player?,distance?,pickup?,say?})` 和只读 `get-companion-mode`。`follow` 必须明确玩家，距离默认2.5格、范围1.5..6；其UUID由任务层现场绑定，游戏端维护持续动作，没有自然超时，不靠Agent反复调用旧有限跟随。`wait` 显式原地等待，两个模式均持有与容器、有限采集任务相同的身体写锁；普通聊天和读取可继续。先 `pause` 确认停止并释放写锁，才能执行另一有限任务或原子写动作。新的 `follow`／`wait` 可以显式切换已有模式，先确认旧动作停止。
+持续陪伴增量：仅声明 `follow-companion` 的新服务端发布 `companion-mode({action:"follow"|"wait"|"pause"|"resume"|"stop"|"guard",player?,distance?,pickup?,guard?,say?})` 和只读 `get-companion-mode`。`follow` 必须明确玩家，距离默认2.5格、范围1.5..6；其UUID由任务层现场绑定，游戏端维护持续动作，没有自然超时，不靠Agent反复调用旧有限跟随。`wait` 显式原地等待，两个模式均持有与容器、有限采集任务相同的身体写锁；普通聊天和读取可继续。跟随／等待是持续状态：用身体的工具（`mcp.ts`的`bodyTools`）开始时运行端自动让开（`paused`加`suspendedFor`），工具和别的在跑的操作都结束、身体空闲约0.8秒后自动接上，不用`pause`／`resume`；`pause`只用于手动暂停（直到`resume`）。`stop`结束跟随／等待且不打断其他任务，`guard`在当前跟随上开关或改保护选项。新的 `follow`／`wait` 可以显式切换已有模式，先确认旧动作停止。
 
-`get-status.companionMode` 与 `get-companion-mode` 返回 `state`、可选 `intent/player/distance/operationId/stage/code/reason`；初次跟随立即返回 `following/starting`，后台收到权威动作回执后为 `following/active` 或 `waiting/active`。靠近目标时的 `waiting` 仍保留跟随意图，目标再移动由游戏端继续跟随。受阻或目标丢失为 `blocked`，不自动重试；`resume` 仅接受显式指令，重新核验原会话、维度、控制代次和同一玩家UUID。暂停后租约失效、叫停或进程重启均废弃旧意图，读取不会复活任务。`stop-action` 保持在线，同时撤销有限任务与陪伴意图。
+`get-status.companionMode` 与 `get-companion-mode` 返回 `state`、可选 `intent/player/distance/guardEnabled/suspendedFor/operationId/stage/code/reason`；初次跟随立即返回 `following/starting`，后台收到权威动作回执后为 `following/active` 或 `waiting/active`。靠近目标时的 `waiting` 仍保留跟随意图，目标再移动由游戏端继续跟随。受阻或目标丢失为 `blocked`，不自动重试；`resume` 仅接受显式指令，重新核验原会话、维度、控制代次和同一玩家UUID。暂停后租约失效、叫停或进程重启均废弃旧意图，读取不会复活任务。`stop-action` 保持在线，同时撤销有限任务与陪伴意图。
 
 RuntimeMonitor后台更新持续状态；显式模式变化记录 `companion_state`，受阻／失控只记录一次需宿主解释的 `companion` 事件。正常 `following` 与近距 `waiting` 切换不发唤醒事件，也不产生逐tick任务回合。旧ServerBody、ClientBody和旧Mineflayer路径保持原有工具，有限 `follow-player` 继续保留。持续模式已可选跟随拾取，仍不包含陪挖、自动挖掘、战斗、挖路或搭桥；下述采集／拾取仍为独立有限任务。
 

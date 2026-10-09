@@ -22,8 +22,14 @@ export interface CompanionState {
   stage?: 'starting' | 'active'; code?: string; reason?: string;
   activity?: 'following' | 'picking-up' | 'mining' | 'switching'; pickup?: PickupState; mining?: MiningState;
   guard?: GuardState;
+  /** Follow only: whether the guard is switched on in the intent (the server reports its fight state in guard while a follow runs). */
+  guardEnabled?: boolean;
+  /** Set while the follow/wait steps aside for a tool or reflex (state stays paused): the name of what is using the body. It is picked up again by itself. */
+  suspendedFor?: string;
 }
-export interface CompanionRequest { action: 'follow' | 'wait' | 'pause' | 'resume'; player?: string; distance?: number; wander?: boolean; guard?: GuardOptions | boolean; pickup?: PickupOptions; mining?: MiningOptions; say?: string }
+/** Held while a tool or reflex uses the body; release lets the follow/wait pick up again once nothing else is running, hold keeps it paused for good (until resume). */
+export interface YieldLease { release(): Promise<void>; hold(): void }
+export interface CompanionRequest { action: 'follow' | 'wait' | 'pause' | 'resume' | 'stop' | 'guard'; player?: string; distance?: number; wander?: boolean; guard?: GuardOptions | boolean; pickup?: PickupOptions; mining?: MiningOptions; say?: string }
 const terminalControl = new Set(['CANCELLED', 'WORLD_CHANGED', 'WRONG_INSTANCE', 'STALE_CONTROL', 'LEASE_LOST', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED', 'HOST_LOST', 'CLOSED']);
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 
@@ -47,6 +53,17 @@ export class CompanionMode {
   private lastGuard?: GuardState;
   private fight?: { kills: number; targets: Set<string> };
   private fightNotedAt = -Infinity;
+  private suspendedFor?: string;
+  private awaitingPlayer = false;
+  private resuming = false;
+  private idleSince?: number;
+  private resumeTimer?: ReturnType<typeof setTimeout>;
+  /** The body must have been idle this long before a follow that stepped aside picks up again, so quick back-to-back tool calls do not make it walk off in between. */
+  // 模型连着调工具时两次调用之间常隔两三秒，太短会在中间接上跟随、把身体带走
+  resumeDelayMs = 3000;
+  private readonly leases = new Set<symbol>();
+  /** True while finite work outside the body's own bookkeeping (container, gather, survival tasks) is running; set by the MCP layer. */
+  busyProbe?: () => boolean;
   constructor(private readonly body: Body, private readonly events: EventJournal, gather?: GatherTasks, private readonly now = Date.now) { this.gather = gather ?? new GatherTasks(body, events, now); }
   snapshot(): CompanionState { return structuredClone({ ...this.value, ...(this.pickup ? { pickup: this.pickupState() } : {}), ...(this.mining ? { mining: this.miningState() } : {}) }); }
   private miningState(): MiningState {
@@ -118,7 +135,9 @@ export class CompanionMode {
     return target.id;
   }
   private base(state: CompanionState['state'], stage?: CompanionState['stage']): CompanionState {
-    return { state, intent: this.intent?.action, ...(this.intent?.player ? { player: this.intent.player, distance: this.intent.distance } : {}), ...(stage ? { stage } : {}) };
+    const suspended = state === 'paused' ? this.suspendedFor : undefined;
+    return { state, intent: this.intent?.action, ...(this.intent?.player ? { player: this.intent.player, distance: this.intent.distance } : {}), ...(this.intent?.action === 'follow' ? { guardEnabled: !!this.intent.guard } : {}), ...(stage ? { stage } : {}),
+      ...(suspended ? { suspendedFor: suspended, reason: this.awaitingPlayer ? `让开去做 ${suspended} 之后，${this.intent?.player ?? '玩家'} 不在附近，回到附近会自动接着跟；不用 resume，想结束用 companion-mode stop` : `暂时让开去做 ${suspended}，做完自动接着${this.intent?.action === 'wait' ? '等' : '跟'}；不用 resume，想结束用 companion-mode stop` } : {}) };
   }
   private initPickup(state: Observation, options?: PickupOptions): void {
     if (!options) { this.pickup = undefined; return; }
@@ -168,11 +187,22 @@ export class CompanionMode {
     if (sent.status !== 'succeeded') throw new BodyError(sent.status === 'unknown' ? 'INVALID_RESPONSE' : 'CHAT_FAILED', sent.summary);
   }
   /** Immediate accepted result; the in-flight game action remains protected by the task token. */
-  async request(request: CompanionRequest): Promise<CompanionState> {
+  async request(request: CompanionRequest, internal?: { suspendedFor: string }): Promise<CompanionState> {
     if (this.changing || this.stopping || this.stopUnconfirmed) throw new BodyError('BUSY', '陪伴模式正在切换或停止尚未确认，请等待或明确叫停');
     if (request.action === 'follow' && (!request.player || !/^[A-Za-z0-9_]{1,16}$/.test(request.player) || (request.distance !== undefined && (!Number.isFinite(request.distance) || request.distance < 1.5 || request.distance > 6)))) throw new BodyError('INVALID_ARGUMENT', '跟随需要明确玩家；距离范围为1.5..6');
-    if (request.action !== 'follow' && (request.player !== undefined || request.distance !== undefined || request.wander !== undefined || request.guard !== undefined || request.pickup !== undefined || request.mining !== undefined)) throw new BodyError('INVALID_ARGUMENT', '只有新的follow指令可指定玩家、距离、保护和拾取／陪挖配置');
-    const guard = request.action === 'follow' ? this.guardFor(request.guard) : undefined;
+    if (request.action !== 'follow' && (request.player !== undefined || request.distance !== undefined || request.wander !== undefined || (request.guard !== undefined && request.action !== 'guard') || request.pickup !== undefined || request.mining !== undefined)) throw new BodyError('INVALID_ARGUMENT', '只有新的follow指令可指定玩家、距离、拾取／陪挖配置；保护用 action guard 单独开关');
+    if (request.action === 'guard' && request.guard === undefined) throw new BodyError('INVALID_ARGUMENT', 'guard 需要 guard 参数：true／false 或保护选项');
+    if (request.action === 'stop') return this.endCompanion(request.say);
+    if (request.action === 'guard') {
+      if (!this.intent) throw new BodyError('NO_COMPANION_INTENT', '没有正在进行的跟随；保护跟着跟随走，先 follow');
+      if (this.intent.action !== 'follow') throw new BodyError('INVALID_STATE', '保护属于跟随；原地等待中先 follow 再开保护');
+    }
+    const guard = request.action === 'follow' ? this.guardFor(request.guard) : request.action === 'guard' ? this.guardFor(request.guard, this.intent?.guard) : undefined;
+    if (request.action === 'guard' && !['following', 'waiting'].includes(this.value.state)) {
+      // Paused (also while stepping aside) or blocked: nothing runs on the server, so only the intent changes and a later resume starts with it.
+      await this.say(this.epoch, request.say);
+      this.intent!.guard = guard; this.publish({ ...this.value, guardEnabled: !!guard }); return this.snapshot();
+    }
     if (request.pickup && request.mining) throw new BodyError('INVALID_ARGUMENT', '首版持续拾取与陪挖配置互斥；陪挖自行收取新观察的掉落');
     if (request.mining) {
       if (!['companion-mining', 'nearby-resources', 'approach-resource', 'dig-block', 'pickup-item', 'select-slot', 'assess-tool'].every(cap => this.body.hello.capabilities.includes(cap))) throw new BodyError('UNSUPPORTED', '游戏端没有完整持续陪挖／工具及玩家边界保护能力');
@@ -186,25 +216,41 @@ export class CompanionMode {
     }
     if ((request.action === 'resume' || request.action === 'pause') && !this.intent) throw new BodyError('NO_COMPANION_INTENT', '没有可暂停或恢复的陪伴意图；需要新的明确指令');
     if (request.action === 'resume' && !['paused', 'blocked'].includes(this.value.state)) throw new BodyError('INVALID_STATE', '只有暂停或受阻的陪伴可显式恢复');
-    if (request.action === 'pause' && this.value.state === 'paused') { await this.say(this.epoch, request.say); return this.snapshot(); }
+    if (request.action === 'pause' && this.value.state === 'paused') {
+      await this.say(this.epoch, request.say);
+      // The model pausing on its own makes it a manual pause: no automatic pick-up, until resume.
+      if (!internal && this.suspendedFor) this.holdPause();
+      return this.snapshot();
+    }
+    const suspendedBefore = this.suspendedFor;
     const epoch = ++this.epoch;
     const owner = this.beginChange();
     let acquired = false;
     try {
       // Acquire before any awaits; this serializes with finite task and atomic action starts.
       this.acquire(); acquired = true;
+      if (request.action !== 'pause') { this.suspendedFor = undefined; this.awaitingPlayer = false; if (request.action !== 'guard') this.leases.clear(); }
       if (this.childActive) { this.gather.cancel(); this.childActive = false; }
+      const wasSuspended = request.action === 'resume' && !!suspendedBefore;
       if (this.intent && request.action !== 'resume') {
         await this.body.stop(); this.check(epoch);
         this.gather.stopped();
         if (request.action === 'follow' || request.action === 'wait') this.intent = undefined;
+        if (request.action === 'guard') this.intent!.guard = guard;
       }
-      const initial = await this.observe(epoch, request.action === 'resume' ? this.intent!.context : undefined);
+      // Work done while stepping aside may have stopped the body (a cancelled task): the same session and world with a later generation is still ours.
+      const initial = await this.observe(epoch, request.action === 'resume' && !wasSuspended ? this.intent!.context : undefined);
+      if (wasSuspended || request.action === 'guard') {
+        const next = contextOf(initial);
+        if (!this.adoptable(next, this.intent!.context, request.action === 'guard')) throw new BodyError('WORLD_CHANGED', '陪伴会话／世界／维度改变或控制代次不连续；旧意图已废弃');
+        this.intent!.context = next;
+      }
       if (request.action === 'pause') {
         this.intent!.context = contextOf(initial);
         if (this.pickup) { this.pickup.generations.add(initial.controlGeneration!); this.ingestPickup(initial); }
         if (this.mining) { this.mining.generations.add(initial.controlGeneration!); this.ingestMining(initial); }
         await this.say(epoch, request.say); this.check(epoch); this.release();
+        this.suspendedFor = internal?.suspendedFor; this.awaitingPlayer = false;
         this.publish(this.base('paused')); return this.snapshot();
       }
       if (request.action === 'follow') {
@@ -213,7 +259,12 @@ export class CompanionMode {
         this.initMining(initial, request.mining);
         this.lastGuard = undefined; this.fight = undefined;
       } else if (request.action === 'wait') { this.intent = { action: 'wait', context: contextOf(initial) }; this.pickup = undefined; this.mining = undefined; }
-      else if (this.intent!.action === 'follow') {
+      else if (request.action === 'guard') {
+        this.identity(initial, this.intent!.player!, this.intent!.expectedEntityId);
+        if (this.pickup) { this.pickup.generations.add(initial.controlGeneration!); this.ingestPickup(initial); }
+        if (this.mining) { this.mining.generations.add(initial.controlGeneration!); this.ingestMining(initial); }
+        this.lastGuard = undefined; this.fight = undefined;
+      } else if (this.intent!.action === 'follow') {
         this.identity(initial, this.intent!.player!, this.intent!.expectedEntityId);
         if (this.pickup) { this.pickup.cursor = initial.pickupCursor!; this.pickup.generations = new Set([initial.controlGeneration!]); this.pickup.attempted.clear(); this.pickup.state.code = undefined; }
         if (this.mining) { this.mining.generations.add(initial.controlGeneration!); this.ingestMining(initial); if (this.now() >= this.mining.state.deadline) this.disableMining('DURATION_BUDGET'); }
@@ -255,14 +306,14 @@ export class CompanionMode {
   }
   /** A guarding follow is running: the server fights for the player. */
   guarding(): boolean { return !!this.intent?.guard && ['following', 'waiting'].includes(this.value.state) && !this.childActive; }
-  private guardFor(request?: GuardOptions | boolean): GuardOptions | undefined {
+  private guardFor(request?: GuardOptions | boolean, current?: GuardOptions): GuardOptions | undefined {
     if (request === false) return undefined;
     if (!this.body.hello.capabilities.includes('companion-guard')) {
       if (request) throw new BodyError('UNSUPPORTED', '游戏端没有保护玩家能力（companion-guard），未降级为普通跟随');
       return undefined;
     }
     if (request === undefined && this.guardDefaults === false) return undefined;
-    const guard = { ...(this.guardDefaults || {}), ...(typeof request === 'object' ? request : {}) };
+    const guard = { ...(this.guardDefaults || {}), ...(current ?? {}), ...(typeof request === 'object' ? request : {}) };
     if ((guard.radius !== undefined && (!Number.isFinite(guard.radius) || guard.radius < 3 || guard.radius > 12)) || (guard.lowHealth !== undefined && (!Number.isFinite(guard.lowHealth) || guard.lowHealth < 4 || guard.lowHealth > 16))
       || (guard.bow !== undefined && typeof guard.bow !== 'boolean') || (guard.shield !== undefined && typeof guard.shield !== 'boolean')) throw new BodyError('INVALID_ARGUMENT', '保护范围 3..12、撤退血量 4..16，bow／shield 为布尔值');
     return guard;
@@ -292,7 +343,13 @@ export class CompanionMode {
     if (observedEpoch !== this.observationRevision || this.changing || this.stopping || !this.intent) return;
     const epoch = this.epoch, intent = this.intent, id = this.value.operationId;
     try {
-      if (!state.connected || state.health <= 0 || !isDeepStrictEqual(contextOf(state), intent.context)) throw new BodyError('WORLD_CHANGED', '陪伴会话或控制代次改变；旧意图已废弃');
+      const suspended = this.value.state === 'paused' && !!this.suspendedFor;
+      const sameContext = isDeepStrictEqual(contextOf(state), intent.context);
+      if (!state.connected || state.health <= 0 || !(sameContext || (suspended && this.adoptable(contextOf(state), intent.context)))) throw new BodyError('WORLD_CHANGED', '陪伴会话或控制代次改变；旧意图已废弃');
+      if (suspended) {
+        if (!sameContext) intent.context = contextOf(state);
+        await this.autoResume(state); return;
+      }
       if (this.pickup && !['paused', 'blocked'].includes(this.value.state)) this.ingestPickup(state);
       if (this.mining && !['paused', 'blocked'].includes(this.value.state)) this.ingestMining(state);
       if (this.childActive) return;
@@ -433,7 +490,7 @@ export class CompanionMode {
   fail(error: Error, operation?: Operation, controlLost = false): void {
     const code = error instanceof BodyError ? error.code : 'INVALID_RESPONSE';
     if (['idle', 'stopped'].includes(this.value.state) && !this.intent && !this.token) return;
-    ++this.epoch;
+    ++this.epoch; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     this.observationRevision++;
     if (this.childActive) { this.gather.cancel(); this.childActive = false; }
     if (this.pickup) {
@@ -455,16 +512,16 @@ export class CompanionMode {
     if (terminal) { this.pickup = undefined; void this.body.close().catch(() => {}); }
   }
   /** Explicit stop clears intent synchronously and keeps the lock until in-flight work is fenced. */
-  stop(): Promise<{ stopped: true }> {
+  stop(reason?: string): Promise<{ stopped: true }> {
     if (this.stopping) return this.stopping;
-    ++this.epoch; this.intent = undefined;
+    ++this.epoch; this.intent = undefined; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     const owner = this.beginChange();
     const token = this.token, miningState = this.mining ? { ...this.miningState(), active: false, disabledReason: 'STOPPED' } : undefined;
     if (this.childActive) { this.gather.cancel(); this.childActive = false; }
     this.terminal = undefined;
     this.pickup = undefined;
     this.mining = undefined;
-    if (this.value.state !== 'idle' && this.value.state !== 'stopped') this.publish({ state: 'stopped', ...(miningState ? { mining: miningState } : {}) });
+    if (this.value.state !== 'idle' && this.value.state !== 'stopped') this.publish({ state: 'stopped', ...(reason ? { reason } : {}), ...(miningState ? { mining: miningState } : {}) });
     const stopping = (async () => {
       try {
         const result = await this.body.stop();
@@ -474,5 +531,93 @@ export class CompanionMode {
     })().finally(() => { if (this.stopping === stopping) this.stopping = undefined; this.finishChange(owner); });
     this.stopping = stopping;
     return stopping;
+  }
+
+  /**
+   * Another tool or reflex needs the body: the follow/wait steps aside (state paused, suspendedFor = reason) and is picked up again by itself
+   * once every lease is released and nothing else is running. A manual pause (or no follow at all) is left alone.
+   */
+  async yieldTo(reason: string): Promise<YieldLease> {
+    const none: YieldLease = { release: async () => {}, hold: () => {} };
+    const live = () => !!this.intent && (['following', 'waiting'].includes(this.value.state) || (this.value.state === 'paused' && !!this.suspendedFor));
+    if (!live()) return none;
+    const id = Symbol(); this.leases.add(id); this.idleSince = undefined;
+    const lease: YieldLease = {
+      release: async () => { if (this.leases.delete(id)) await this.autoResume(); },
+      hold: () => { this.leases.delete(id); this.holdPause(); },
+    };
+    try {
+      if (this.value.state === 'paused') {
+        if (this.suspendedFor !== reason) { this.suspendedFor = reason; this.value = this.base('paused'); }
+      } else {
+        // A resume or stop that is still switching clears in a moment: wait for it instead of failing the tool.
+        for (let attempt = 0; ; attempt++) {
+          try { await this.request({ action: 'pause' }, { suspendedFor: reason }); break; }
+          catch (error) { if (!(error instanceof BodyError) || error.code !== 'BUSY' || attempt >= 20 || !this.changing) throw error; await new Promise(resolve => setTimeout(resolve, 50)); }
+        }
+      }
+    } catch (error) { this.leases.delete(id); throw error; }
+    return lease;
+  }
+  /** Turn a step-aside into a manual pause: it stays paused until resume or a new follow. */
+  holdPause(): void {
+    if (this.value.state !== 'paused' || !this.suspendedFor) return;
+    this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
+    this.publish(this.base('paused'));
+  }
+  private bodyIdle(): boolean { return this.body.isBusy?.() !== true && this.body.pendingOperations().length === 0 && this.busyProbe?.() !== true; }
+  /** Same instance, session, world and dimension; the control generation may only have moved on (a cancelled task stops the body). */
+  private adoptable(next: Context, old: Context, exactlyNext = false): boolean {
+    if (old.instanceId !== next.instanceId || old.sessionId !== next.sessionId || old.worldId !== next.worldId || old.dimension !== next.dimension) return false;
+    return exactlyNext ? next.controlGeneration === (old.controlGeneration ?? -1) + 1 : (next.controlGeneration ?? -1) >= (old.controlGeneration ?? -1);
+  }
+  /** The follow/wait that stepped aside picks up again when no lease is held, nothing runs, the body is awake and the player is near. */
+  private async autoResume(seen?: Observation): Promise<void> {
+    if (this.resuming || !this.intent || this.value.state !== 'paused' || !this.suspendedFor || this.leases.size || this.changing || this.stopping || this.stopUnconfirmed) return;
+    this.resuming = true;
+    const intent = this.intent;
+    try {
+      const state = seen ?? await this.body.observe();
+      if (this.intent !== intent || !this.suspendedFor || this.leases.size || this.changing || this.stopping) return;
+      if (state.sleeping || state.container || !this.bodyIdle()) { this.idleSince = undefined; return; }
+      this.idleSince ??= this.now();
+      if (this.now() - this.idleSince < this.resumeDelayMs) {
+        if (!this.resumeTimer) { this.resumeTimer = setTimeout(() => { this.resumeTimer = undefined; void this.autoResume(); }, this.resumeDelayMs + 50); this.resumeTimer.unref?.(); }
+        return;
+      }
+      if (intent.action === 'follow' && !state.entities.some(entity => entity.type === 'minecraft:player' && entity.name === intent.player && entity.name !== state.username)) {
+        if (!this.awaitingPlayer) {
+          this.awaitingPlayer = true; this.value = this.base('paused');
+          this.publish(this.value);
+          this.events.add('companion', `事情做完了，但 ${intent.player} 不在附近，没法接着跟。他回到附近我会自动接上；想不跟了用 companion-mode stop，或重新 follow。`);
+        }
+        return;
+      }
+      await this.request({ action: 'resume' });
+    } catch { /* a failed resume has already published a blocked state with its reason */ }
+    finally { this.resuming = false; }
+  }
+  /** companion-mode stop: the follow/wait is over; whatever else is running keeps going. */
+  private async endCompanion(say?: string): Promise<CompanionState> {
+    const message = '跟随／等待已结束（companion-mode stop）；正在做的其他任务不受影响。要再跟随需要新的 follow。';
+    if (!this.intent && ['idle', 'stopped'].includes(this.value.state)) { if (say) await this.say(this.epoch, say); return { ...this.snapshot(), reason: '当前没有跟随或等待，什么都没改' }; }
+    if (say) await this.say(this.epoch, say);
+    if (['following', 'waiting'].includes(this.value.state)) { await this.stop(message); return this.snapshot(); }
+    // Paused (also stepping aside) or blocked: nothing of ours runs on the body, so only the intent goes.
+    const owner = this.beginChange();
+    try {
+      ++this.epoch; this.intent = undefined; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
+      this.terminal = undefined; this.pickup = undefined; this.mining = undefined;
+      if (this.childActive) { this.gather.cancel(); this.childActive = false; }
+      this.release();
+      this.publish({ state: 'stopped', reason: message });
+    } finally { this.finishChange(owner); }
+    return this.snapshot();
+  }
+  /** Stop what other work left on the body (a cancelled task), keeping a follow that is stepping aside. A follow that is running has nothing else to stop. */
+  async stopWork(): Promise<{ stopped: true }> {
+    if (this.stopping) return this.stopping;
+    if (this.intent && ['following', 'waiting'].includes(this.value.state) && !this.changing) return { stopped: true };
+    return this.body.stop();
   }
 }

@@ -149,8 +149,10 @@ export function buildPackage(opts) {
   if (opts.zip) {
     zip = path.join(opts.out, `${name}.zip`);
     fs.rmSync(zip, { force: true });
-    // Windows 10 起自带 tar（bsdtar），-a 按扩展名打 zip，文件名用 UTF-8
-    const r = spawnSync('tar', ['-a', '-c', '-f', zip, '-C', opts.out, name], { stdio: 'inherit', windowsHide: true });
+    // Windows 10 起自带 tar（bsdtar），-a 按扩展名打 zip。文件名要明说 UTF-8，不然按系统代码页写（日文系统写不了简体字）；
+    // 用 System32 里的那个，Git Bash 的 GNU tar 不会打 zip，还会把 G: 当成远程主机
+    const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    const r = spawnSync(tar, ['-a', '-c', '-f', zip, '--options', 'hdrcharset=UTF-8', '-C', opts.out, name], { stdio: 'inherit', windowsHide: true });
     if (r.status !== 0) throw new Error('打 zip 失败');
   }
   const size = (p) => { let n = 0; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const q = path.join(d, e.name); if (e.isDirectory()) walk(q); else n += fs.statSync(q).size; } }; walk(p); return n; };

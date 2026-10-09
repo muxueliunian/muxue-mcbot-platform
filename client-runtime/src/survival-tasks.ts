@@ -4,7 +4,7 @@ import { BodyError, type ActionArguments, type ActionName, type Body, type FoodC
 
 export type SurvivalContext = Pick<SurvivalState, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
 export interface BorrowedSurvivalTask { taskToken: string; check(): void; context?: Partial<SurvivalContext> & Pick<SurvivalContext, 'sessionId' | 'worldId' | 'dimension'> }
-export interface FoodPolicy { urgentFood?: number; hurtHealth?: number; protectedItems?: readonly string[] }
+export interface FoodPolicy { urgentFood?: number; hurtHealth?: number; protectedItems?: readonly string[]; /** Health at or below which precious food may be auto-eaten (the reflex lowHealth line); default 8. */ lowHealth?: number }
 export interface FoodSelection { slot?: number; reason: string; urgent: boolean; deficit: number; nutrition?: number }
 export interface PrepareItemRequest { slot: number; targetSlot?: number; expected?: ItemValue }
 export interface EatRequest { slot?: number; targetSlot?: number; timeoutMs?: number; policy?: FoodPolicy }
@@ -20,7 +20,10 @@ export interface SurvivalProgress {
   sensedAt?: number; stopRequestedAt?: number; stopConfirmedAt?: number; actionRequestedAt?: number; actionAcceptedAt?: number;
   retreatDistance?: number;
 }
-const PROTECTED_FOODS = new Set(['minecraft:golden_apple', 'minecraft:enchanted_golden_apple', 'minecraft:golden_carrot']);
+const PROTECTED_FOODS = new Set(['minecraft:golden_carrot']);
+// Precious food is safe to eat but only on explicit request or in a real emergency. Order = emergency preference.
+const PRECIOUS_FOODS = ['minecraft:golden_apple', 'minecraft:enchanted_golden_apple'];
+const isPrecious = (food: FoodCandidate) => food.precious === true || PRECIOUS_FOODS.includes(food.id);
 const contextOf = (state: SurvivalState): SurvivalContext => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const validSlot = (slot: number, max = 35) => Number.isInteger(slot) && slot >= 0 && slot <= max;
 const empty = (value: ItemValue) => value.id === 'minecraft:air' && value.count === 0;
@@ -49,15 +52,22 @@ export function selectFood(state: SurvivalState, policy: FoodPolicy = {}): FoodS
   if (!Number.isFinite(state.food) || !Number.isFinite(state.health) || !Number.isFinite(state.maxHealth) || state.health <= 0 || state.food < 0 || state.food > 20) return { reason: 'INVALID_STATE', urgent, deficit };
   if (!deficit) return { reason: 'FULL', urgent: false, deficit };
   const protectedItems = new Set([...PROTECTED_FOODS, ...(policy.protectedItems ?? [])]);
-  const candidates = state.foods.filter(food => {
+  const available = state.foods.filter(food => {
     if (!edible(food) || protectedItems.has(food.id)) return false;
     if (!state.inventory) return true;
     const stack = state.inventory.find(item => item.slot === food.slot);
     return !!stack && complete(stack) && stack.id === food.id && stack.count === food.count;
   });
+  const candidates = available.filter(food => !isPrecious(food)), precious = available.filter(isPrecious);
   const tie = (a: FoodCandidate, b: FoodCandidate) => b.saturationModifier - a.saturationModifier
     || Number(b.slot === state.selectedSlot) - Number(a.slot === state.selectedSlot) || a.slot - b.slot;
   const fits = candidates.filter(food => food.nutrition <= deficit).sort((a, b) => b.nutrition - a.nutrition || tie(a, b));
+  if (!candidates.length && precious.length) {
+    // Only precious food left: eat it automatically solely when health is at the retreat/low line.
+    if (state.health > (policy.lowHealth ?? 8)) return { urgent, deficit, reason: 'ONLY_PRECIOUS_FOOD' };
+    const pick = [...precious].sort((a, b) => PRECIOUS_FOODS.indexOf(a.id) - PRECIOUS_FOODS.indexOf(b.id) || tie(a, b))[0];
+    return { slot: pick.slot, nutrition: pick.nutrition, urgent: true, deficit, reason: 'EMERGENCY_PRECIOUS_FOOD' };
+  }
   let chosen = fits[0];
   if (!chosen && urgent) {
     // Waste is allowed in a hunger/regen emergency, but safe/protected rules remain in force.
@@ -142,7 +152,7 @@ export class SurvivalTasks {
       let state = await this.state(task);
       const choice = request.slot === undefined ? selectFood(state, request.policy) : undefined;
       const slot = request.slot ?? choice?.slot;
-      if (slot === undefined) throw new BodyError(choice?.reason ?? 'NO_SAFE_FOOD', '没有适合当前缺口且获准自动使用的食物');
+      if (slot === undefined) throw new BodyError(choice?.reason ?? 'NO_SAFE_FOOD', choice?.reason === 'ONLY_PRECIOUS_FOOD' ? '只有贵重食物（金苹果类），血量未到紧急线，需玩家同意或指定槽位才吃' : '没有适合当前缺口且获准自动使用的食物');
       const food = this.food(state, slot), selectedValue = this.value(this.stack(state, slot)); task.progress.foodBefore = state.food;
       if (state.food >= 20) throw new BodyError('FULL', '饥饿值已满，未开始进食');
       // An eat task explicitly owns replacing the selected slot when all hotbar slots are occupied.

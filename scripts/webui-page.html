@@ -203,6 +203,53 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .collapse>div{overflow:hidden;min-height:0}
 .collapse>div>.fields{padding:14px 2px 2px}
 
+/* 配置页的分步区块 */
+.form-head{display:flex;gap:18px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap}
+.form-head .head-label{width:220px}
+.form h3 .step{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--primary);color:#fff;font-size:11px;margin-left:-2px}
+.form h3:has(.step)::before{display:none}
+.h3-note{color:var(--muted);font-weight:400;font-size:12px}
+.form h3 button{margin-left:auto}
+.games{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.game{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
+  transition:background .2s,border-color .25s,box-shadow .25s,transform .3s var(--spring)}
+.game:hover{background:var(--fill-hover);transform:translateY(-2px)}
+.game:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.game.sel{border-color:var(--primary);background:var(--glass-strong);box-shadow:0 0 0 3px var(--primary-soft)}
+.game .gt{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}
+.game .gt b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{font-size:11px;font-weight:500;padding:1px 8px;border-radius:999px;background:var(--fill-hover);color:var(--muted);white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}.chip.warn{background:rgba(227,145,43,.15);color:var(--busy)}.chip.err{background:var(--err-soft);color:var(--err)}
+.game .chips{display:flex;flex-wrap:wrap;gap:6px}
+.game .gd{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.game .gn{font-size:12px;color:var(--muted)}
+.game .gx{margin-left:auto;color:var(--muted);font-size:12px;padding:0 4px;border-radius:6px}.game .gx:hover{color:var(--err);background:var(--err-soft)}
+.g-add{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.g-add input{font:inherit;padding:8px 12px;border:1px solid transparent;border-radius:12px;background:var(--fill);color:var(--text);outline:none}
+.g-add input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.g-add .hint{font-size:12px;color:var(--muted)}
+.role{display:flex;gap:18px;align-items:flex-start}
+.avatar{width:72px;height:72px;flex:none;border-radius:22px;display:grid;place-items:center;font-size:30px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,var(--primary),var(--secondary));box-shadow:0 10px 24px var(--primary-soft);transition:transform .4s var(--spring)}
+.avatar.bump{animation:wiggle .5s ease}
+.role-fields{flex:1}
+.look-f{margin-top:14px}
+.looks{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.look{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
+  transition:background .2s,border-color .25s,box-shadow .25s,transform .3s var(--spring)}
+.look:hover{background:var(--fill-hover);transform:translateY(-2px)}
+.look:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.look.sel{border-color:var(--primary);background:var(--glass-strong);box-shadow:0 0 0 3px var(--primary-soft)}
+.look i{width:36px;height:36px;flex:none;border-radius:12px;display:grid;place-items:center;font-style:normal;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--secondary),var(--tool))}
+.look.none i{background:var(--fill-hover);color:var(--muted)}
+.look .lt{display:flex;flex-direction:column;min-width:0}.look .lt b{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.look .lt small{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+textarea{font:13px/1.6 inherit;font-family:inherit;padding:10px 12px;border:1px solid transparent;border-radius:12px;background:var(--fill);color:var(--text);width:100%;resize:vertical;outline:none;transition:background .2s,border-color .25s,box-shadow .25s}
+textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-shadow:0 0 0 3px var(--primary-soft)}
+.persona-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.persona-bar .hint{font-size:12px;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:640px){.role{flex-direction:column}.form-head .head-label{width:100%}}
+
 .actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;align-items:center}
 .actions button{font-size:13px;padding:8px 18px}
 #c-msg{font-size:12px;color:var(--muted);margin-top:10px;min-height:1em}#c-msg.err{color:var(--err)}
@@ -242,31 +289,36 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 
 <section class="view" id="view-config" hidden><div class="grid">
 <div class="col"><div class="col-title">配置档案<button type="button" class="small" id="c-new">＋ 新建</button></div><section class="list" id="profiles"></section></div>
-<form class="form glass" id="cform" autocomplete="off"><h2 id="c-title">新配置</h2><div class="sub">保存后可以一键启动托管；配置存在本机 runtime 目录，不进仓库。</div>
-<h3>基本</h3>
+<form class="form glass" id="cform" autocomplete="off">
+<div class="form-head"><div><h2 id="c-title">新配置</h2><div class="sub">按顺序选好就能启动；配置存在本机 runtime 目录，不进仓库。</div></div>
+  <div class="f head-label"><label for="c-label">配置名称</label><input id="c-label" maxlength="40" placeholder="留空自动起名"></div></div>
+
+<h3><span class="step">1</span>连接配置<span class="h3-note">Bot 要进哪个游戏</span><button type="button" class="small ghost" id="g-refresh">刷新</button></h3>
+<div class="games" id="games"></div>
+<div class="g-add"><div class="inline"><input id="g-dir" placeholder="列表里没有？粘贴服务器目录，或启动器实例的游戏目录"><button type="button" id="g-add">添加</button></div><span class="hint" id="h-conn"></span></div>
+
+<h3><span class="step">2</span>角色<span class="h3-note">名字和外观</span></h3>
+<div class="role">
+  <div class="avatar" id="r-avatar"><span>?</span></div>
+  <div class="fields role-fields">
+    <div class="f"><label for="r-name">游戏名</label><div class="inline"><input id="r-name" maxlength="16" placeholder="先选游戏"><button type="button" id="r-rename">改名</button></div><span class="hint" id="h-name">Bot 在游戏里显示的名字，英文字母、数字、下划线</span></div>
+    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家在聊天里也可以这样叫它</span></div>
+  </div>
+</div>
+<div class="f look-f"><span class="lb">外观</span><div class="looks" id="looks"></div><span class="hint" id="h-appearance"></span></div>
+
+<h3><span class="step">3</span>灵魂设置<span class="h3-note">用哪个 Agent、它是什么性格</span></h3>
 <div class="fields">
-  <div class="f"><label for="c-label">名称</label><input id="c-label" maxlength="40" required></div>
   <div class="f"><label for="c-agent">Agent</label><select id="c-agent" hidden></select></div>
-</div>
-<h3>账号</h3>
-<div class="fields">
   <div class="f"><span class="lb">凭据</span><div class="seg" id="c-cred"><span class="thumb"></span><button type="button" class="on">用本机已有的登录</button><button type="button" disabled title="以后支持">API key（以后支持）</button></div></div>
-  <div class="f"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空用默认账号"><span class="hint" id="h-account"></span></div>
-</div>
-<h3>模型</h3>
-<div class="fields">
   <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空用 Agent 的默认模型"><span class="hint" id="h-model"></span></div>
   <div class="f"><label for="c-effort">思考强度</label><select id="c-effort" hidden></select><span class="hint" id="h-effort">越高越聪明，也越慢、越费额度；试玩一般用 low</span></div>
+  <div class="f wide"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空用默认账号"><span class="hint" id="h-account"></span></div>
+  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="9" maxlength="8000" placeholder="它叫什么、什么性格、怎么说话。没写的话说话会比较像客服，可以先点「填入示例」再改。"></textarea>
+    <div class="persona-bar"><span class="hint" id="h-persona"></span><span style="flex:1"></span><button type="button" class="ghost small" id="s-sample">填入示例</button><button type="button" class="small" id="s-save">保存人设</button></div></div>
 </div>
-<h3>角色和世界</h3>
-<div class="fields">
-  <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="服务器的 config/mcbot-server-control/connection.json" required><button type="button" id="c-check">检查</button></div><span class="hint" id="h-conn">游戏里的角色名和世界从这个文件读</span></div>
-  <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家可以用昵称叫它</span></div>
-  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用仓库里的 memory 目录"><span class="hint" id="h-mem">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
-  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空用 runtime/blueprints"><span class="hint">建筑用的蓝图（&lt;名字&gt;.json）放在这里</span></div>
-  <div class="f" id="f-appearance" hidden><label for="c-appearance">外观</label><select id="c-appearance" hidden></select><span class="hint" id="h-appearance">服务器上的模型；每次启动托管时套用</span></div>
-</div>
-<h3>保护玩家</h3>
+
+<h3><span class="step">4</span>行为<span class="h3-note">保护玩家</span></h3>
 <div class="fields">
   <div class="f"><span class="lb">跟随时</span><div class="switches"><label><input type="checkbox" class="sw" id="c-guard" checked>主动打靠近玩家的怪</label></div><span class="hint">关掉就只在自己挨打时还手</span></div>
   <div class="f"><span class="lb">装备</span><div class="switches" id="c-guard-gear"><label><input type="checkbox" class="sw" id="c-guardBow" checked>用弓</label><label><input type="checkbox" class="sw" id="c-guardShield" checked>举盾</label></div><span class="hint">弓要有箭，射之前确认弹道上没有玩家和宠物；盾放副手</span></div>
@@ -276,7 +328,10 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 <button type="button" class="ghost adv-btn" id="c-adv">高级选项<svg class="i chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
 <div class="collapse" id="c-adv-box"><div>
 <div class="fields">
-  <div class="f wide"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空用 PATH 里的 node"></div>
+  <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="一般不用填：在「连接配置」里选游戏会自动填好"><button type="button" id="c-check">检查</button></div><span class="hint" id="h-connfile">手动指定 config/mcbot-server-control/connection.json</span></div>
+  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用默认位置"><span class="hint" id="h-mem"></span></div>
+  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空用 runtime/blueprints"><span class="hint">建筑用的蓝图（&lt;名字&gt;.json）放在这里</span></div>
+  <div class="f wide"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空用自带或 PATH 里的 node"></div>
 </div>
 <div class="fields four">
   <div class="f"><label for="c-idleMinutes">空闲提醒（分钟）</label><input id="c-idleMinutes" type="number" min="0" max="1440" placeholder="0（关）"><span class="hint">空闲多久提醒 Agent</span></div>
@@ -455,6 +510,7 @@ function renderNow() {
         const a = input.action;
         if (a === 'follow' || a === 'wait') { base = (input.mining ? '陪挖' : a === 'follow' ? '跟随' : '原地等待') + (input.player ? ' ' + input.player : '') + '（' + fmt(it.t) + '起）'; mode = base; }
         else if (a === 'pause' && base) mode = base + '，暂停中'; else if (a === 'resume') mode = base;
+        else if (a === 'stop') { base = ''; mode = ''; }
       }
       if (it.name === 'stop-action') { base = ''; mode = ''; }
     }
@@ -502,26 +558,144 @@ function opts(select, list, label) { select.replaceChildren(...list.map((v) => {
 const agentDD = dropdown($('#c-agent'));
 const effortDD = dropdown($('#c-effort'), (v) => EFFORT_DESC[v] || '');
 const accountCombo = combo($('#c-configDir'), () => (cfg?.accounts[$('#c-agent').value] || []).map((v) => ({ value: v, label: v })));
-const appearanceDD = dropdown($('#c-appearance'));
-let appearanceWant = '', appearanceSeq = 0;
-const appearanceLabel = (v) => { if (!v) return '不设置（保持服务器上现在的）'; const i = v.indexOf('='); const src = v.slice(0, i); return (src === 'yes_steve_model:model' ? 'YSM：' : src + '：') + v.slice(i + 1); };
-/** Models the server offers (YSM adapter installed); hidden when there are none and nothing was picked before. */
+// ---- 外观：服务器给的模型做成卡片（装了 YSM 适配时有） ----
+let appearanceWant = '', appearanceSeq = 0, looks = { list: [], labels: {} };
+const glyph = (s) => (String(s || '?').replace(/^[^\p{L}\p{N}]+/u, '')[0] || '?').toUpperCase();
+function lookLabel(v) {
+  if (!v) return { name: '不设置', sub: '保持游戏里现在的样子' };
+  const i = v.indexOf('='), src = v.slice(0, i), c = v.slice(i + 1), l = looks.labels[c];
+  return { name: l?.name || c.replace(/\.ysm$/i, ''), sub: (src === 'yes_steve_model:model' ? 'YSM' : src) + (l?.authors?.length ? ' · ' + l.authors.join('、') : ' · ' + c) };
+}
+function renderLooks() {
+  const box = $('#looks'), list = ['', ...looks.list];
+  if (appearanceWant && !list.includes(appearanceWant)) list.push(appearanceWant);
+  box.replaceChildren(...list.map((v, i) => {
+    const b = el('button', 'look' + (v ? '' : ' none') + (v === appearanceWant ? ' sel' : '')); b.type = 'button'; b.style.setProperty('--i', i);
+    const l = lookLabel(v), t = el('span', 'lt'); t.append(el('b', '', l.name), el('small', '', l.sub));
+    b.append(el('i', '', v ? glyph(l.name) : '—'), t); b.title = v || '不设置';
+    b.onclick = () => { appearanceWant = v; renderLooks(); };
+    return b;
+  }));
+}
+/** Models the server offers; the list needs the world to be open. */
 async function loadAppearances() {
-  const seq = ++appearanceSeq, want = appearanceWant;
-  const file = $('#c-connectionFile').value.trim();
-  const r = file ? await post('/api/appearances', { file }) : { ok: false, error: '' };
+  const seq = ++appearanceSeq, file = $('#c-connectionFile').value.trim();
+  const r = file ? await post('/api/appearances', { file }) : { ok: false, error: '先在「连接配置」选游戏' };
   if (seq !== appearanceSeq) return;
-  const list = [];
-  if (r.ok) for (const s of r.sources) for (const c of s.choices) list.push(s.id + '=' + c);
-  if (want && !list.includes(want)) list.push(want);
-  $('#f-appearance').hidden = !list.length;
-  opts($('#c-appearance'), ['', ...list], appearanceLabel);
-  $('#c-appearance').value = want; appearanceDD.sync();
+  looks = { list: [], labels: r.labels || {} };
+  if (r.ok) for (const s of r.sources) for (const c of s.choices) looks.list.push(s.id + '=' + c);
+  renderLooks();
   const h = $('#h-appearance');
-  h.textContent = r.ok ? '服务器上的模型；每次启动托管时套用' : '读不到服务器上的模型列表（' + r.error + '），先保留已选的';
+  h.textContent = r.ok ? (r.offline ? '世界没开，这里是游戏目录里的模型；启动托管时给 Bot 换上' : looks.list.length ? '每次启动托管时给 Bot 换上；装了 YSM 才有模型' : '游戏里没有可选的模型（要装 YSM 和它的适配模组）') : '读不到模型列表：' + r.error + '。世界开着时才能读，已选的会保留';
   h.className = 'hint' + (r.ok ? '' : ' errc');
 }
-$('#c-appearance').addEventListener('change', () => { appearanceWant = $('#c-appearance').value; });
+
+// ---- 连接配置：本机找到的游戏目录 ----
+let games = [], gamesLoaded = false, gameSeq = 0, nameDirty = false;
+const sameFile = (a, b) => !!a && !!b && a.replace(/\//g, '\\').toLowerCase() === b.replace(/\//g, '\\').toLowerCase();
+const curGame = () => games.find((g) => sameFile(g.connectionFile, $('#c-connectionFile').value.trim())) || null;
+async function loadGames() {
+  const seq = ++gameSeq; let r;
+  try { r = await api('/api/games'); } catch (e) { r = { ok: false, error: e.message }; }
+  if (seq !== gameSeq) return;
+  games = r.ok ? r.games : []; gamesLoaded = true; renderGames();
+}
+function gameNote(g) {
+  if (g.core === 'missing') return ['err', '没装核心模组：把包里 mods 文件夹的 jar 放进这个游戏的 mods'];
+  if (g.core === 'different') return ['warn', '核心模组和这个包里的不一样（可能是旧版），换成包里的'];
+  if (!g.hasConnection) return ['warn', '还没开过世界：进游戏打开世界（单人要「对局域网开放」）'];
+  return g.online ? ['ok', '世界开着，可以启动'] : ['', '世界没开：启动托管前先进游戏'];
+}
+function renderGames() {
+  const box = $('#games'), sel = curGame();
+  if (!games.length) { box.replaceChildren(el('div', 'empty', gamesLoaded ? '没找到游戏目录，在下面粘贴一个' : '正在找本机的游戏…')); }
+  else box.replaceChildren(...games.map((g) => {
+    const b = el('button', 'game' + (sel === g ? ' sel' : '')); b.type = 'button';
+    const top = el('div', 'gt'); top.append(el('span', 'dot' + (g.online ? ' on' : '')), el('b', '', g.name), el('span', 'chip', g.kind));
+    if (g.manual) { const x = el('span', 'gx', '移除'); x.title = '从列表里移除（不删文件）'; x.onclick = async (e) => { e.stopPropagation(); await post('/api/games/remove', { dir: g.dir }); loadGames(); }; top.append(x); }
+    const [cls, note] = gameNote(g), chips = el('div', 'chips');
+    chips.append(el('span', 'chip ' + cls, note));
+    if (g.username) chips.append(el('span', 'chip', 'Bot：' + g.username));
+    const d = el('div', 'gd'); d.textContent = '‎' + g.dir; d.title = g.dir;
+    b.append(top, chips, d);
+    b.onclick = () => pickGame(g);
+    return b;
+  }));
+  const h = $('#h-conn'), file = $('#c-connectionFile').value.trim();
+  if (sel) { h.textContent = ''; }
+  else if (file) { h.textContent = '用的是手动指定的连接文件：' + file; h.className = 'hint'; }
+  else { h.textContent = '点一个游戏；以后换电脑或换实例再回来点一下就行'; h.className = 'hint'; }
+  syncRole();
+}
+function pickGame(g) {
+  $('#c-connectionFile').value = g.connectionFile; nameDirty = false;
+  renderGames(); loadAppearances(); loadPersona();
+}
+/** 角色区：游戏名从选中的游戏读；头像用昵称或游戏名的第一个字。 */
+function syncRole() {
+  const g = curGame(), n = $('#r-name');
+  if (!nameDirty) n.value = g?.username || '';
+  n.disabled = !g; $('#r-rename').disabled = !g || !g.nameConfigurable;
+  const h = $('#h-name');
+  if (!g) { h.textContent = '先在「连接配置」选游戏'; h.className = 'hint'; }
+  else if (!g.nameConfigurable) { h.textContent = '这个游戏还没开过世界，开一次才能改名'; h.className = 'hint'; }
+  else if (!h.dataset.msg) { h.textContent = 'Bot 在游戏里显示的名字，英文字母、数字、下划线'; h.className = 'hint'; }
+  const a = $('#r-avatar span'), t = glyph($('#c-nickname').value.trim() || n.value.trim() || '?');
+  if (a.textContent !== t) { a.textContent = t; const av = $('#r-avatar'); av.classList.remove('bump'); void av.offsetWidth; av.classList.add('bump'); }
+}
+$('#r-name').addEventListener('input', () => { nameDirty = true; $('#h-name').dataset.msg = ''; syncRole(); });
+$('#c-nickname').addEventListener('input', syncRole);
+$('#r-rename').onclick = async () => {
+  const g = curGame(), name = $('#r-name').value.trim(), h = $('#h-name'); if (!g) return;
+  const oldName = g.username, oldPersona = persona.loaded && persona.exists ? $('#s-persona').value : '';
+  const r = await post('/api/games/name', { dir: g.dir, name });
+  h.dataset.msg = '1'; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
+  h.textContent = !r.ok ? r.error : !r.changed ? '名字没变' : r.online ? '已改成 ' + name + '。世界现在开着：退出世界再进来才生效，然后重新启动托管' : '已改成 ' + name + '，下次开世界生效';
+  if (r.ok && r.changed) {
+    nameDirty = false; await loadGames();
+    // 独立身份的人设按游戏名放：改名后把已有的人设带过去
+    if (oldPersona && cfg.agents[$('#c-agent').value] && oldName !== name) {
+      const cur0 = await post('/api/persona', personaQuery());
+      if (cur0.ok && !cur0.exists) await post('/api/persona', { ...personaQuery(), save: true, text: oldPersona });
+    }
+    loadPersona();
+  }
+};
+$('#g-refresh').onclick = () => { loadGames(); loadAppearances(); };
+$('#g-add').onclick = async () => {
+  const r = await post('/api/games/add', { dir: $('#g-dir').value.trim() }), h = $('#h-conn');
+  h.textContent = r.ok ? '已添加' : r.error; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
+  if (r.ok) { $('#g-dir').value = ''; await loadGames(); const g = games.find((x) => x.dir.toLowerCase().startsWith(r.dir.toLowerCase())); if (g) pickGame(g); }
+};
+
+// ---- 人设：托管时带上的 persona.md ----
+let persona = { loaded: false, exists: false, file: '', sample: '', key: '' }, personaDirty = false;
+function personaQuery() { const g = curGame(); return { agent: $('#c-agent').value, memoryDir: $('#c-memoryDir').value.trim(), username: g?.username || '' }; }
+async function loadPersona(force) {
+  const q = personaQuery(), key = JSON.stringify(q);
+  if (!force && key === persona.key && persona.loaded) return;
+  if (personaDirty && !force && !confirm('人设还没保存，换了位置会丢掉改动。继续？')) return;
+  persona.key = key;
+  const r = await post('/api/persona', q), h = $('#h-persona');
+  if (key !== persona.key) return;
+  persona = { ...persona, loaded: r.ok, exists: !!r.exists, file: r.file || '', sample: r.sample || persona.sample };
+  $('#s-persona').value = r.ok ? r.text : ''; personaDirty = false;
+  $('#s-persona').disabled = !r.ok; $('#s-save').disabled = $('#s-sample').disabled = !r.ok;
+  h.textContent = !r.ok ? r.error : r.exists ? '保存在 ' + r.file : '还没写人设；保存后放在 ' + r.file;
+  h.title = r.file || ''; h.className = 'hint' + (r.ok ? '' : ' errc');
+}
+$('#s-persona').addEventListener('input', () => { personaDirty = true; });
+$('#s-sample').onclick = () => {
+  const t = $('#s-persona');
+  if (t.value.trim() && !confirm('用示例替换现在的人设？')) return;
+  t.value = persona.sample; personaDirty = true; t.focus();
+};
+$('#s-save').onclick = async () => {
+  const r = await post('/api/persona', { ...personaQuery(), save: true, text: $('#s-persona').value }), h = $('#h-persona');
+  if (r.ok) { personaDirty = false; persona.exists = true; h.textContent = '已保存到 ' + r.file + '；下次启动托管生效（正在托管的要重启）'; h.className = 'hint okc'; }
+  else { h.textContent = r.error; h.className = 'hint errc'; }
+};
+$('#c-memoryDir').addEventListener('change', () => loadPersona());
 const modelCombo = combo($('#c-model'), () => {
   const list = models?.models?.length ? models.models : (cfg?.agents[$('#c-agent').value]?.fallbackModels || []).map((v) => ({ value: v, label: v, desc: '别名，总是最新版' }));
   return list.map((m) => ({ value: m.value, label: m.label, code: m.value, desc: m.desc }));
@@ -571,7 +745,7 @@ async function loadCfg(refill) {
   if (refill || !$('#cform').dataset.filled) { if (!cur) cur = cfg.profiles[0] || null; fill(cur || blank()); }
   renderProfiles(); renderStatus();
 }
-function blank() { return { agent: 'claude', effort: 'low', label: '新配置' }; }
+function blank() { return { agent: 'claude', effort: 'low', label: '' }; }
 function profileCard() {
   const d = el('div', 'card');
   d.innerHTML = '<div class="top"><span class="dot"></span><span class="nm"></span></div><div class="meta"></div><div class="meta"></div>';
@@ -580,12 +754,12 @@ function profileCard() {
 }
 function updateProfile(d, p) {
   d._p = p; d.classList.toggle('sel', !!(cur && cur.id === p.id));
-  const fail = p.launch && p.launch.exitCode !== null && !p.running;
+  const ended = p.launch && p.launch.exitCode !== null && !p.running ? p.launch.ended : '';
   $('.dot', d).className = 'dot ' + (p.running ? 'on' : '');
   $('.nm', d).textContent = p.label;
   const m = d.querySelectorAll('.meta');
   m[0].textContent = cfg.agents[p.agent].label + ' · ' + (p.model || '默认模型') + ' · ' + p.effort;
-  m[1].textContent = (p.connection.ok ? p.connection.username + ' @ ' + p.connection.worldId : '连接文件有问题') + ' · ' + (p.running ? '在线' : fail ? '上次启动失败' : '未启动');
+  m[1].textContent = (p.connection.ok ? p.connection.username + ' @ ' + p.connection.worldId : '连接文件有问题') + ' · ' + (p.running ? '在线' : ended ? ENDED[ended] : '未启动');
 }
 function renderProfiles() { const box = $('#profiles'); if (!cfg.profiles.length) return emptyIn(box, '还没有配置，点右上角新建'); keyed(box, cfg.profiles, (p) => p.id, profileCard, updateProfile); }
 function fill(p) {
@@ -594,20 +768,26 @@ function fill(p) {
   for (const k of NUMS) $('#c-' + k).value = p[k] ?? '';
   for (const k of SWITCHES) $('#c-' + k).checked = p[k] !== false;
   guardGear();
-  appearanceWant = p.appearance || ''; loadAppearances();
+  appearanceWant = p.appearance || ''; renderLooks(); loadAppearances();
   $('#c-agent').value = p.agent || 'claude'; agentDD.sync();
+  nameDirty = false; personaDirty = false; persona.key = '';
   onAgent(p.effort);
-  const h = $('#h-conn');
-  h.textContent = p.connection ? (p.connection.ok ? '角色 ' + p.connection.username + '，世界 ' + p.connection.worldId : p.connection.error) : '游戏里的角色名和世界从这个文件读';
+  const h = $('#h-connfile');
+  h.textContent = p.connection ? (p.connection.ok ? '角色 ' + p.connection.username + '，世界 ' + p.connection.worldId : p.connection.error) : '手动指定 config/mcbot-server-control/connection.json';
   h.className = 'hint' + (p.connection ? (p.connection.ok ? ' okc' : ' errc') : '');
+  $('#h-name').dataset.msg = '';
+  renderGames();
   $('#c-del').disabled = !p.id; say('');
 }
+const ENDED = { disconnected: '游戏关了，已结束', stopped: '已停止', crashed: '托管中途退出', failed: '上次启动失败' };
 /** Bow and shield only matter while guarding. */
 function guardGear() { const on = $('#c-guard').checked; for (const l of document.querySelectorAll('#c-guard-gear label')) l.classList.toggle('off', !on); for (const id of ['#c-guardRadius', '#c-guardLowHealth']) $(id).disabled = !on; }
 function onAgent(effort) {
   const a = cfg.agents[$('#c-agent').value];
   $('#h-account').textContent = a.accountHint; $('#c-nickname').placeholder = a.defaultNickname;
-  models = null; updateEfforts(effort); loadModels(false); checkMemory();
+  // dsh 桌面版的 Key 在 ~/.dsh：新配置默认用它，省得朋友自己找
+  if ($('#c-agent').value === 'dsh' && !$('#c-configDir').value.trim() && !(cur && cur.id) && (cfg.accounts.dsh || []).includes('~/.dsh')) $('#c-configDir').value = '~/.dsh';
+  models = null; updateEfforts(effort); loadModels(false); checkMemory(); loadPersona(); syncRole();
 }
 /** Whether the memory directory holds 小克's persona; without it the agent talks like a help desk (7th playtest). */
 async function checkMemory() {
@@ -620,10 +800,14 @@ function collect() {
   for (const k of TEXTS) o[k] = $('#c-' + k).value.trim();
   for (const k of NUMS) { const v = $('#c-' + k).value.trim(); o[k] = v === '' ? null : Number(v); }
   for (const k of SWITCHES) o[k] = $('#c-' + k).checked;
-  o.appearance = $('#c-appearance').value;
+  o.appearance = appearanceWant;
+  if (!o.label) o.label = (curGame()?.username || $('#c-nickname').value.trim() || 'Bot') + ' · ' + cfg.agents[o.agent].label;
   return o;
 }
-async function save() { const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); say('已保存'); return cur; }
+async function save() {
+  if (!$('#c-connectionFile').value.trim()) { say('先在「连接配置」选一个游戏', true); return null; }
+  if (personaDirty && persona.loaded) await $('#s-save').onclick();
+  const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); say('已保存'); return cur; }
 let lastStatus = '';
 function renderStatus() {
   const box = $('#c-status'), p = cur && cur.id && cfg.profiles.find((x) => x.id === cur.id);
@@ -632,7 +816,8 @@ function renderStatus() {
   const l = p.launch; let cls = '', text;
   if (p.running) { text = '在线：' + p.connection.username + ' 正在托管，去「监控」看记录'; cls = 'okc'; }
   else if (l && l.exitCode === null) text = '启动中…（' + Math.round((Date.now() - l.startedAt) / 1000) + ' 秒）';
-  else if (l) { text = '启动脚本已退出（退出码 ' + l.exitCode + '）' + (l.error ? '：' + l.error : ''); cls = l.exitCode === 0 ? '' : 'errc'; }
+  else if (l && (l.ended === 'disconnected' || l.ended === 'stopped')) text = l.ended === 'disconnected' ? '游戏关了或退出了世界，托管已结束。进游戏后再点「启动托管」' : '托管已停止';
+  else if (l) { text = (l.ended === 'crashed' ? '托管跑了一阵后退出了' : '启动失败') + '（退出码 ' + l.exitCode + '）' + (l.error ? '：' + l.error : ''); cls = 'errc'; }
   else { text = p.connection.ok ? '未启动' : p.connection.error; cls = p.connection.ok ? '' : 'errc'; }
   const log = l && l.log && !p.running ? l.log : '';
   const sig = cls + text.replace(/\d+ 秒/, '') + log;
@@ -649,9 +834,9 @@ $('#c-model').addEventListener('input', () => updateEfforts());
 $('#c-configDir').addEventListener('change', () => loadModels(false));
 $('#c-new').onclick = () => { cur = null; fill(blank()); renderProfiles(); renderStatus(); $('#c-label').focus(); $('#c-label').select(); };
 $('#c-check').onclick = async () => {
-  const r = await post('/api/connection', { file: $('#c-connectionFile').value.trim() }), h = $('#h-conn');
+  const r = await post('/api/connection', { file: $('#c-connectionFile').value.trim() }), h = $('#h-connfile');
   h.textContent = r.ok ? '角色 ' + r.username + '，世界 ' + r.worldId + '，控制口 ' + r.endpoint : r.error; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
-  loadAppearances();
+  renderGames(); loadAppearances(); loadPersona();
 };
 $('#c-launch').onclick = async () => {
   const p = await save(); if (!p) return;
@@ -682,7 +867,12 @@ function setTab(t) {
   const c = $('#crumb'); c.textContent = t === 'config' ? '配置' : '监控'; c.classList.remove('swap'); void c.offsetWidth; c.classList.add('swap');
   $('#live').hidden = t !== 'monitor'; document.body.classList.remove('nav-open');
   const v = $(t === 'config' ? '#view-config' : '#view-monitor'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
-  if (t === 'config') { loadCfg(); cfgTimer = setInterval(() => loadCfg(), 3000); requestAnimationFrame(() => placeThumb($('#c-cred'))); }
+  if (t === 'config') {
+    loadCfg(); loadGames(); let n = 0;
+    // 游戏列表会问每个世界开着没有，刷新慢一点
+    cfgTimer = setInterval(() => { loadCfg(); if (++n % 3 === 0 && !document.hidden) loadGames(); }, 3000);
+    requestAnimationFrame(() => placeThumb($('#c-cred')));
+  }
 }
 $('#tab-monitor').onclick = () => setTab('monitor'); $('#tab-config').onclick = () => setTab('config');
 $('#menu').onclick = () => document.body.classList.toggle('nav-open'); $('#scrim').onclick = () => document.body.classList.remove('nav-open');

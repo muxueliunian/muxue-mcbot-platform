@@ -166,7 +166,7 @@ export function inspectConnection(file) {
  * 留空时和驱动器一样用仓库里的 memory 目录。第七轮试玩就是留空、人设没读到，说话成了客服腔。
  */
 export function inspectMemory(dir, agent = 'claude', root = ROOT) {
-  if (agent !== 'claude') return { ok: true, persona: false, text: '这个 Agent 用独立试玩身份，不带小克的人设' };
+  if (agent !== 'claude') return { ok: true, persona: false, text: '这个 Agent 用自己的身份，人设在「灵魂设置」里写；留空用 runtime 里它自己的记忆目录' };
   let base = '';
   try { base = dir ? checkPath(dir, '记忆目录') : path.join(root, 'memory'); } catch (e) { return { ok: false, error: e.message }; }
   const persona = fs.existsSync(path.join(base, 'xiaoke', 'persona.md'));
@@ -236,6 +236,17 @@ const tail = (file) => {
   } catch { return ''; }
 };
 
+/**
+ * 托管进程退出的原因，给网页显示：跑过一阵才退出的不算「启动失败」。
+ * 游戏关了或退出世界时驱动器报连接断开（TRANSPORT_LOST、CONTROL_UNREACHABLE）。
+ */
+export function endReason(rec, log = '') {
+  if (/TRANSPORT_LOST|CONTROL_UNREACHABLE|超时或断开/.test(log)) return 'disconnected';
+  if (/收到停止标记|stop marker/i.test(log)) return 'stopped';
+  if (rec.exitCode === 0) return 'stopped';
+  return (rec.endedAt || 0) - rec.startedAt > 60000 ? 'crashed' : 'failed';
+}
+
 /** 启动记录：同一个 WebUI 进程里启动过的，记下进程和退出码；脚本的输出写进 runtime/webui-launch-<角色>.log。 */
 export function createLauncher({ runtime, isRunning, command = launchCommand(), spawnImpl = spawn }) {
   const launches = new Map();
@@ -265,8 +276,8 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
       fs.closeSync(fd);
       const rec = { profileId: profile.id, pid: child.pid, startedAt: Date.now(), exitCode: null, logFile };
       launches.set(name, rec);
-      child.on('error', (e) => { rec.exitCode = -1; rec.error = e.message; });
-      child.on('exit', (code) => { rec.exitCode = code ?? -1; });
+      child.on('error', (e) => { rec.exitCode = -1; rec.error = e.message; rec.endedAt = Date.now(); });
+      child.on('exit', (code) => { rec.exitCode = code ?? -1; rec.endedAt = Date.now(); });
       child.unref();
       return { ok: true, name, pid: child.pid };
     },
@@ -274,8 +285,9 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
     status(name) {
       const rec = launches.get(name);
       if (!rec) return null;
-      return { profileId: rec.profileId, startedAt: rec.startedAt, exitCode: rec.exitCode,
-        error: rec.error || '', log: rec.exitCode === null ? '' : tail(rec.logFile) };
+      const log = rec.exitCode === null ? '' : tail(rec.logFile);
+      return { profileId: rec.profileId, startedAt: rec.startedAt, endedAt: rec.endedAt || 0, exitCode: rec.exitCode,
+        error: rec.error || '', log, ended: rec.exitCode === null ? '' : endReason(rec, log) };
     },
   };
 }

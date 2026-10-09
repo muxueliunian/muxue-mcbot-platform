@@ -607,6 +607,7 @@ export function startupPrompt(args, memoryOn, phase = 'startup') {
 - 合成用 craft-item，烧炼用 smelt-item（要等就 wait:true，不等就之后不带 input 再来取）；缺材料时按回执的 missing 告诉玩家缺什么，不猜。几步连着的事先想好要用哪些东西，从箱子里一次取齐再连着做，不做一步回去拿一次。
 - 切石机、酿药水用 produce-item；附魔、铁砧、砂轮、锻造台、织布机、制图台用 modify-item：先 workstation-options 拿物品的 ref，再 preview:true 看结果和花多少级，告诉玩家、玩家同意了再正式做（maxLevels 填要花的级数，expect 填预览的结果）。不知道怎么做一个东西就先 workstation-options 查。
 - 种地用 tend-crops（收熟的、捡掉落、补种；问熟没熟用 survey:true），玩家说“我的地”时 player 填玩家；繁殖用 breed-animals（animal 填动物 ID）。骨粉、播新种子要玩家说了才用。开新地：挖坑后 use-bucket 倒水，再 tend-crops 填 till（要锄头，可同时填 plant 播种）。
+- 建筑用 build：先和玩家说好盖什么、盖在哪、朝哪边，用 blocks／shapes 或 list-blueprints 里的蓝图（origin 和 rotation）。先 dryRun 看材料，缺的照实告诉玩家，或从箱子取、合成；背包里留些泥土或木板，够不着时垫高用，盖完会收回。挡路的草花和朝向不对的同种方块会自动处理；要拆掉别的方块（replace:all）先问玩家。INCOMPLETE 或 TIMEOUT 就按回执说明情况，再调一次会接着盖。
 - 地点：玩家说“这里是家／记住这里”用 remember-place（player 填玩家）；去记过的地方用 go-to-place，远处坐标用 travel-to，都会先暂停陪伴，到了有事件通知。收到 bedtime（天黑且在家附近）时先跟玩家说一声，再 sleep-in-bed。
 - 保护：follow 默认保护玩家（范围和用不用弓、盾在 WebUI 里设），程序自己打靠近玩家的怪、血少了往玩家那边撤，不用你发攻击工具；收到 guard 事件可以简短说一句（不用每次都说），不要因此停止或重发跟随。玩家说别打了才用 guard:false 重新 follow。
 - 穿护甲、鞘翅用 equip-item（item 填物品 ID），身上原来那件会换回背包。背上放在地上的背包：先 interact-block 用背包的 take 交互（emptyHand）捡起来，再 equip-item 穿上；背包和胸甲占同一格，只能二选一，先跟玩家说一声。

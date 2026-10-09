@@ -122,6 +122,7 @@ export interface ActionArguments {
   'workstation-options': { item?: string; potion?: string; count?: number; subjects?: string };
   'produce-item': { item: string; count?: number; potion?: string; station?: Position; timeoutMs?: number };
   'modify-item': { subject: string; action: ModifyAction; preview?: boolean; maxLevels?: number; expect?: string; station?: Position; timeoutMs?: number };
+  'build': { blocks: { x: number; y: number; z: number; state: string; rotation?: 0 | 90 | 180 | 270 }[]; replace?: 'none' | 'soft' | 'all'; dryRun?: boolean; timeoutMs?: number };
   'tend-crops': { survey?: boolean; player?: string; center?: Position; radius?: number; crops?: string[]; replant?: boolean; plant?: string; boneMeal?: number; till?: number; timeoutMs?: number };
   'use-bucket': Position & { action: 'pour' | 'scoop' };
   'emote': { name: string; source?: string; player?: string; seconds?: number };

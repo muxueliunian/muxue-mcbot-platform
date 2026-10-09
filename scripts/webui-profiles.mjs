@@ -48,7 +48,7 @@ export const GUARD_OPTIONS = Object.freeze({
   guardShield: { flag: '-GuardShield', kind: 'switch' },
 });
 
-const KEYS = new Set(['id', 'label', 'agent', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'nodePath',
+const KEYS = new Set(['id', 'label', 'agent', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'blueprintDir', 'nodePath',
   'credential', 'updatedAt', 'appearance', ...Object.keys(SESSION_OPTIONS), ...Object.keys(GUARD_OPTIONS)]);
 
 const plainText = (v) => typeof v === 'string' && !/[\u0000-\u001f\u007f]/.test(v);
@@ -89,6 +89,7 @@ export function normalizeProfile(input) {
     connectionFile: checkPath(input.connectionFile, '连接文件', true),
     configDir: checkPath(input.configDir, '账号目录'),
     memoryDir: checkPath(input.memoryDir, '记忆目录'),
+    blueprintDir: checkPath(input.blueprintDir, '蓝图目录'),
     nodePath: checkPath(input.nodePath, 'Node 路径'),
     credential: { kind: 'login' },
     updatedAt: Number.isFinite(input.updatedAt) ? input.updatedAt : 0,
@@ -212,6 +213,7 @@ export function launchArgs(profile, script = path.join(ROOT, 'start-server-play.
   if (profile.nickname) a.push('-Nickname', profile.nickname);
   if (profile.configDir) a.push('-ConfigDir', profile.configDir);
   if (profile.memoryDir) a.push('-MemoryDir', profile.memoryDir);
+  if (profile.blueprintDir) a.push('-BlueprintDir', profile.blueprintDir);
   if (profile.model) a.push('-Model', profile.model);
   if (profile.nodePath) a.push('-NodePath', profile.nodePath);
   if (profile.appearance) a.push('-Appearance', profile.appearance);

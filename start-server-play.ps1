@@ -22,6 +22,8 @@ param(
     [ValidateSet('on', 'off')][string]$GuardShield = 'on',
     # 外观：<来源>=<选项>（WebUI 从服务器的列表里选，比如 yes_steve_model:model=ds_whale.ysm），每次接管时套用；留空不改
     [string]$Appearance = '',
+    # 建筑蓝图目录（build 用的 <名字>.json，格式见 docs/server_body_protocol.md 的 build）；留空用运行目录 runtime 下的 blueprints
+    [string]$BlueprintDir = '',
     [switch]$Headless,
     [switch]$PrepareOnly
 )
@@ -67,6 +69,7 @@ if ($GuardRadius -gt 0 -and $GuardRadius -lt 3) { throw 'GuardRadius 应为 3..1
 if ($GuardLowHealth -gt 0 -and $GuardLowHealth -lt 4) { throw 'GuardLowHealth 应为 4..16（0 表示默认）' }
 if ($GuardRadius -gt 0) { $config.mcpServers.minecraft.args += @('--guard-radius', [string]$GuardRadius) }
 if ($GuardLowHealth -gt 0) { $config.mcpServers.minecraft.args += @('--guard-low-health', [string]$GuardLowHealth) }
+if ($BlueprintDir) { $config.mcpServers.minecraft.args += @('--blueprint-dir', $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BlueprintDir)) }
 if ($Appearance) {
     if ($Appearance -notmatch '^[a-z0-9_.-]+:[a-z0-9_/.-]+=[^"\\\x00-\x1f\x7f]{1,128}$') { throw 'Appearance 应为 <来源>=<选项>' }
     $config.mcpServers.minecraft.args += @('--appearance', $Appearance)

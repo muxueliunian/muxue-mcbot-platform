@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance","build");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -55,6 +55,7 @@ final class ServerController implements ControlSession.Game {
     private final SubjectRefs subjectRefs=new SubjectRefs();
     private TravelTask travel;
     private FarmTask farm;
+    private BuildTask build;
     private BreedTask breed;
     private BlockPos sleepBed;
     private ServerPlayer followedPlayer;
@@ -368,6 +369,13 @@ final class ServerController implements ControlSession.Game {
             return;
         }
         if(operation.name.equals("travel-to")){requireWalkable();travel=new TravelTask(operation,player,session);active=operation;return;}
+        if(operation.name.equals("build")) {
+            BuildTask task=new BuildTask(operation,player,session);
+            if(args.has("dryRun")&&bool(args,"dryRun")){operation.finish("succeeded","Build plan (nothing changed)",task.plan());return;}
+            requireWalkable();task.start();
+            if(operation.status.equals("running")){build=task;active=operation;}
+            return;
+        }
         if(operation.name.equals("tend-crops")||operation.name.equals("breed-animals")) {
             Vec3 center=player.position();
             if(args.has("player")){ServerPlayer near=findPlayer(string(args,"player"));if(near==null)throw error("PLAYER_NOT_VISIBLE","Named player is not within 32 blocks in this dimension");center=near.position();}
@@ -435,6 +443,13 @@ final class ServerController implements ControlSession.Game {
             try{job.tick();}
             catch(Protocol.Error e){StationJob failed=job;failed.stop();JsonObject result=failed.detail();result.addProperty("code",e.code);result.add("position",position(player.position()));finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
             catch(RuntimeException e){StationJob faulted=job;JsonObject result=faultResult(e,faulted::detail);faulted.stop();finish("unknown",UNCERTAIN_FAULT+"Station task fault: "+e.getClass().getSimpleName(),result);return;}
+            if(active!=null&&!active.status.equals("running"))stop();
+            return;
+        }
+        if(build!=null){
+            try{build.tick();}
+            catch(Protocol.Error e){JsonObject result=build.progress();result.addProperty("code",e.code);finish(e.code.equals("UNKNOWN")?"unknown":"failed",e.code+": "+e.getMessage(),result);return;}
+            catch(RuntimeException e){finish("unknown",UNCERTAIN_FAULT+"Build task fault: "+e.getClass().getSimpleName(),faultResult(e,build::progress));return;}
             if(active!=null&&!active.status.equals("running"))stop();
             return;
         }
@@ -593,7 +608,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(build!=null)build.stop();build=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     @Override public boolean leave() {
         if(player==null)return false;

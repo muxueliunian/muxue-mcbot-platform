@@ -16,6 +16,7 @@ import { SurvivalReflexes } from './survival-reflexes.js';
 import { createActionStop, companionReflexHooks } from './action-stop.js';
 import { BodyError, type Body, type GuardOptions } from './body.js';
 import { PlaceBook } from './places.js';
+import { BlueprintShelf } from './blueprints.js';
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: {
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
     'respawn-only': { type: 'boolean', default: false },
     'connection-file': { type: 'string' }, username: { type: 'string' }, 'world-id': { type: 'string' },
     nickname: { type: 'string' }, 'runtime-dir': { type: 'string', default: 'runtime' }, 'bot-players': { type: 'string', default: '' },
-    'memory-dir': { type: 'string' }, 'memory-agent': { type: 'string' }, hosted: { type: 'boolean', default: false },
+    'memory-dir': { type: 'string' }, 'blueprint-dir': { type: 'string' }, 'memory-agent': { type: 'string' }, hosted: { type: 'boolean', default: false },
     guard: { type: 'string', default: 'on' }, 'guard-radius': { type: 'string' }, 'guard-low-health': { type: 'string' }, 'guard-bow': { type: 'string', default: 'on' }, 'guard-shield': { type: 'string', default: 'on' },
     appearance: { type: 'string' },
   } });
@@ -111,7 +112,7 @@ async function main(): Promise<void> {
       return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
     } }) : undefined;
     if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
-    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent, places });
+    server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent, places, blueprints: new BlueprintShelf(path.resolve(values['blueprint-dir'] ?? path.join(runtimeDir, 'blueprints'))) });
     monitor = new RuntimeMonitor(body, events, {
       ...(values.hosted ? { heartbeatFile } : {}),
       companion,

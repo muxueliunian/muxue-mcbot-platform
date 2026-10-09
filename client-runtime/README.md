@@ -47,7 +47,7 @@ node dist/main.js --body client --connection-file "C:/path/to/instance/config/mc
 
 先在独立客户端中以 ClientBot 进入所选世界。`--username` 必须匹配实际玩家；`--world-id` 是所选资料标识，不从地址猜测。客户端端点仅 loopback HTTP `/v1`，不跟随重定向。省略 `--body` 仍保持 client 默认，不会把协议 1 静默改成 ServerBody。[start-client-play.ps1](../start-client-play.ps1) 保留 Codex 托管入口。
 
-托管兼容参数包括 `--hosted --nickname --bot-players --memory-dir --memory-agent`。记忆参数仅为接线兼容而接受，本包未实现记忆工具。`--hosted` 必须有新鲜、存活的 `runtime/companion-<username>.json` 心跳；过期会释放控制权并关闭运行端。
+托管兼容参数包括 `--hosted --nickname --bot-players --memory-dir --memory-agent`。`--blueprint-dir <目录>` 指定 build 读写蓝图的目录（默认 `<runtime-dir>/blueprints`）。记忆参数仅为接线兼容而接受，本包未实现记忆工具。`--hosted` 必须有新鲜、存活的 `runtime/companion-<username>.json` 心跳；过期会释放控制权并关闭运行端。
 
 ## 控制与结果语义
 

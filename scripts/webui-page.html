@@ -263,6 +263,7 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
   <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="服务器的 config/mcbot-server-control/connection.json" required><button type="button" id="c-check">检查</button></div><span class="hint" id="h-conn">游戏里的角色名和世界从这个文件读</span></div>
   <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家可以用昵称叫它</span></div>
   <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用仓库里的 memory 目录"><span class="hint" id="h-mem">有 xiaoke/persona.md 时带上人设和玩家档案</span></div>
+  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空用 runtime/blueprints"><span class="hint">建筑用的蓝图（&lt;名字&gt;.json）放在这里</span></div>
   <div class="f" id="f-appearance" hidden><label for="c-appearance">外观</label><select id="c-appearance" hidden></select><span class="hint" id="h-appearance">服务器上的模型；每次启动托管时套用</span></div>
 </div>
 <h3>保护玩家</h3>
@@ -493,7 +494,7 @@ poll(); setInterval(poll, 1500);
 let cfg = null, cur = null, cfgTimer = 0, models = null, modelsKey = '', modelsLoading = false;
 const NUMS = ['idleMinutes', 'resumeWindowMin', 'rotateTokens', 'maxRestarts', 'guardRadius', 'guardLowHealth'];
 const SWITCHES = ['guard', 'guardBow', 'guardShield'];
-const TEXTS = ['label', 'configDir', 'model', 'connectionFile', 'nickname', 'memoryDir', 'nodePath'];
+const TEXTS = ['label', 'configDir', 'model', 'connectionFile', 'nickname', 'memoryDir', 'blueprintDir', 'nodePath'];
 const EFFORT_DESC = { low: '快、省额度', medium: '均衡', high: '更仔细', xhigh: '很仔细', max: '最强', ultra: '最强，最慢' };
 function say(t, err) { const m = $('#c-msg'); m.textContent = t || ''; m.className = err ? 'err' : ''; if (t) { void m.offsetWidth; m.classList.add('show'); } }
 function opts(select, list, label) { select.replaceChildren(...list.map((v) => { const o = el('option'); o.value = v; o.textContent = label ? label(v) : v; return o; })); }

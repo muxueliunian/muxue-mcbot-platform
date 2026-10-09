@@ -12,7 +12,7 @@ v0.1 的范围（用户定的）：
 
 - Agent：Claude Code、Codex、dsh 三家都能用。
 - 本地 WebUI：看状态和记录、叫停、保存配置并一键启动托管。WebUI 是用户日常的主要入口。
-- 陪玩能力：跟随、采集、合成烧炼、工作站、种地、睡觉、记地点、保护玩家、表情、长途行走，以及建筑（也在 v0.1 范围内，还没做）。
+- 陪玩能力：跟随、采集、合成烧炼、工作站、种地、睡觉、记地点、保护玩家、表情、长途行走，以及建筑（8i，10-09 做完服务端执行）。
 - Mod：核心开放适配接口，自己做几个示例附属模组，其余由使用者按接口适配。
 - 平台：MC 1.21.1 / NeoForge 21.1.217，独立服务器，或开了局域网的单人世界；单 Bot；Agent 在玩家本机运行。多版本、Fabric 放到 v0.1 之后。
 
@@ -47,9 +47,9 @@ v0.1 的范围（用户定的）：
 
 进度表见 [交付计划的进度总览](delivery_plan.md#进度总览2026-10-08)。概括：
 
-- 已完成：Agent 接入三家、WebUI 和配置页、Mod 适配接口和三个示例模组、按标签认模组资源、合成烧炼和工作站、睡觉、地点和走门、种地养动物、保护玩家、表情和外观（8j）、托管启动时自动重生、长途走（8k：地表粗路线、游泳过河）。
+- 已完成：Agent 接入三家、WebUI 和配置页、Mod 适配接口和三个示例模组、按标签认模组资源、合成烧炼和工作站、睡觉、地点和走门、种地养动物、保护玩家、表情和外观（8j）、托管启动时自动重生、长途走（8k：地表粗路线、游泳过河）、建筑（8i：按蓝图逐格放，放前在原版放置代码里试出能得到要求状态的点击，够不着就垫高，缺点击面就放临时靶块）。
 - 用户已试玩八轮（Claude 六轮、dsh 两轮，另有一次 dsh 补测整棵树；模型有 Sonnet、Haiku、DeepSeek-V41-Flash），每轮的反馈都修完了（交付计划 3a～3j）。Codex 只在 10-05 首版验收时跑过受控阶段，没有试玩过。
-- 还没做：建筑（8i）、模组机器通用适配（8b）、农夫乐事（8c）、打包和上手文档（9）、三家回归发布（10）。
+- 还没做：模组机器通用适配（8b）、农夫乐事（8c）、打包和上手文档（9）、三家回归发布（10）。
 
 证据分三层，强弱不同，请分开看：离线测试 < 隔离服实测（脚本驱动真实服务器，不用模型）< 真实模型试玩。很多能力只有隔离服实测，没经过真实模型。
 
@@ -61,7 +61,7 @@ v0.1 的范围（用户定的）：
 - **工作站有几处比说法窄**：熔炉类（`PROCESSOR`）目前按单原料执行；附魔、铁砧“先预览、问过玩家再做”只是提示词约定，程序不验证玩家是否同意。详见[工作站设计](workstation_design.md)。
 - **驱动器太大**：`scripts/companion.mjs` 约 1560 行，三家 Agent 的会话、事件调度、叫停、重启、记忆整理都在里面。
 - **启动提示词越来越长**：每加一个能力就在 `startupPrompt` 里加一句，现在二十多条规则。
-- **工具多**：MCP 工具约 60 个（按服务器能力和已装适配增减）。小模型（Haiku、Flash）会选错工具或自己逐格探查。
+- **工具多**：MCP 工具约 63 个（按服务器能力和已装适配增减）。小模型（Haiku、Flash）会选错工具或自己逐格探查。
 - **实测靠本地夹具**：`scripts/server-*-smoke.mjs` 依赖本机的隔离服、存档备份和端口，干净 clone 跑不了；没有 CI。有几个已知的偶发失败（保护实测有一次无报错退出、导航与防卫的高处拾取偶发、Node 24.15 原生崩溃 0xC0000409）。
 - **R6 只做了一半**：背包里无法完整编码组件的物品会降级显示，容器格子和地上物品还没有。
 - **死亡只在启动托管时自动重生**：托管途中死了，控制结束，要重新启动托管。
@@ -76,7 +76,7 @@ v0.1 的范围（用户定的）：
 4. Mod 适配接口（`com.mcbot.servercontrol.api`：ContainerAdapter、ItemInteraction、PickupSink、WorkstationAdapter、EmoteSource、AppearanceSource）是否一致、够用？以后别人写适配会不会踩坑？
 5. 驱动器和提示词：`companion.mjs` 和 `startupPrompt` 应该怎么拆、怎么控制长度？
 6. 测试：离线、隔离服、真实模型三层的投入比例合理吗？哪些风险目前没有任何测试覆盖？
-7. 按 v0.1 剩下的计划（评审问题和 8k 已做完，剩 8i → 8b → 8c → 9 → 10；“在干净环境从头安装一遍”的演练提前做，不等到第 9 步），顺序和估时是否现实，有没有该先做的基础工作？
+7. 按 v0.1 剩下的计划（评审问题、8k、8i 已做完，剩 8b → 8c → 9 → 10；“在干净环境从头安装一遍”的演练提前做，不等到第 9 步），顺序和估时是否现实，有没有该先做的基础工作？
 
 请先给总判断，再按优先级列出有证据的问题（文件和调用链、触发条件、影响、最小建议），区分“v0.1 前必须修”和“可以以后再做”。没有把握的标成待验证，不要直接建议大规模重写。
 
@@ -95,7 +95,7 @@ v0.1 的范围（用户定的）：
 | Agent 会话和托管 | `scripts/companion.mjs`、`scripts/agents/`、`start-server-play.ps1`、`scripts/server-body-control.mjs` | 事件怎么变成对话轮次；叫停、重启、换会话、启动时重生是不是单一可靠的路径 |
 | MCP 工具和任务 | `client-runtime/src/mcp.ts`、`gather-tasks.ts`、`tasks.ts`、`companion-mode.ts`、`survival-tasks.ts`、`survival-reflexes.ts`、`events.ts` | 写锁、子任务、反射（自动进食、自卫）和陪伴模式之间怎么让路；事件会不会漏或重复 |
 | 运行端到服务端 | `client-runtime/src/server-body.ts`、`body.ts`；服务端 `ControlSession.java`、`ServerController.java` | 每个动作的参数校验、租约和代次检查、结果分类 |
-| 原生动作 | `SurvivalActions.java`、`NativeNavigation.java`、`GuardCombat.java`、`FarmTask.java`、`WorkstationTask.java` 等 | 是否真的走原版代码路径；失败时会不会留下半完成的状态 |
+| 原生动作 | `SurvivalActions.java`、`NativeNavigation.java`、`GuardCombat.java`、`FarmTask.java`、`WorkstationTask.java`、`BuildTask.java` 等 | 是否真的走原版代码路径；失败时会不会留下半完成的状态 |
 | 适配接口 | `api/` 包、`ModAdapters.java`、`ItemInteractions.java`、`JsonInteractions.java`、`BodyEmotes.java`；`mods/mcbot-*` | 适配器出错时的隔离；版本锁定；登记冻结 |
 | WebUI | `scripts/webui.mjs`、`webui-profiles.mjs`、`webui-page.html` | 本机令牌、Origin 检查、不回传控制令牌、不存凭据 |
 

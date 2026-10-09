@@ -13,6 +13,7 @@ import { PillarTasks } from './pillar.js';
 import { equipItem, interactBlock, interactBlockRepeated, useItem } from './interactions.js';
 import { summarizeOperation, summarizeObservation, summarizeContainer } from './model-view.js';
 import { PlaceBook } from './places.js';
+import { BlueprintShelf, resolveCells, type Rotation, type Shape } from './blueprints.js';
 
 const coordinate = z.coerce.number().finite();
 const xyz = { x: coordinate, y: coordinate, z: coordinate };
@@ -21,7 +22,7 @@ const registryId = z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('Na
 const resourceSelector = z.string().regex(/^#?[a-z0-9_.-]+:[a-z0-9_/.-]+$/).describe('A block ID (minecraft:oak_log, biomesoplenty:fir_log) or a block tag (#minecraft:logs, #c:ores, #c:ores/iron, #c:stones)');
 const timeoutMs = z.number().int().min(500).max(120000).optional();
 /** chatFloor: ServerBody claim chatCursor; chat at or before it predates this control and is withheld from the model. */
-export function createMcpServer(rawBody: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: StopCurrent; places?: PlaceBook } = {}): McpServer {
+export function createMcpServer(rawBody: Body, events: EventJournal, options: { chatFloor?: number; companion?: CompanionMode; gather?: GatherTasks; tasks?: ContainerTasks; survival?: SurvivalTasks; reflexes?: SurvivalReflexes; stopCurrent?: StopCurrent; places?: PlaceBook; blueprints?: BlueprintShelf } = {}): McpServer {
   const server = new McpServer({ name: 'mcbot-client-runtime', version: '0.1.0' });
   const serverObserved = rawBody.hello.backend === 'server';
   const tasks = options.tasks ?? new ContainerTasks(rawBody, Date.now, operation => events.deliverOperation(operation));
@@ -315,6 +316,51 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
       return operationResult(await settle(await body.act('breed-animals', args), 15000));
     });
+  }
+  if (serverObserved && body.hello.capabilities.includes('build')) {
+    const shelf = options.blueprints;
+    const point = z.object({ x: coordinate, y: coordinate, z: coordinate });
+    const design = {
+      blocks: z.array(z.object({ x: coordinate.int(), y: coordinate.int(), z: coordinate.int(), block: z.string().min(1).max(256).describe('Block with optional state, /setblock style: oak_stairs[facing=east,half=bottom], oak_log[axis=x], oak_door[facing=west,hinge=left] (the lower half), white_bed[facing=south] (the foot), wall_torch[facing=north]; "air" clears') })).max(4096).optional().describe('Single blocks, absolute coordinates'),
+      shapes: z.array(z.object({
+        shape: z.enum(['fill', 'hollow', 'walls', 'line', 'roof']).describe('fill = solid box, hollow = shell, walls = four sides, line = from→to, roof = gable roof of stairs (from/to is the bottom layer, one wider than the walls for eaves)'),
+        from: point, to: point, block: z.string().min(1).max(256).describe('The block; for roof the stairs'),
+        ridge: z.enum(['x', 'z']).optional(), ridgeBlock: z.string().optional(), gableBlock: z.string().optional().describe('roof: block for the triangle ends (default the full block of the stairs material; "none" leaves them open)'),
+      })).max(32).optional().describe('Shapes between two corners (inclusive, absolute coordinates)'),
+      blueprint: z.object({ name: z.string().min(1).max(40), origin: point.describe('Where the minimum corner goes after turning'), rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise seen from above; facings turn with it') }).optional().describe('A saved blueprint (list-blueprints)'),
+    };
+    const cellsOf = (args: { blocks?: { x: number; y: number; z: number; block: string }[]; shapes?: Shape[]; blueprint?: { name: string; origin: { x: number; y: number; z: number }; rotation?: Rotation } }) => {
+      if (args.blueprint && !shelf) throw new BodyError('UNSUPPORTED', '没有设置蓝图目录');
+      const cells = resolveCells({
+        ...(args.blueprint ? { blueprint: { blueprint: shelf!.load(args.blueprint.name), origin: args.blueprint.origin, rotation: args.blueprint.rotation ?? 0 } } : {}),
+        shapes: args.shapes, blocks: args.blocks?.map(b => ({ x: b.x, y: b.y, z: b.z, state: b.block })),
+      });
+      if (!cells.length) throw new BodyError('INVALID_ARGUMENT', '给 blocks、shapes 或 blueprint');
+      return cells;
+    };
+    register('build', 'Build like a player: put blocks, shapes and/or a saved blueprint into the world (later entries win: blueprint < shapes < blocks; "air" clears). Each spot is checked first: already right is skipped; grass, flowers and snow give way; a wrong block or wrong state is dug out when replace allows (soft, the default: only plants and the same block in a wrong state; all: anything except liquids and blocks holding contents; none: nothing). Digs top down, then places bottom up, layer by layer, attached blocks (doors, torches, lanterns, carpets, plants) after their layer. Stairs, slabs, logs, doors, beds, torches... come out in the asked state: it turns and clicks the face and spot that make the game place exactly that, and checks afterwards (corners of stairs and fence links follow their neighbours). Walks to a spot in reach, never inside a block still to come; it does not climb or scaffold yet, so very high spots are reported. Blocks come from the inventory (plain stacks): use dryRun first for the material list (need/have/missing) and fetch or craft what is missing; a build missing materials fails before touching anything. Pauses companion mode first (resume after). running: the result arrives as a task event (placed, dug, already, skippedWhy, wrongState, inventoryChange); INCOMPLETE or TIMEOUT: calling build again with the same arguments continues; stop-action ends it.', {
+      ...design, replace: z.enum(['none', 'soft', 'all']).optional(), dryRun: z.boolean().optional(),
+      say: z.string().min(1).max(256).optional(), timeoutMs: z.number().int().min(10000).max(600000).optional(),
+    }, async ({ say, replace, dryRun, timeoutMs, ...args }) => {
+      const blocks = cellsOf(args);
+      const request = { blocks, ...(replace ? { replace } : {}), ...(timeoutMs ? { timeoutMs } : {}) };
+      if (dryRun) return operationResult(await body.act('build', { ...request, dryRun: true }));
+      idleBody(); await pauseCompanion(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await settle(await body.act('build', request), 15000));
+    });
+    if (shelf) {
+      register('list-blueprints', 'Saved blueprints: name, size (x/y/z), block count, description and the main materials.', {}, async () => shelf.list().map(blueprint => {
+        const counts = new Map<string, number>();
+        for (const block of blueprint.blocks) { const name = block[3].replace(/\[.*$/, '').replace(/^minecraft:/, ''); if (name !== 'air') counts.set(name, (counts.get(name) ?? 0) + 1); }
+        return { name: blueprint.name, size: blueprint.size, blocks: blueprint.blocks.length, description: blueprint.description, materials: Object.fromEntries([...counts].sort((a, b) => b[1] - a[1]).slice(0, 10)) };
+      }));
+      register('save-blueprint', 'Save a design as a blueprint for build: blocks and/or shapes (absolute or any coordinates; saved relative to their minimum corner).', {
+        name: z.string().min(1).max(40), description: z.string().max(200).optional(), blocks: design.blocks, shapes: design.shapes, overwrite: z.boolean().optional(),
+      }, async ({ name, description, overwrite, ...args }) => {
+        const saved = shelf.save(name, description ?? '', cellsOf(args), overwrite === true);
+        return { saved: saved.name, size: saved.size, blocks: saved.blocks.length };
+      });
+    }
   }
   const canTravel = serverObserved && body.hello.capabilities.includes('travel-to');
   const travel = async (target: { x: number; y?: number; z: number }, extra: { tolerance?: number; timeoutMs?: number; say?: string }) => {

@@ -205,11 +205,18 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 
 /* 配置页的分步区块 */
 .form-head{display:flex;gap:18px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap}
+.form-head h2{margin:0 0 6px}
 .form-head .head-label{width:220px}
-.form h3 .step{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--primary);color:#fff;font-size:11px;margin-left:-2px}
-.form h3:has(.step)::before{display:none}
-.h3-note{color:var(--muted);font-weight:400;font-size:12px}
-.form h3 button{margin-left:auto}
+/* 配置页的标签页：一次只看一块 */
+.seg.tabs{display:flex;align-self:auto;margin:18px 0 6px;overflow-x:auto;scrollbar-width:none}.seg.tabs::-webkit-scrollbar{display:none}
+.seg.tabs button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.tdot{width:7px;height:7px;border-radius:50%;background:transparent;transition:background .3s}
+.tdot.ok{background:var(--ok)}.tdot.warn{background:var(--busy)}.tdot.err{background:var(--err)}
+.pane{padding-top:14px;min-height:300px}
+.pane.enter{animation:paneIn .35s var(--spring)}
+@keyframes paneIn{from{opacity:0;transform:translateY(6px)}}
+.pane-note{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12.5px;margin-bottom:12px}
+.pane-note button{margin-left:auto}
 .games{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .game{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
   transition:background .2s,border-color .25s,box-shadow .25s,transform .3s var(--spring)}
@@ -290,55 +297,70 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 <section class="view" id="view-config" hidden><div class="grid">
 <div class="col"><div class="col-title">配置档案<button type="button" class="small" id="c-new">＋ 新建</button></div><section class="list" id="profiles"></section></div>
 <form class="form glass" id="cform" autocomplete="off">
-<div class="form-head"><div><h2 id="c-title">新配置</h2><div class="sub">按顺序选好就能启动；配置存在本机 runtime 目录，不进仓库。</div></div>
+<div class="form-head"><h2 id="c-title">新配置</h2>
   <div class="f head-label"><label for="c-label">配置名称</label><input id="c-label" maxlength="40" placeholder="留空自动起名"></div></div>
+<div class="seg tabs" id="c-tabs"><span class="thumb"></span>
+  <button type="button" class="on" data-pane="conn">连接配置<i class="tdot" id="t-conn"></i></button>
+  <button type="button" data-pane="role">角色</button>
+  <button type="button" data-pane="soul">灵魂设置<i class="tdot" id="t-soul"></i></button>
+  <button type="button" data-pane="act">行为</button>
+  <button type="button" data-pane="adv">高级</button>
+</div>
 
-<h3><span class="step">1</span>连接配置<span class="h3-note">Bot 要进哪个游戏</span><button type="button" class="small ghost" id="g-refresh">刷新</button></h3>
+<div class="pane" data-pane="conn">
+<div class="pane-note">Bot 要进哪个游戏？点一个就行。<button type="button" class="small ghost" id="g-refresh">刷新</button></div>
 <div class="games" id="games"></div>
 <div class="g-add"><div class="inline"><input id="g-dir" placeholder="列表里没有？粘贴服务器目录，或启动器实例的游戏目录"><button type="button" id="g-add">添加</button></div><span class="hint" id="h-conn"></span></div>
+</div>
 
-<h3><span class="step">2</span>角色<span class="h3-note">名字和外观</span></h3>
+<div class="pane" data-pane="role" hidden>
 <div class="role">
   <div class="avatar" id="r-avatar"><span>?</span></div>
   <div class="fields role-fields">
-    <div class="f"><label for="r-name">游戏名</label><div class="inline"><input id="r-name" maxlength="16" placeholder="先选游戏"><button type="button" id="r-rename">改名</button></div><span class="hint" id="h-name">Bot 在游戏里显示的名字，英文字母、数字、下划线</span></div>
-    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">玩家在聊天里也可以这样叫它</span></div>
+    <div class="f"><label for="r-name">游戏名</label><div class="inline"><input id="r-name" maxlength="16" placeholder="先选游戏"><button type="button" id="r-rename">改名</button></div><span class="hint" id="h-name"></span></div>
+    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">聊天里也可以这样叫它</span></div>
   </div>
 </div>
 <div class="f look-f"><span class="lb">外观</span><div class="looks" id="looks"></div><span class="hint" id="h-appearance"></span></div>
+</div>
 
-<h3><span class="step">3</span>灵魂设置<span class="h3-note">用哪个 Agent、它是什么性格</span></h3>
+<div class="pane" data-pane="soul" hidden>
 <div class="fields">
   <div class="f"><label for="c-agent">Agent</label><select id="c-agent" hidden></select></div>
-  <div class="f"><span class="lb">凭据</span><div class="seg" id="c-cred"><span class="thumb"></span><button type="button" class="on">用本机已有的登录</button><button type="button" disabled title="以后支持">API key（以后支持）</button></div></div>
-  <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空用 Agent 的默认模型"><span class="hint" id="h-model"></span></div>
-  <div class="f"><label for="c-effort">思考强度</label><select id="c-effort" hidden></select><span class="hint" id="h-effort">越高越聪明，也越慢、越费额度；试玩一般用 low</span></div>
-  <div class="f wide"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空用默认账号"><span class="hint" id="h-account"></span></div>
-  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="9" maxlength="8000" placeholder="它叫什么、什么性格、怎么说话。没写的话说话会比较像客服，可以先点「填入示例」再改。"></textarea>
+  <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空用默认模型"><span class="hint" id="h-model"></span></div>
+  <div class="f"><label for="c-effort">思考强度</label><select id="c-effort" hidden></select><span class="hint" id="h-effort"></span></div>
+  <div class="f"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空用默认账号"><span class="hint" id="h-account"></span></div>
+  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="10" maxlength="8000" placeholder="它叫什么、什么性格、怎么说话。没写的话说话会比较像客服，可以先点「填入示例」再改。"></textarea>
     <div class="persona-bar"><span class="hint" id="h-persona"></span><span style="flex:1"></span><button type="button" class="ghost small" id="s-sample">填入示例</button><button type="button" class="small" id="s-save">保存人设</button></div></div>
 </div>
+</div>
 
-<h3><span class="step">4</span>行为<span class="h3-note">保护玩家</span></h3>
+<div class="pane" data-pane="act" hidden>
+<div class="pane-note">跟着玩家时怎么保护玩家。</div>
 <div class="fields">
-  <div class="f"><span class="lb">跟随时</span><div class="switches"><label><input type="checkbox" class="sw" id="c-guard" checked>主动打靠近玩家的怪</label></div><span class="hint">关掉就只在自己挨打时还手</span></div>
-  <div class="f"><span class="lb">装备</span><div class="switches" id="c-guard-gear"><label><input type="checkbox" class="sw" id="c-guardBow" checked>用弓</label><label><input type="checkbox" class="sw" id="c-guardShield" checked>举盾</label></div><span class="hint">弓要有箭，射之前确认弹道上没有玩家和宠物；盾放副手</span></div>
-  <div class="f"><label for="c-guardRadius">保护范围（格）</label><input id="c-guardRadius" type="number" min="3" max="12" placeholder="8"><span class="hint">玩家身边多远的怪会去打，最多追出范围 4 格</span></div>
-  <div class="f"><label for="c-guardLowHealth">撤退血量</label><input id="c-guardLowHealth" type="number" min="4" max="16" placeholder="8"><span class="hint">满血 20，低于它就往玩家那边撤，回血后再上</span></div>
+  <div class="f"><span class="lb">主动保护</span><div class="switches"><label><input type="checkbox" class="sw" id="c-guard" checked>打靠近玩家的怪</label></div><span class="hint">关掉就只在自己挨打时还手</span></div>
+  <div class="f"><span class="lb">装备</span><div class="switches" id="c-guard-gear"><label><input type="checkbox" class="sw" id="c-guardBow" checked>用弓</label><label><input type="checkbox" class="sw" id="c-guardShield" checked>举盾</label></div></div>
+  <div class="f"><label for="c-guardRadius">保护范围（格）</label><input id="c-guardRadius" type="number" min="3" max="12" placeholder="8"></div>
+  <div class="f"><label for="c-guardLowHealth">撤退血量</label><input id="c-guardLowHealth" type="number" min="4" max="16" placeholder="8"><span class="hint">满血 20，低于它就往玩家那边撤</span></div>
 </div>
-<button type="button" class="ghost adv-btn" id="c-adv">高级选项<svg class="i chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
-<div class="collapse" id="c-adv-box"><div>
+</div>
+
+<div class="pane" data-pane="adv" hidden>
+<div class="pane-note">一般不用动。</div>
 <div class="fields">
-  <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="一般不用填：在「连接配置」里选游戏会自动填好"><button type="button" id="c-check">检查</button></div><span class="hint" id="h-connfile">手动指定 config/mcbot-server-control/connection.json</span></div>
+  <div class="f"><span class="lb">凭据</span><div class="seg" id="c-cred"><span class="thumb"></span><button type="button" class="on">用本机已有的登录</button><button type="button" disabled title="以后支持">API key（以后支持）</button></div></div>
+  <div class="f"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空用自带或 PATH 里的 node"></div>
+  <div class="f wide"><label for="c-connectionFile">连接文件</label><div class="inline"><input id="c-connectionFile" placeholder="在「连接配置」里选游戏会自动填好"><button type="button" id="c-check">检查</button></div><span class="hint" id="h-connfile"></span></div>
   <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用默认位置"><span class="hint" id="h-mem"></span></div>
-  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空用 runtime/blueprints"><span class="hint">建筑用的蓝图（&lt;名字&gt;.json）放在这里</span></div>
-  <div class="f wide"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空用自带或 PATH 里的 node"></div>
+  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空用 runtime/blueprints"></div>
 </div>
-<div class="fields four">
-  <div class="f"><label for="c-idleMinutes">空闲提醒（分钟）</label><input id="c-idleMinutes" type="number" min="0" max="1440" placeholder="0（关）"><span class="hint">空闲多久提醒 Agent</span></div>
-  <div class="f"><label for="c-resumeWindowMin">接着旧会话（分钟）</label><input id="c-resumeWindowMin" type="number" min="0" max="1440" placeholder="50"><span class="hint">0 表示总是接着</span></div>
-  <div class="f"><label for="c-rotateTokens">换新会话（tokens）</label><input id="c-rotateTokens" type="number" min="0" max="2000000" step="1000" placeholder="200000"><span class="hint">超过就整理记忆换会话；0 不换</span></div>
-  <div class="f"><label for="c-maxRestarts">最多重启（次）</label><input id="c-maxRestarts" type="number" min="0" max="100" placeholder="10"><span class="hint">连续崩溃后不再重启</span></div>
-</div></div></div>
+<div class="fields four" style="margin-top:14px">
+  <div class="f"><label for="c-idleMinutes">空闲提醒（分钟）</label><input id="c-idleMinutes" type="number" min="0" max="1440" placeholder="0（关）"></div>
+  <div class="f"><label for="c-resumeWindowMin">接着旧会话（分钟）</label><input id="c-resumeWindowMin" type="number" min="0" max="1440" placeholder="50"></div>
+  <div class="f"><label for="c-rotateTokens">换新会话（tokens）</label><input id="c-rotateTokens" type="number" min="0" max="2000000" step="1000" placeholder="200000"></div>
+  <div class="f"><label for="c-maxRestarts">最多重启（次）</label><input id="c-maxRestarts" type="number" min="0" max="100" placeholder="10"></div>
+</div>
+</div>
 <div class="actions"><button type="submit">保存</button><button type="button" class="primary" id="c-launch">保存并启动托管</button><button type="button" class="danger" id="c-stop">停止托管</button><span style="flex:1"></span><button type="button" class="ghost" id="c-del">删除这份配置</button></div>
 <div id="c-msg"></div><div class="status" id="c-status" hidden></div>
 </form></div></section>
@@ -601,10 +623,10 @@ async function loadGames() {
   games = r.ok ? r.games : []; gamesLoaded = true; renderGames();
 }
 function gameNote(g) {
-  if (g.core === 'missing') return ['err', '没装核心模组：把包里 mods 文件夹的 jar 放进这个游戏的 mods'];
-  if (g.core === 'different') return ['warn', '核心模组和这个包里的不一样（可能是旧版），换成包里的'];
-  if (!g.hasConnection) return ['warn', '还没开过世界：进游戏打开世界（单人要「对局域网开放」）'];
-  return g.online ? ['ok', '世界开着，可以启动'] : ['', '世界没开：启动托管前先进游戏'];
+  if (g.core === 'missing') return ['err', '没装核心模组', '把包里 mods 文件夹的 jar 放进这个游戏的 mods'];
+  if (g.core === 'different') return ['warn', '核心模组是旧版', '和这个包里的不一样，换成包里 mods 文件夹的 jar'];
+  if (!g.hasConnection) return ['warn', '还没开过世界', '进游戏打开世界（单人要「对局域网开放」）'];
+  return g.online ? ['ok', '世界开着', '可以启动托管'] : ['', '世界没开', '启动托管前先进游戏'];
 }
 function renderGames() {
   const box = $('#games'), sel = curGame();
@@ -613,8 +635,8 @@ function renderGames() {
     const b = el('button', 'game' + (sel === g ? ' sel' : '')); b.type = 'button';
     const top = el('div', 'gt'); top.append(el('span', 'dot' + (g.online ? ' on' : '')), el('b', '', g.name), el('span', 'chip', g.kind));
     if (g.manual) { const x = el('span', 'gx', '移除'); x.title = '从列表里移除（不删文件）'; x.onclick = async (e) => { e.stopPropagation(); await post('/api/games/remove', { dir: g.dir }); loadGames(); }; top.append(x); }
-    const [cls, note] = gameNote(g), chips = el('div', 'chips');
-    chips.append(el('span', 'chip ' + cls, note));
+    const [cls, note, tip] = gameNote(g), chips = el('div', 'chips'), nc = el('span', 'chip ' + cls, note);
+    nc.title = tip; chips.append(nc); b.title = note + '：' + tip;
     if (g.username) chips.append(el('span', 'chip', 'Bot：' + g.username));
     const d = el('div', 'gd'); d.textContent = '‎' + g.dir; d.title = g.dir;
     b.append(top, chips, d);
@@ -625,7 +647,7 @@ function renderGames() {
   if (sel) { h.textContent = ''; }
   else if (file) { h.textContent = '用的是手动指定的连接文件：' + file; h.className = 'hint'; }
   else { h.textContent = '点一个游戏；以后换电脑或换实例再回来点一下就行'; h.className = 'hint'; }
-  syncRole();
+  syncRole(); tabDots();
 }
 function pickGame(g) {
   $('#c-connectionFile').value = g.connectionFile; nameDirty = false;
@@ -681,10 +703,10 @@ async function loadPersona(force) {
   persona = { ...persona, loaded: r.ok, exists: !!r.exists, file: r.file || '', sample: r.sample || persona.sample };
   $('#s-persona').value = r.ok ? r.text : ''; personaDirty = false;
   $('#s-persona').disabled = !r.ok; $('#s-save').disabled = $('#s-sample').disabled = !r.ok;
-  h.textContent = !r.ok ? r.error : r.exists ? '保存在 ' + r.file : '还没写人设；保存后放在 ' + r.file;
-  h.title = r.file || ''; h.className = 'hint' + (r.ok ? '' : ' errc');
+  h.textContent = !r.ok ? r.error : r.exists ? '已有人设（鼠标停在这里看文件位置）' : '还没写人设';
+  h.title = r.file || ''; tabDots(); h.className = 'hint' + (r.ok ? '' : ' errc');
 }
-$('#s-persona').addEventListener('input', () => { personaDirty = true; });
+$('#s-persona').addEventListener('input', () => { personaDirty = true; tabDots(); });
 $('#s-sample').onclick = () => {
   const t = $('#s-persona');
   if (t.value.trim() && !confirm('用示例替换现在的人设？')) return;
@@ -692,7 +714,7 @@ $('#s-sample').onclick = () => {
 };
 $('#s-save').onclick = async () => {
   const r = await post('/api/persona', { ...personaQuery(), save: true, text: $('#s-persona').value }), h = $('#h-persona');
-  if (r.ok) { personaDirty = false; persona.exists = true; h.textContent = '已保存到 ' + r.file + '；下次启动托管生效（正在托管的要重启）'; h.className = 'hint okc'; }
+  if (r.ok) { personaDirty = false; persona.exists = true; h.textContent = '已保存，下次启动托管生效'; h.title = r.file; h.className = 'hint okc'; tabDots(); }
   else { h.textContent = r.error; h.className = 'hint errc'; }
 };
 $('#c-memoryDir').addEventListener('change', () => loadPersona());
@@ -805,7 +827,7 @@ function collect() {
   return o;
 }
 async function save() {
-  if (!$('#c-connectionFile').value.trim()) { say('先在「连接配置」选一个游戏', true); return null; }
+  if (!$('#c-connectionFile').value.trim()) { say('先在「连接配置」选一个游戏', true); setPane('conn'); return null; }
   if (personaDirty && persona.loaded) await $('#s-save').onclick();
   const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); say('已保存'); return cur; }
 let lastStatus = '';
@@ -832,7 +854,7 @@ $('#c-agent').addEventListener('change', () => { $('#c-model').value = ''; $('#c
 $('#c-model').addEventListener('change', () => updateEfforts());
 $('#c-model').addEventListener('input', () => updateEfforts());
 $('#c-configDir').addEventListener('change', () => loadModels(false));
-$('#c-new').onclick = () => { cur = null; fill(blank()); renderProfiles(); renderStatus(); $('#c-label').focus(); $('#c-label').select(); };
+$('#c-new').onclick = () => { cur = null; fill(blank()); renderProfiles(); renderStatus(); setPane('conn'); $('#c-label').focus(); $('#c-label').select(); };
 $('#c-check').onclick = async () => {
   const r = await post('/api/connection', { file: $('#c-connectionFile').value.trim() }), h = $('#h-connfile');
   h.textContent = r.ok ? '角色 ' + r.username + '，世界 ' + r.worldId + '，控制口 ' + r.endpoint : r.error; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
@@ -854,8 +876,26 @@ $('#c-del').onclick = async () => {
 };
 $('#c-guard').onchange = guardGear;
 $('#c-memoryDir').addEventListener('change', checkMemory);
-$('#c-adv').onclick = () => { const o = $('#c-adv-box').classList.toggle('open'); $('#c-adv').classList.toggle('open', o); store.set('mcbot.adv', o ? '1' : ''); };
-if (store.get('mcbot.adv', '')) { $('#c-adv-box').classList.add('open'); $('#c-adv').classList.add('open'); }
+// 标签页：一次只显示一块；记住上次看的是哪页
+function setPane(name) {
+  for (const b of document.querySelectorAll('#c-tabs button')) b.classList.toggle('on', b.dataset.pane === name);
+  for (const p of document.querySelectorAll('.pane')) {
+    const on = p.dataset.pane === name;
+    if (on && p.hidden) { p.hidden = false; p.classList.remove('enter'); void p.offsetWidth; p.classList.add('enter'); } else if (!on) p.hidden = true;
+  }
+  store.set('mcbot.pane', name); closeAll();
+  requestAnimationFrame(() => { placeThumb($('#c-tabs')); if (name === 'adv') placeThumb($('#c-cred')); });
+}
+for (const b of document.querySelectorAll('#c-tabs button')) b.onclick = () => setPane(b.dataset.pane);
+setPane(store.get('mcbot.pane', 'conn'));
+/** 标签上的小点：连接配置看选中的游戏能不能用，灵魂设置看有没有人设。 */
+function tabDots() {
+  const g = curGame(), c = $('#t-conn'), s = $('#t-soul');
+  c.className = 'tdot ' + (!g ? ($('#c-connectionFile').value.trim() ? '' : 'warn') : g.core === 'missing' ? 'err' : g.core === 'different' || !g.hasConnection ? 'warn' : g.online ? 'ok' : '');
+  c.title = !g ? '还没选游戏' : g.online ? '世界开着' : '';
+  s.className = 'tdot ' + (persona.loaded && !persona.exists && !$('#s-persona').value.trim() ? 'warn' : '');
+  s.title = s.className.includes('warn') ? '还没写人设' : '';
+}
 // 分段选择的滑块
 function placeThumb(seg) { const on = $('button.on', seg), t = $('.thumb', seg); if (!on || !on.offsetWidth) return; t.style.left = on.offsetLeft + 'px'; t.style.width = on.offsetWidth + 'px'; }
 
@@ -871,12 +911,12 @@ function setTab(t) {
     loadCfg(); loadGames(); let n = 0;
     // 游戏列表会问每个世界开着没有，刷新慢一点
     cfgTimer = setInterval(() => { loadCfg(); if (++n % 3 === 0 && !document.hidden) loadGames(); }, 3000);
-    requestAnimationFrame(() => placeThumb($('#c-cred')));
+    requestAnimationFrame(() => { placeThumb($('#c-tabs')); placeThumb($('#c-cred')); });
   }
 }
 $('#tab-monitor').onclick = () => setTab('monitor'); $('#tab-config').onclick = () => setTab('config');
 $('#menu').onclick = () => document.body.classList.toggle('nav-open'); $('#scrim').onclick = () => document.body.classList.remove('nav-open');
-window.addEventListener('resize', () => placeThumb($('#c-cred')));
+window.addEventListener('resize', () => { placeThumb($('#c-tabs')); placeThumb($('#c-cred')); });
 // 主题：跟随系统 → 亮色 → 暗色，记在本浏览器里
 const THEMES = { auto: '跟随系统', light: '亮色', dark: '暗色' };
 let themeNow = 'auto';

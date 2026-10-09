@@ -1,10 +1,10 @@
 # 试玩步骤
 
-适用于 MC 1.21.1 / NeoForge 21.1.217 及以上（21.1 线，实测用 21.1.217） 的独立服务器（或开了局域网的单人世界）、本机 Agent、单个 Bot。玩家只开自己的客户端，Bot 是服务器里的假玩家。能做什么、验证到什么程度以[交付计划](delivery_plan.md)为准，本页只讲怎么开始玩。2026-10-08 更新；10-05 首版验收时的旧步骤见 git 历史和[首版验收](archive/server_alpha_release_validation.md)。
+适用于 MC 1.21.1 / NeoForge 21.1.217 及以上（21.1 线，实测用 21.1.217） 的独立服务器（或开了局域网的单人世界）、本机 Agent、单个 Bot。玩家只开自己的客户端，Bot 是服务器里的假玩家。能做什么、验证到什么程度以[交付计划](delivery_plan.md)为准，本页只讲怎么开始玩。2026-10-10 更新；10-05 首版验收时的旧步骤见 git 历史和[首版验收](archive/server_alpha_release_validation.md)。
 
 ## 准备
 
-1. 构建 `client-runtime`（`npm ci`、`npm run build`）和 `mods/mcbot-server-control`（`./gradlew.bat build`），把核心 jar 装进服务器的 `mods`。想用示例适配就再装对应的附属模组和被适配的 Mod（见 `mods/mcbot-*/README.md`）。改服务器前先备份存档。
+1. 构建 `client-runtime`（`npm ci`、`npm run build`）和 `mods/mcbot-server-control`（`./gradlew.bat build`），把核心 jar 装进服务器的 `mods`。也可以用 `node scripts/package.mjs` 打绿色版（自带 Node，jar 在它的 `mods` 里，双击 `启动 mcbot.cmd` 开 WebUI，见[开发文档](dev.md#打包绿色版)）；给别人用的发布版还没出。支持的 Mod 和确切版本见 [compat.json](../compat.json)。想用示例适配就再装对应的附属模组和被适配的 Mod（见 `mods/mcbot-*/README.md`）。改服务器前先备份存档。
 2. 启动服务器，确认自己能进。服务器会生成 `config/mcbot-server-control/connection.json`，里面有控制令牌，只留在本机，不要发给别人。
 3. Agent 账号在本机登录好（Claude Code、Codex 或 DeepSeek Harness）。用哪个账号由自己选，程序不会自动切换或复制登录。
 4. 单人世界：把核心 jar 放进客户端实例的 `mods`，进世界后按 Esc 选「对局域网开放」再托管（不开局域网会拒绝接管，见[单人模式](singleplayer_design.md)）；连接文件用实例里的那份。
@@ -26,13 +26,13 @@ node scripts/webui.mjs --open
 
 点「保存并启动托管」。「监控」页能看到游戏聊天、AI 的回复和工具调用；「叫停」让 Bot 停下当前的事、等新指令，「停止托管」让 Bot 下线。角色上次死了的话，启动托管时会先重生。
 
-命令行版本（WebUI 也是调用它）：
+命令行版本（WebUI 也是调用它；只要 Node，`start-server-play.ps1` 是同样参数的 PowerShell 写法）：
 
 ```pwsh
-./start-server-play.ps1 -ConnectionFile '<服务器>/config/mcbot-server-control/connection.json' -Agent claude -ConfigDir '<账号目录>' -MemoryDir '<记忆目录>' -Effort low
+node scripts/start-server-play.mjs --connection-file '<服务器>/config/mcbot-server-control/connection.json' --agent claude --config-dir '<账号目录>' --memory-dir '<记忆目录>' --effort low
 ```
 
-加 `-PrepareOnly` 只检查配置、不启动。
+加 `--prepare-only` 只检查配置、不启动。
 
 ## 可以试的
 

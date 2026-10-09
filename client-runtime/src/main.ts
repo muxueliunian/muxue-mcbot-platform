@@ -152,7 +152,7 @@ async function applyAppearance(body: Body, value: string): Promise<void> {
     process.stderr.write(`外观没有套用（${(error as BodyError).code || 'ERROR'}）：${(error as Error).message}\n`);
   }
 }
-/** Companion guard defaults from the command line (the WebUI passes them through start-server-play.ps1). */
+/** Companion guard defaults from the command line (the WebUI passes them through scripts/start-server-play.mjs). */
 function guardSetting(values: Record<string, unknown>): GuardOptions | false {
   const flag = (name: string) => { const value = values[name]; if (value !== 'on' && value !== 'off') throw new Error(`--${name} 只允许 on 或 off`); return value === 'on'; };
   const number = (name: string, min: number, max: number) => {

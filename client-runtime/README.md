@@ -15,7 +15,7 @@ npm ci
 npm test
 ```
 
-通常由 MCP 宿主使用 stdio 启动运行端。仓库根目录 [start-server-play.ps1](../start-server-play.ps1) 提供 ServerBody 的 Claude／Codex 托管入口；符合 MCP 的 Agent 也可直接启动下面的进程，不依赖具体 Agent 类型。
+通常由 MCP 宿主使用 stdio 启动运行端。[scripts/start-server-play.mjs](../scripts/start-server-play.mjs)（只要 Node；根目录的 `start-server-play.ps1` 转调它）提供 ServerBody 的 Claude／Codex 托管入口；符合 MCP 的 Agent 也可直接启动下面的进程，不依赖具体 Agent 类型。
 
 ### ServerBody
 

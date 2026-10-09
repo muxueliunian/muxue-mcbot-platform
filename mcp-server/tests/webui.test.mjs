@@ -175,16 +175,16 @@ test('记忆目录：只看有没有小克的人设和玩家档案；留空用�
     assert.match(inspectMemory('relative/dir').error, /完整路径/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
-test('启动参数：每个值单独一项，带 -Headless；没填的会话选项不传', () => {
+test('启动参数：每个值单独一项，带 --headless；没填的会话选项不传', () => {
   const dir = tmp();
   try {
     const p = normalizeProfile(profile(dir, { model: 'opus', nickname: '小克', maxRestarts: 0 }));
-    const a = launchArgs(p, 'S.ps1');
-    assert.deepEqual(a.slice(0, 4), ['-NoProfile', '-NonInteractive', '-File', 'S.ps1']);
+    const a = launchArgs(p, 'S.mjs');
+    assert.equal(a[0], 'S.mjs');
     const after = (flag) => a[a.indexOf(flag) + 1];
-    assert.equal(after('-ConnectionFile'), p.connectionFile); assert.equal(after('-Agent'), 'claude');
-    assert.equal(after('-Model'), 'opus'); assert.equal(after('-Nickname'), '小克'); assert.equal(after('-MaxRestarts'), '0');
-    assert.ok(a.includes('-Headless')); assert.ok(!a.includes('-IdleMinutes')); assert.ok(!a.includes('-ConfigDir'));
+    assert.equal(after('--connection-file'), p.connectionFile); assert.equal(after('--agent'), 'claude');
+    assert.equal(after('--model'), 'opus'); assert.equal(after('--nickname'), '小克'); assert.equal(after('--max-restarts'), '0');
+    assert.ok(a.includes('--headless')); assert.ok(!a.includes('--idle-minutes')); assert.ok(!a.includes('--config-dir'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 test('保护玩家：默认开、弓和盾都开；开关和数值原样转给启动脚本，超出范围拒绝', () => {
@@ -193,13 +193,13 @@ test('保护玩家：默认开、弓和盾都开；开关和数值原样转给�
     const plain = normalizeProfile(profile(dir));
     assert.equal(plain.guard, true); assert.equal(plain.guardBow, true); assert.equal(plain.guardShield, true); assert.equal(plain.guardRadius, null);
     const after = (a, flag) => a[a.indexOf(flag) + 1];
-    const d = launchArgs(plain, 'S.ps1');
-    assert.equal(after(d, '-Guard'), 'on'); assert.equal(after(d, '-GuardBow'), 'on'); assert.ok(!d.includes('-GuardRadius'), '没填的数值用脚本默认');
+    const d = launchArgs(plain, 'S.mjs');
+    assert.equal(after(d, '--guard'), 'on'); assert.equal(after(d, '--guard-bow'), 'on'); assert.ok(!d.includes('--guard-radius'), '没填的数值用脚本默认');
     const p = normalizeProfile(profile(dir, { guard: true, guardBow: false, guardRadius: '10', guardLowHealth: 6 }));
-    const a = launchArgs(p, 'S.ps1');
-    assert.equal(after(a, '-GuardBow'), 'off'); assert.equal(after(a, '-GuardShield'), 'on');
-    assert.equal(after(a, '-GuardRadius'), '10'); assert.equal(after(a, '-GuardLowHealth'), '6');
-    assert.equal(after(launchArgs(normalizeProfile(profile(dir, { guard: false })), 'S.ps1'), '-Guard'), 'off');
+    const a = launchArgs(p, 'S.mjs');
+    assert.equal(after(a, '--guard-bow'), 'off'); assert.equal(after(a, '--guard-shield'), 'on');
+    assert.equal(after(a, '--guard-radius'), '10'); assert.equal(after(a, '--guard-low-health'), '6');
+    assert.equal(after(launchArgs(normalizeProfile(profile(dir, { guard: false })), 'S.mjs'), '--guard'), 'off');
     assert.throws(() => normalizeProfile(profile(dir, { guardRadius: 20 })), /guardRadius/);
     assert.throws(() => normalizeProfile(profile(dir, { guardLowHealth: 2 })), /guardLowHealth/);
     assert.throws(() => normalizeProfile(profile(dir, { guard: 'yes' })), /guard 要是开或关/);
@@ -218,9 +218,9 @@ test('外观：从服务器 hello 读模型列表，不把令牌给网页；选�
     assert.doesNotMatch(JSON.stringify(r), /secret-token/);
     assert.match((await appearanceChoices(file, async () => { throw new Error('ECONNREFUSED'); })).error, /没开/);
     const p = normalizeProfile(profile(dir, { appearance: 'yes_steve_model:model=ds_whale.ysm' }));
-    const a = launchArgs(p, 'S.ps1');
-    assert.equal(a[a.indexOf('-Appearance') + 1], 'yes_steve_model:model=ds_whale.ysm');
-    assert.ok(!launchArgs(normalizeProfile(profile(dir)), 'S.ps1').includes('-Appearance'), '没选就不传');
+    const a = launchArgs(p, 'S.mjs');
+    assert.equal(a[a.indexOf('--appearance') + 1], 'yes_steve_model:model=ds_whale.ysm');
+    assert.ok(!launchArgs(normalizeProfile(profile(dir)), 'S.mjs').includes('--appearance'), '没选就不传');
     assert.throws(() => normalizeProfile(profile(dir, { appearance: 'ds_whale.ysm' })), /外观/);
     assert.throws(() => normalizeProfile(profile(dir, { appearance: 'yes_steve_model:model=a"b' })), /外观/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -242,7 +242,7 @@ test('启动：在线的不再启动；脚本退出后能看到退出码和输�
     assert.match(launcher.launch(p).error, /正在启动/);
     for (let i = 0; i < 100 && launcher.status('Claude').exitCode === null; i++) await new Promise((res) => setTimeout(res, 50));
     const s = launcher.status('Claude');
-    assert.equal(s.exitCode, 3); assert.match(s.log, /ARGS -NoProfile\|.*-Headless/);
+    assert.equal(s.exitCode, 3); assert.match(s.log, /ARGS .*start-server-play\.mjs\|--connection-file\|.*--headless/);
     assert.match(launcher.launch(normalizeProfile(profile(dir, { connectionFile: path.join(dir, 'none.json') }))).error, /不存在/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -29,9 +29,11 @@
 
 ## 3. 玩家怎么用
 
-1. 把 `mcbot-server-control` 放进客户端实例的 `mods`。
+1. 把 `mcbot-server-control` 放进客户端实例的 `mods`（要用的适配模组和被适配的 Mod 也放这里）。PCL2、HMCL 开了版本隔离时，实例目录是 `.minecraft/versions/<实例名>`。
 2. 进单人世界，按 Esc 选「对局域网开放」（作弊随意），点「创建局域网世界」。
-3. 用实例里的连接文件启动：`./start-server-play.ps1 -ConnectionFile '<实例>/config/mcbot-server-control/connection.json'`。
+3. 在 WebUI 的连接文件里填实例里的 `config/mcbot-server-control/connection.json` 再启动托管；命令行是 `node scripts/start-server-play.mjs --connection-file '<实例>/config/mcbot-server-control/connection.json'`。
+
+同一局域网来联机的朋友：内容 Mod（森罗厨房、背包、YSM 等）他们的客户端也要装；我们的核心和适配模组要不要装还没实测，打包演练时确认后补在这里。
 
 ## 4. 验收（2026-10-06）
 

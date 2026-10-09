@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 本地 WebUI：看托管 Bot 的状态、游戏聊天、AI 回复和工具调用，可以叫停或停止托管；
-// 「配置」页按档案保存 Agent、账号、模型、思考强度等启动参数，并用 start-server-play.ps1 -Headless 启动托管（webui-profiles.mjs）。
+// 「配置」页按档案保存 Agent、账号、模型、思考强度等启动参数，并用 scripts/start-server-play.mjs --headless 启动托管（webui-profiles.mjs）。
 // 监控只读 runtime/ 里驱动器写的文件（心跳、会话、activity-*.jsonl），叫停/停止只放标记；不碰游戏。
 // 只监听 127.0.0.1；每次启动生成一次性令牌，打开终端里打印的地址后存进 Cookie，其他网页拿不到。
 import fs from 'node:fs';

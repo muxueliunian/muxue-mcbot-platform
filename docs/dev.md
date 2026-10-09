@@ -35,9 +35,10 @@ Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；`che
 
 先由服主准备获授权的MC1.21.1／NeoForge21.1.217隔离服务器，备份后安装自行构建的控制Mod；配置见模块README。控制Mod生成的`connection.json`只留本地。
 
-日常用法是在 [本地 WebUI](#本地-webui) 的「配置」页保存配置、点「保存并启动托管」（2026-10-08 起用户自己从 WebUI 启动托管）；下面的脚本是同一件事的命令行版本，WebUI 也是调用它。
+日常用法是在 [本地 WebUI](#本地-webui) 的「配置」页保存配置、点「保存并启动托管」（2026-10-08 起用户自己从 WebUI 启动托管）；下面的脚本是同一件事的命令行版本。逻辑在只要 Node 的 `scripts/start-server-play.mjs`（参数是 `--connection-file`、`--agent`、`--prepare-only` 这种写法，WebUI 和绿色版都直接用它），`start-server-play.ps1` 只是把同名参数转过去：
 
 ```pwsh
+node scripts/start-server-play.mjs --connection-file '<server>/config/mcbot-server-control/connection.json' --agent claude --prepare-only
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent codex -Effort low -PrepareOnly
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent codex -Effort low
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent claude -PrepareOnly
@@ -77,8 +78,20 @@ node scripts/webui.mjs --open      # 默认端口 8770，--port 换端口，--ru
 - 只读驱动器写在 `runtime/` 里的文件：心跳 `companion-<名字>.json`（在线、是否在推理）、会话 `session-<名字>.json`（上下文大小、上次请求）、活动记录 `activity-<名字>.jsonl`（游戏事件和聊天、AI 回复、工具调用、每轮开始和结束、驱动器提示，超过 5MB 轮转）。三家 Agent 都走同一个驱动器，记录格式一样。
 - 页面上的「陪伴模式」「最近工具」「最近出错」是从记录里推算的。
 - 「叫停」放 `companion-<名字>.halt` 标记，驱动器按游戏里叫停的流程停下动作和推理，等玩家用名字或昵称给新任务（目前只支持 ServerBody）；「停止托管」放 `companion-<名字>.stop`，和 `stop-companion.ps1` 一样让驱动器退出。WebUI 不碰游戏，关掉它不影响托管。
-- 「配置」页（`scripts/webui-profiles.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。可以配 Agent、账号目录、模型、思考强度、连接文件、昵称、记忆目录（旁边即时显示有没有 `xiaoke/persona.md`，留空用仓库里的 `memory`，没有人设时说话会像客服）、保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)）、外观（服务器装了 YSM 和 [YSM 适配](../mods/mcbot-yes-steve-model/README.md)时出现，模型列表用连接文件向服务器 hello 要，每次接管后套用；服务器没开时保留已选的），高级里有 Node 路径和会话选项；每项对应 `start-server-play.ps1` 的同名参数。「保存并启动托管」用 `pwsh start-server-play.ps1 -Headless` 启动，脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换 `pwsh`。
+- 「配置」页（`scripts/webui-profiles.mjs`）：按档案保存启动参数，存在 `runtime/webui-profiles.json`，不进仓库。可以配 Agent、账号目录、模型、思考强度、连接文件、昵称、记忆目录（旁边即时显示有没有 `xiaoke/persona.md`，留空用仓库里的 `memory`，没有人设时说话会像客服）、保护玩家（开关、用弓、举盾、范围、撤退血量，见[协议](server_body_protocol.md#保护玩家8h2026-10-08)）、外观（服务器装了 YSM 和 [YSM 适配](../mods/mcbot-yes-steve-model/README.md)时出现，模型列表用连接文件向服务器 hello 要，每次接管后套用；服务器没开时保留已选的），高级里有 Node 路径和会话选项；每项对应 `scripts/start-server-play.mjs` 的同名参数。「保存并启动托管」用跑 WebUI 的同一个 Node 执行 `scripts/start-server-play.mjs --headless`（10-10 起不再需要 PowerShell），脚本输出写 `runtime/webui-launch-<角色>.log`，没起来时页面显示退出码和输出。测试用环境变量 `MCBOT_WEBUI_LAUNCH_CMD`（JSON 数组）替换启动命令。
 - 配置页只存路径和参数，不存凭据：Agent 用账号目录里已有的登录；档案里出现 `apiKey` 这类不认识的字段会被拒绝。连接文件只读出角色、世界和地址，控制令牌不回传给网页。能从网页启动托管，就等于拿到令牌的人能用你的账号开托管，所以令牌地址不要发给别人。
+
+## 打包绿色版
+
+```pwsh
+node scripts/package.mjs              # 输出到 output/package：mcbot-<版本>-win-x64 目录和同名 zip
+node scripts/package.mjs --no-zip     # 只出目录；--skip-build 不重新编译运行端；--node 指定要打进去的 node.exe
+```
+
+- 包里有：便携 Node（`node/`，带 Node 的 LICENSE）、运行端（`client-runtime/` 的 dist 和运行依赖）、WebUI 和托管脚本（`scripts/`，从 `webui.mjs`、`start-server-play.mjs`、`companion.mjs` 按 import 自动找）、我们的 jar（`mods/`，按 `compat.json`）、`compat.json`、`LICENSE`、`NOTICE`、`CLAUDE.md`、`使用说明.txt` 和双击用的 `启动 mcbot.cmd`（用自带的 Node 开 WebUI）。不带旧的 `mcp-server`、源码和测试。
+- Node 用官方 zip 版：解压到 `runtime/node-dist/node-v<版本>-win-x64`（被 git 忽略），脚本默认用版本最新的那个；安装版 Node 没有 LICENSE，会拒绝。10-10 用的是 24.21.0。
+- 不联网：jar 要先用 gradle 构建好；运行依赖复制 `client-runtime/node_modules` 再 `npm prune --omit=dev`；打包前先跑 `compat.json` 核对。
+- 10-10 演练（不开模型）：目录约 105 MB；复制到干净目录、PATH 里去掉系统的 Node 后，自带 Node 能开 WebUI（页面、配置列表、连接文件检查都正常），`start-server-play.mjs --prepare-only` 生成配置，用生成的 `mcp.json` 启动运行端连隔离服，`initialize`、65 个工具、`get-status` 都正常。还没测：从 WebUI 真正启动托管（要开模型）、关掉 WebUI 后托管是否继续、双击 cmd 自动开浏览器。
 
 ## 单人模式实测
 

@@ -28,24 +28,26 @@
 - 保护玩家：跟随时主动打靠近玩家的怪，近战、弓、盾，血少往玩家那边撤，不打玩家和宠物
 - 表情：挥手、点头、摇头、蹲起、跳、转圈和模组动画；日落、下雨、打雷时提醒 AI 随口说一句
 - 托管启动时角色死了会先原生重生
-- 合成和烧炼；切石机、酿造台；附魔台、铁砧、砂轮、锻造台、织布机、制图台（先预览、问过玩家再做）
-- 记住地点、回家，最远 2000 格分段走
+- 合成和烧炼；切石机、酿造台；烧东西、酿药默认放好就走，好了（或没燃料停了）通知 AI 回来取，酿药每段好了回来加下一段的料；附魔台、铁砧、砂轮、锻造台、织布机、制图台（先预览、问过玩家再做）
+- 记住地点、回家，最远 2000 格分段走（地表粗路线、游泳过河）
+- 建筑：按蓝图逐格放，够不着就垫高，能上楼板和屋顶，两层木屋一次盖对约 94%
 - 种地：收熟的作物、捡掉落、原地补种，可以播种和用骨粉（模组作物按 `#minecraft:crops` 认）；用水桶倒水舀水、用锄头在水边开新地；喂动物繁殖
 - 手持物品右键方块（`interact-block`）和对空使用（`use-item`），按登记的交互放行，内置的只有原版堆肥桶
-- 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）、[Yes Steve Model](mods/mcbot-yes-steve-model/README.md)（在 WebUI 里选模型、播模型动画）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）
+- 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）、[Yes Steve Model](mods/mcbot-yes-steve-model/README.md)（在 WebUI 里选模型、播模型动画）。服主还能按 Mod 打开通用物品槽适配，让 Bot 不开界面放料、取成品（森罗厨房的油壶、石磨、竹筛、茶壶实测过）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）。支持的 Mod、确切版本和官方下载地址统一写在 [compat.json](compat.json)
 
 Agent：Claude Code、Codex、DeepSeek Harness（dsh，可直接用桌面版自带的；2026-10-06 隔离服真实模型实测通过）。
 
-还没有：建筑、模组机器通用适配、农夫乐事适配、原生 API、多版本。详见[交付计划](docs/delivery_plan.md)。
+还没有：发布版安装包（绿色版能打包，还没发布）、网站、WebUI 里装模组、农夫乐事适配、原生 API、多版本。详见[交付计划](docs/delivery_plan.md)。
 
-日常从本机 WebUI 启动：运行 `node scripts/webui.mjs --open`，在「配置」页保存 Agent、账号、模型、思考强度、记忆目录、保护玩家、外观等设置，一键启动托管；「监控」页看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。命令行入口是 `start-server-play.ps1`，WebUI 也是调用它。约 60 个 MCP 工具不代表所有 Mod 或服务器都能用。
+日常从本机 WebUI 启动：运行 `node scripts/webui.mjs --open`，在「配置」页保存 Agent、账号、模型、思考强度、记忆目录、保护玩家、外观等设置，一键启动托管；「监控」页看 Bot 状态、游戏聊天、AI 回复和工具调用，也能叫停或停止托管（[说明](docs/dev.md#本地-webui)）。命令行入口是 `scripts/start-server-play.mjs`（只要 Node；`start-server-play.ps1` 转调它），WebUI 也是调用它。约 60 个 MCP 工具不代表所有 Mod 或服务器都能用。
 
 ## 目录
 
 - `client-runtime/`：Body、MCP 工具、任务和陪伴状态
 - `mods/mcbot-server-control/`：服务端身体：假玩家、控制租约、原生交互、Mod 适配
 - `mods/mcbot-kaleidoscope-cookery/`、`mods/mcbot-sophisticated-backpacks/`、`mods/mcbot-yes-steve-model/`：示例附属模组
-- `scripts/companion.mjs`、`scripts/agents/`：Agent 会话和事件驱动
+- `scripts/companion.mjs`、`scripts/agents/`：Agent 会话和事件驱动；`scripts/start-server-play.mjs`：启动托管（只要 Node）
+- `compat.json`：支持的 MC、NeoForge、Agent 和 Mod 清单；`scripts/package.mjs`：打 Windows 绿色版（[说明](docs/dev.md#打包绿色版)）
 - `mcp-server/`、`bot-scripts/`：旧 Mineflayer 实现，用来对照迁移，协议测试玩家也用它
 - `mods/mcbot-control/`、`mods/mcbot-server-spike/`：保留的实验（ClientBody、早期服务端原型），不是默认路线
 - `docs/`：计划和协议；`docs/archive/`：验收记录和历史材料

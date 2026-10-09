@@ -1,4 +1,4 @@
-// WebUI 的托管配置：按档案存在 runtime/webui-profiles.json（被 git 忽略），用 start-server-play.ps1 -Headless 启动。
+// WebUI 的托管配置：按档案存在 runtime/webui-profiles.json（被 git 忽略），用 node scripts/start-server-play.mjs --headless 启动（不需要 PowerShell）。
 // 只存启动参数和路径，不存凭据：Agent 用本机已有的登录或配置目录；API key 以后再做（credential.kind 预留）。
 // 连接文件里的控制令牌只在这里校验，不返回给网页。
 import fs from 'node:fs';
@@ -33,19 +33,19 @@ export const AGENTS = Object.freeze({
 
 /** 会话选项：null 表示用驱动器默认值。 */
 export const SESSION_OPTIONS = Object.freeze({
-  idleMinutes: { flag: '-IdleMinutes', min: 0, max: 1440 },
-  resumeWindowMin: { flag: '-ResumeWindowMin', min: 0, max: 1440 },
-  rotateTokens: { flag: '-RotateTokens', min: 0, max: 2000000 },
-  maxRestarts: { flag: '-MaxRestarts', min: 0, max: 100 },
+  idleMinutes: { flag: '--idle-minutes', min: 0, max: 1440 },
+  resumeWindowMin: { flag: '--resume-window-min', min: 0, max: 1440 },
+  rotateTokens: { flag: '--rotate-tokens', min: 0, max: 2000000 },
+  maxRestarts: { flag: '--max-restarts', min: 0, max: 100 },
 });
 
 /** 保护玩家（8h）：开关是布尔（默认开），数值 null 表示用默认值。 */
 export const GUARD_OPTIONS = Object.freeze({
-  guard: { flag: '-Guard', kind: 'switch' },
-  guardRadius: { flag: '-GuardRadius', min: 3, max: 12 },
-  guardLowHealth: { flag: '-GuardLowHealth', min: 4, max: 16 },
-  guardBow: { flag: '-GuardBow', kind: 'switch' },
-  guardShield: { flag: '-GuardShield', kind: 'switch' },
+  guard: { flag: '--guard', kind: 'switch' },
+  guardRadius: { flag: '--guard-radius', min: 3, max: 12 },
+  guardLowHealth: { flag: '--guard-low-health', min: 4, max: 16 },
+  guardBow: { flag: '--guard-bow', kind: 'switch' },
+  guardShield: { flag: '--guard-shield', kind: 'switch' },
 });
 
 const KEYS = new Set(['id', 'label', 'agent', 'connectionFile', 'configDir', 'model', 'effort', 'nickname', 'memoryDir', 'blueprintDir', 'nodePath',
@@ -147,7 +147,7 @@ export function deleteProfile(runtime, id) {
   return true;
 }
 
-/** 读连接文件，只返回角色名、世界和地址；和 start-server-play.ps1 一样只认本机 http 的 ServerBody。 */
+/** 读连接文件，只返回角色名、世界和地址；和 scripts/start-server-play.mjs 一样只认本机 http 的 ServerBody。 */
 export function inspectConnection(file) {
   let c;
   try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
@@ -206,17 +206,16 @@ export function accountDirs(home = os.homedir()) {
   return Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [k, names.filter((n) => a.accountRe.test(n)).sort().map((n) => `~/${n}`)]));
 }
 
-/** 拼 start-server-play.ps1 的参数。每个值都是单独一项，不经过 shell；值不会以 - 开头（路径是绝对路径，其余已校验）。 */
-export function launchArgs(profile, script = path.join(ROOT, 'start-server-play.ps1')) {
-  const a = ['-NoProfile', '-NonInteractive', '-File', script, '-ConnectionFile', profile.connectionFile,
-    '-Agent', profile.agent, '-Effort', profile.effort, '-Headless'];
-  if (profile.nickname) a.push('-Nickname', profile.nickname);
-  if (profile.configDir) a.push('-ConfigDir', profile.configDir);
-  if (profile.memoryDir) a.push('-MemoryDir', profile.memoryDir);
-  if (profile.blueprintDir) a.push('-BlueprintDir', profile.blueprintDir);
-  if (profile.model) a.push('-Model', profile.model);
-  if (profile.nodePath) a.push('-NodePath', profile.nodePath);
-  if (profile.appearance) a.push('-Appearance', profile.appearance);
+/** 拼 scripts/start-server-play.mjs 的参数。每个值都是单独一项，不经过 shell；值不会以 - 开头（路径是绝对路径，其余已校验）。 */
+export function launchArgs(profile, script = path.join(ROOT, 'scripts', 'start-server-play.mjs')) {
+  const a = [script, '--connection-file', profile.connectionFile, '--agent', profile.agent, '--effort', profile.effort, '--headless'];
+  if (profile.nickname) a.push('--nickname', profile.nickname);
+  if (profile.configDir) a.push('--config-dir', profile.configDir);
+  if (profile.memoryDir) a.push('--memory-dir', profile.memoryDir);
+  if (profile.blueprintDir) a.push('--blueprint-dir', profile.blueprintDir);
+  if (profile.model) a.push('--model', profile.model);
+  if (profile.nodePath) a.push('--node-path', profile.nodePath);
+  if (profile.appearance) a.push('--appearance', profile.appearance);
   for (const [k, o] of Object.entries(SESSION_OPTIONS)) if (profile[k] !== null && profile[k] !== undefined) a.push(o.flag, String(profile[k]));
   for (const [k, o] of Object.entries(GUARD_OPTIONS)) {
     if (o.kind === 'switch') a.push(o.flag, profile[k] === false ? 'off' : 'on');
@@ -253,8 +252,8 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
       const fd = fs.openSync(logFile, 'w');
       let child;
       try {
-        // Windows 上 detached 的 pwsh 没有控制台，会什么都不做直接退出（实测退出码 0、没有输出）。
-        // 不 detached 时关掉 WebUI 会结束 pwsh，但它启动的驱动器 node 不在同一个作业对象里，会继续托管（实测）。
+        // 用 Node 直接跑启动脚本，不需要 PowerShell。Windows 上不 detached（以前 detached 的 pwsh 没有控制台会直接退出），
+        // 输出写进日志文件、不占控制台；关掉 WebUI 后托管是否继续见 docs/dev.md 的本地 WebUI。
         child = spawnImpl(command[0], [...command.slice(1), ...launchArgs(profile)], {
           cwd: ROOT, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', fd, fd],
           env: { ...process.env, COMPANION_RUNTIME_DIR: runtime },
@@ -281,12 +280,12 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
   };
 }
 
-/** 默认用 pwsh 跑启动脚本；测试用环境变量 MCBOT_WEBUI_LAUNCH_CMD（JSON 数组）替换。 */
+/** 默认用跑 WebUI 的同一个 Node 跑启动脚本；测试用环境变量 MCBOT_WEBUI_LAUNCH_CMD（JSON 数组）替换。 */
 export function launchCommand(env = process.env) {
   if (env.MCBOT_WEBUI_LAUNCH_CMD) {
     const cmd = JSON.parse(env.MCBOT_WEBUI_LAUNCH_CMD);
     if (!Array.isArray(cmd) || !cmd.length || !cmd.every((s) => typeof s === 'string')) throw new Error('MCBOT_WEBUI_LAUNCH_CMD 要是字符串数组');
     return cmd;
   }
-  return ['pwsh'];
+  return [process.execPath];
 }

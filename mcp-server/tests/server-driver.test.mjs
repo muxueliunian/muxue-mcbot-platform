@@ -301,6 +301,34 @@ test('start-server-play PrepareOnly读取v2身份和显式Node路径但不运行
   }
 });
 
+test('start-server-play.mjs只要Node：参数和ps1一样转进mcp.json和驱动器，不写token，参数不对就拒绝',async()=>{
+  const {prepareServerPlay,parseArgs}=await import('../../scripts/start-server-play.mjs');
+  const dir=temp();const connectionFile=path.join(dir,'connection.json');
+  fs.writeFileSync(connectionFile,'﻿'+JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'node-test-secret',worldId:'node-world',username:'NodePrep'}));
+  try{
+    const p=prepareServerPlay(parseArgs(['--connection-file',connectionFile,'--agent','codex','--effort','medium','--guard','off','--guard-radius','10','--max-restarts','0','--idle-minutes','-1','--appearance','yes_steve_model:model=ds_whale.ysm','--headless','--prepare-only']),{root:dir,execPath:process.execPath});
+    const text=fs.readFileSync(p.configFile,'utf8');assert.doesNotMatch(text,/node-test-secret/);
+    assert.equal(path.dirname(p.configFile),path.join(dir,'runtime','server-play','NodePrep'));
+    const mcp=JSON.parse(text).mcpServers.minecraft;assert.equal(mcp.command,process.execPath);
+    const after=(a,f)=>a[a.indexOf(f)+1];
+    assert.equal(after(mcp.args,'--world-id'),'node-world');assert.equal(after(mcp.args,'--guard'),'off');assert.equal(after(mcp.args,'--guard-radius'),'10');
+    assert.equal(after(mcp.args,'--appearance'),'yes_steve_model:model=ds_whale.ysm');
+    assert.equal(after(p.driverArgs,'--agent'),'codex');assert.equal(after(p.driverArgs,'--nickname'),'Codex');assert.equal(after(p.driverArgs,'--effort'),'medium');
+    assert.equal(after(p.driverArgs,'--max-restarts'),'0');assert.ok(!p.driverArgs.includes('--idle-minutes'),'-1 用驱动器默认');assert.ok(p.driverArgs.includes('--headless'));
+    const bad=(extra)=>()=>prepareServerPlay(parseArgs(['--connection-file',connectionFile,'--prepare-only',...extra]),{root:dir});
+    assert.throws(bad(['--appearance','ds_whale.ysm']),/appearance/);
+    assert.throws(bad(['--guard-radius','2']),/guard-radius/);
+    assert.throws(bad(['--agent','gpt']),/agent/);
+    assert.throws(bad(['--unknown','x']),/不认识/);
+    fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://192.168.1.5:8766/v2',token:'t',worldId:'w',username:'NodePrep'}));
+    assert.throws(bad([]),/本机 http/);
+    fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'t',worldId:'w',username:'NodePrep'}));
+    assert.throws(()=>prepareServerPlay(parseArgs(['--connection-file',connectionFile]),{root:dir}),/找不到运行端/,'没构建就说清楚');
+    const cli=spawnSync(process.execPath,[path.join(ROOT,'scripts/start-server-play.mjs'),'--connection-file',path.join(dir,'none.json')],{encoding:'utf8',windowsHide:true});
+    assert.equal(cli.status,2);assert.match(cli.stderr,/connection\.json/);
+  }finally{cleanup(dir);}
+});
+
 test('宿主只接自身controller，旧capability不撤销新lease或新instance',async()=>{
   const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
   fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));

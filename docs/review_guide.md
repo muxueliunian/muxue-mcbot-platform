@@ -1,4 +1,4 @@
-# 评审入口（2026-10-08）
+# 评审入口（2026-10-10）
 
 写给第一次看这个仓库的评审者（人或另一个模型）。请根据代码和测试判断，不要把文档里的计划当成已经实现。旧的评审入口（10-03）在 [archive/review_guide.md](archive/review_guide.md)，只作历史参考。
 
@@ -30,7 +30,7 @@ v0.1 的范围（用户定的）：
         └─ 附属模组（森罗厨房、SB 背包、YSM）通过公开 API 登记适配
 
 本机：scripts/companion.mjs（驱动器）── 起 Agent 会话、把游戏事件变成一轮轮对话、叫停和重启
-本机：scripts/webui.mjs ── 只读驱动器写的文件，加配置页，用 start-server-play.ps1 启动托管
+本机：scripts/webui.mjs ── 只读驱动器写的文件，加配置页，用 scripts/start-server-play.mjs 启动托管
 ```
 
 几个关键取舍（评审时请判断是否合理）：
@@ -45,12 +45,13 @@ v0.1 的范围（用户定的）：
 
 ## 3. 现在做到哪了
 
-进度表见 [交付计划的进度总览](delivery_plan.md#进度总览2026-10-08)。概括：
+进度表见 [交付计划的进度总览](delivery_plan.md#进度总览2026-10-10)。概括：
 
 - 已完成：Agent 接入三家、WebUI 和配置页、Mod 适配接口和三个示例模组、按标签认模组资源、合成烧炼和工作站、睡觉、地点和走门、种地养动物、保护玩家、表情和外观（8j）、托管启动时自动重生、长途走（8k：地表粗路线、游泳过河）、建筑（8i：按蓝图逐格放，放前在原版放置代码里试出能得到要求状态的点击，够不着就垫高，缺点击面就放临时靶块，从垫脚柱迈上盖好的楼板和屋顶，两层木屋 94% 一次盖对）。
 - 用户已试玩八轮（Claude 六轮、dsh 两轮，另有一次 dsh 补测整棵树；模型有 Sonnet、Haiku、DeepSeek-V41-Flash），每轮的反馈都修完了（交付计划 3a～3j）。Codex 只在 10-05 首版验收时跑过受控阶段，没有试玩过。
 - 8b 10-09 基本做完：模组机器通用物品槽适配（`machine-items`，服主按 Mod 开启）、熔炉和酿造台放好就走到时回来取（只读 `machine-status`、运行端记账和 `machine` 事件），只有隔离服实测。
-- 还没做：模组炉子沿用 smelt-item（8b 收尾）、农夫乐事（8c）、打包和上手文档（9）、三家回归发布（10）。
+- 10-10 用户把“让别人装得上”提前：兼容清单 `compat.json`（9a，网站、README、WebUI 模组页的唯一来源，`scripts/check-compat.mjs` 核对它和代码里锁的版本）已完成，NeoForge 放宽到 21.1.217 及以上；托管启动改成只要 Node（`scripts/start-server-play.mjs`），`scripts/package.mjs` 能出 Windows 绿色版目录（自带官方 Node），还没发布。
+- 还没做：发布绿色版（9）、网站（9b）、WebUI 模组页和安装向导（6c 的①②）、农夫乐事（8c）、模组炉子沿用 smelt-item（8b 收尾）、三家回归发布（10）。
 
 证据分三层，强弱不同，请分开看：离线测试 < 隔离服实测（脚本驱动真实服务器，不用模型）< 真实模型试玩。很多能力只有隔离服实测，没经过真实模型。
 
@@ -63,7 +64,7 @@ v0.1 的范围（用户定的）：
 - **驱动器太大**：`scripts/companion.mjs` 约 1560 行，三家 Agent 的会话、事件调度、叫停、重启、记忆整理都在里面。
 - **启动提示词越来越长**：每加一个能力就在 `startupPrompt` 里加一句，现在二十多条规则。
 - **工具多**：MCP 工具约 63 个（按服务器能力和已装适配增减）。小模型（Haiku、Flash）会选错工具或自己逐格探查。
-- **实测靠本地夹具**：`scripts/server-*-smoke.mjs` 依赖本机的隔离服、存档备份和端口，干净 clone 跑不了；没有 CI。有几个已知的偶发失败（保护实测有一次无报错退出、导航与防卫的高处拾取偶发、Node 24.15 原生崩溃 0xC0000409）。
+- **实测靠本地夹具**：`scripts/server-*-smoke.mjs` 依赖本机的隔离服、存档备份和端口，干净 clone 跑不了；没有 CI。有几个已知的偶发失败（保护实测有一次无报错退出、导航与防卫的高处拾取偶发、Node 24.15 原生崩溃 0xC0000409；绿色版改带官方 Node 24.21.0）。
 - **R6 只做了一半**：背包里无法完整编码组件的物品会降级显示，容器格子和地上物品还没有。
 - **死亡只在启动托管时自动重生**：托管途中死了，控制结束，要重新启动托管。
 - **YSM 看不到结果**：YSM 的指令不回任何消息，只能确认指令发出去了；模型和动画的样子要在客户端看。
@@ -77,7 +78,7 @@ v0.1 的范围（用户定的）：
 4. Mod 适配接口（`com.mcbot.servercontrol.api`：ContainerAdapter、ItemInteraction、PickupSink、WorkstationAdapter、EmoteSource、AppearanceSource）是否一致、够用？以后别人写适配会不会踩坑？
 5. 驱动器和提示词：`companion.mjs` 和 `startupPrompt` 应该怎么拆、怎么控制长度？
 6. 测试：离线、隔离服、真实模型三层的投入比例合理吗？哪些风险目前没有任何测试覆盖？
-7. 按 v0.1 剩下的计划（评审问题、8k、8i 已做完，剩 8b → 8c → 9 → 10；“在干净环境从头安装一遍”的演练提前做，不等到第 9 步），顺序和估时是否现实，有没有该先做的基础工作？
+7. 按 v0.1 剩下的计划（10-10 起：打包发布 9 → 网站 9b → WebUI 模组页 6c①② → 8c → 10；“在干净环境从头安装一遍”的演练跟打包一起做），顺序和估时是否现实，有没有该先做的基础工作？
 
 请先给总判断，再按优先级列出有证据的问题（文件和调用链、触发条件、影响、最小建议），区分“v0.1 前必须修”和“可以以后再做”。没有把握的标成待验证，不要直接建议大规模重写。
 
@@ -93,7 +94,7 @@ v0.1 的范围（用户定的）：
 
 | 主题 | 从哪看 | 想知道的 |
 | --- | --- | --- |
-| Agent 会话和托管 | `scripts/companion.mjs`、`scripts/agents/`、`start-server-play.ps1`、`scripts/server-body-control.mjs` | 事件怎么变成对话轮次；叫停、重启、换会话、启动时重生是不是单一可靠的路径 |
+| Agent 会话和托管 | `scripts/companion.mjs`、`scripts/agents/`、`scripts/start-server-play.mjs`、`scripts/server-body-control.mjs` | 事件怎么变成对话轮次；叫停、重启、换会话、启动时重生是不是单一可靠的路径 |
 | MCP 工具和任务 | `client-runtime/src/mcp.ts`、`gather-tasks.ts`、`tasks.ts`、`companion-mode.ts`、`survival-tasks.ts`、`survival-reflexes.ts`、`events.ts` | 写锁、子任务、反射（自动进食、自卫）和陪伴模式之间怎么让路；事件会不会漏或重复 |
 | 运行端到服务端 | `client-runtime/src/server-body.ts`、`body.ts`；服务端 `ControlSession.java`、`ServerController.java` | 每个动作的参数校验、租约和代次检查、结果分类 |
 | 原生动作 | `SurvivalActions.java`、`NativeNavigation.java`、`GuardCombat.java`、`FarmTask.java`、`WorkstationTask.java`、`BuildTask.java` 等 | 是否真的走原版代码路径；失败时会不会留下半完成的状态 |
@@ -105,8 +106,8 @@ v0.1 的范围（用户定的）：
 离线测试（需要 Node 24、JDK 21，首次要联网装依赖）：
 
 ```pwsh
-Set-Location client-runtime; npm ci; npm test          # 运行端，约 340 项
-Set-Location ../mcp-server; npm ci; npm test           # 驱动器、WebUI 和旧 Mineflayer 实现，约 670 项（vision 浏览器清理那项在干净 HEAD 上也偶发失败）
+Set-Location client-runtime; npm ci; npm test          # 运行端，约 355 项
+Set-Location ../mcp-server; npm ci; npm test           # 驱动器、WebUI、打包和兼容清单、旧 Mineflayer 实现，约 680 项（vision 浏览器清理那项在干净 HEAD 上也偶发失败）
 Set-Location ../mods/mcbot-server-control; ./gradlew.bat build   # 核心，含 Java 检查和 loaderNeutralCheck
 Set-Location ../mcbot-yes-steve-model; ./gradlew.bat build       # 附属模组要先构建核心
 ```

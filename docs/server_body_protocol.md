@@ -267,7 +267,7 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - 回执：`follow-companion`运行中的结果多一个`guard:{state,target,targetId,hits,damage,shots,kills,retreats,options}`，`state`是 idle／approaching／fighting／aiming／shooting／retreating／evading；跟随本身的`state`多一个`guarding`。
 - 兜底：Bot 造成的任何伤害（挥击、箭、其他）落到上面那些不算目标的实体上时，服务端直接取消这次伤害。
 
-运行端：`companion-mode follow`默认带保护（`--guard on|off`、`--guard-radius`、`--guard-low-health`、`--guard-bow`、`--guard-shield`给默认值，WebUI「配置」页的「保护玩家」一栏和`start-server-play.ps1`的`-Guard*`参数转过来），请求里`guard:false`关掉、对象逐项覆盖；身体没有该能力时不带，明确要求就拒绝。保护时运行端只把「开打（20 秒内只报一次）」「打完了，打倒几只」「血少在撤」「躲苦力怕」作为`guard`事件唤醒模型，`companion-mode`状态仍是 following／waiting，另带`guard`。保护进行时 3 格近身自卫不插手；自动进食和近身自卫遇到普通跟随／等待时改为先暂停、处理完再恢复同一个意图（以前是取消）。
+运行端：`companion-mode follow`默认带保护（`--guard on|off`、`--guard-radius`、`--guard-low-health`、`--guard-bow`、`--guard-shield`给默认值，WebUI「配置」页的「保护玩家」一栏和`scripts/start-server-play.mjs`的`--guard*`参数转过来），请求里`guard:false`关掉、对象逐项覆盖；身体没有该能力时不带，明确要求就拒绝。保护时运行端只把「开打（20 秒内只报一次）」「打完了，打倒几只」「血少在撤」「躲苦力怕」作为`guard`事件唤醒模型，`companion-mode`状态仍是 following／waiting，另带`guard`。保护进行时 3 格近身自卫不插手；自动进食和近身自卫遇到普通跟随／等待时改为先暂停、处理完再恢复同一个意图（以前是取消）。
 
 同一仲裁器在普通观察之外独立采样紧凑生存状态；模式切换、慢普通观察与原生战斗等待不能挤掉感知。防卫抢占前阻断新普通写入，撤销容器／采集／陪伴／进食后等待身体停止确认，再获得写锁；不新增第二个控制者或偷偷接纳外部generation。人工停止解除armed，读状态与危险仍存在都不能重新授权。危险事件只按有意义的状态变化生成，不因距离微调、每次挥击、空气补回或跳跃下落数值变化反复唤醒模型。
 

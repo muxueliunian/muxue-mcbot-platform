@@ -9,8 +9,9 @@ import com.mcbot.servercontrol.platform.LoaderPlatform;
  * Entry point for add-on mods that teach MCBOT about another mod's blocks, menus and right-click interactions.
  *
  * <p>Register from the add-on's mod constructor (or common setup). The registry is frozen when a server starts;
- * later registrations are refused. Adapters must pin the exact versions they were tested against
- * ({@link #versionsMatch}) and answer {@code false} from {@code installed()} otherwise: anything not explicitly
+ * later registrations are refused. Adapters must pin the exact versions of the adapted mod they were tested against
+ * ({@link #versionsMatch}; the loader only needs to be a supported build, {@link #NEOFORGE} or a later 21.1 one)
+ * and answer {@code false} from {@code installed()} otherwise: anything not explicitly
  * supported stays refused. A registered adapter whose methods throw is treated as absent for that call.</p>
  */
 public final class McbotApi {
@@ -77,7 +78,7 @@ public final class McbotApi {
         return id;
     }
 
-    /** Pinned loader versions by loader name; a loader not listed here is not supported. */
+    /** Lowest supported loader build by loader name; a loader not listed here is not supported. */
     private static final Map<String, String> LOADERS = Map.of("neoforge", NEOFORGE);
 
     /** Installed version of a mod, or "" when it is absent (or the loader is not up yet). */
@@ -86,15 +87,27 @@ public final class McbotApi {
         return platform == null ? "" : platform.modVersion(modId);
     }
 
-    /** True when the game and the running loader are the pinned platform versions. */
+    /** True when the game is the pinned version and the running loader is a build of the same line at or above the lowest supported one. */
     public static boolean platformMatches() {
         LoaderPlatform platform = LoaderPlatform.installedOrNull();
         if (platform == null || !MINECRAFT.equals(platform.modVersion("minecraft"))) return false;
-        String pinned = LOADERS.get(platform.loader());
-        return pinned != null && pinned.equals(platform.modVersion(platform.loaderModId()));
+        String lowest = LOADERS.get(platform.loader());
+        return lowest != null && sameLineAtLeast(platform.modVersion(platform.loaderModId()), lowest);
     }
 
-    /** True only when the mod has exactly this version and the game and loader are the pinned platform versions. */
+    /** "21.1.229" and "21.1.229-beta" are at least "21.1.217"; "21.2.5" and "21.1.200" are not. */
+    static boolean sameLineAtLeast(String version, String lowest) {
+        int cut = lowest.lastIndexOf('.');
+        String line = lowest.substring(0, cut + 1);
+        if (version == null || !version.startsWith(line)) return false;
+        String rest = version.substring(line.length());
+        int digits = 0;
+        while (digits < rest.length() && Character.isDigit(rest.charAt(digits))) digits++;
+        if (digits == 0 || digits > 9) return false;
+        return Integer.parseInt(rest.substring(0, digits)) >= Integer.parseInt(lowest.substring(cut + 1));
+    }
+
+    /** True only when the mod has exactly this version, the game is the pinned version and the loader is a supported build. */
     public static boolean versionsMatch(String modId, String version) {
         return version.equals(modVersion(modId)) && platformMatches();
     }

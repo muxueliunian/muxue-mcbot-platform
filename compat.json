@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "note": "支持范围的唯一来源：网站、README 和 WebUI 的模组页都读这份。改了模组里锁的版本就改这里，scripts/check-compat.mjs 会对一遍。",
+  "updated": "2026-10-10",
+  "platform": {
+    "minecraft": "1.21.1",
+    "loader": "neoforge",
+    "loaderMin": "21.1.217",
+    "loaderTested": "21.1.217",
+    "java": "21",
+    "node": "24",
+    "modes": [
+      { "id": "server", "name": "独立服务器", "where": "服务器的 mods 目录" },
+      { "id": "lan", "name": "单人世界开局域网", "where": "启动器实例的 mods 目录" }
+    ]
+  },
+  "agents": [
+    { "id": "claude", "name": "Claude Code", "login": "本机装好 Claude Code 并登录" },
+    { "id": "codex", "name": "Codex", "login": "本机装好 Codex CLI 并登录" },
+    { "id": "dsh", "name": "DeepSeek Harness", "login": "用 DeepSeek Harness 桌面版自带的 dsh，或单独安装；密钥只从环境变量或 dsh 自己的配置读" }
+  ],
+  "core": {
+    "id": "mcbot_server_control",
+    "name": "MCBOT Server Control",
+    "project": "mods/mcbot-server-control",
+    "jar": "mcbot-server-control-0.1.0.jar",
+    "side": "server",
+    "required": true,
+    "what": "服务端身体：Bot 是服务器里的假玩家，玩家只开自己的客户端"
+  },
+  "adapters": [
+    {
+      "id": "kaleidoscope_cookery",
+      "name": "森罗厨房",
+      "nameEn": "Kaleidoscope Cookery",
+      "kind": "addon",
+      "project": "mods/mcbot-kaleidoscope-cookery",
+      "jar": "mcbot-kaleidoscope-cookery-0.1.0.jar",
+      "what": ["炒锅做菜（放油、下料、翻炒、盛出）"],
+      "evidence": "隔离服实测",
+      "requires": [
+        { "modId": "kaleidoscope_cookery", "version": "1.6.0-neoforge+mc1.21.1", "side": "both", "license": "CC-BY-NC-SA-4.0",
+          "modrinth": { "project": "kaleidoscope-cookery", "versionId": "g8w0b2ly", "file": "kaleidoscopecookery-1.6.0-neoforge+mc1.21.1.jar", "size": 3496661,
+            "url": "https://cdn.modrinth.com/data/v17FatAc/versions/g8w0b2ly/kaleidoscopecookery-1.6.0-neoforge%2Bmc1.21.1.jar" } }
+      ]
+    },
+    {
+      "id": "kaleidoscope_cookery_slots",
+      "name": "森罗厨房的机器",
+      "nameEn": "Kaleidoscope Cookery machines",
+      "kind": "config",
+      "config": { "file": "config/mcbot-server-control/item-handlers.json", "mods": { "kaleidoscope_cookery": "1.6.0-neoforge+mc1.21.1" } },
+      "what": ["油壶、石磨、竹筛、茶壶的放料和取成品（通用物品槽，machine-items）"],
+      "evidence": "隔离服实测",
+      "requires": [ { "ref": "kaleidoscope_cookery" } ]
+    },
+    {
+      "id": "sophisticated_backpacks",
+      "name": "精致背包",
+      "nameEn": "Sophisticated Backpacks",
+      "kind": "addon",
+      "project": "mods/mcbot-sophisticated-backpacks",
+      "jar": "mcbot-sophisticated-backpacks-0.1.0.jar",
+      "what": ["打开手里的背包", "放在地上的背包当箱子用", "拾取升级收进背包时记账"],
+      "evidence": "隔离服实测（皮革背包、铁背包）",
+      "requires": [
+        { "modId": "sophisticatedbackpacks", "version": "3.25.77", "side": "both", "license": "All Rights Reserved",
+          "modrinth": { "project": "sophisticated-backpacks", "versionId": "y3XPAhxB", "file": "sophisticatedbackpacks-1.21.1-3.25.77.2086.jar", "size": 1172284,
+            "url": "https://cdn.modrinth.com/data/TyCTlI4b/versions/y3XPAhxB/sophisticatedbackpacks-1.21.1-3.25.77.2086.jar" } },
+        { "modId": "sophisticatedcore", "version": "1.4.86", "side": "both", "license": "All Rights Reserved",
+          "modrinth": { "project": "sophisticated-core", "versionId": "fNqyH4kb", "file": "sophisticatedcore-1.21.1-1.4.86.2259.jar", "size": 1686817,
+            "url": "https://cdn.modrinth.com/data/nmoqTijg/versions/fNqyH4kb/sophisticatedcore-1.21.1-1.4.86.2259.jar" } }
+      ]
+    },
+    {
+      "id": "yes_steve_model",
+      "name": "Yes Steve Model",
+      "nameEn": "Yes Steve Model",
+      "kind": "addon",
+      "project": "mods/mcbot-yes-steve-model",
+      "jar": "mcbot-yes-steve-model-0.1.0.jar",
+      "what": ["在 WebUI 里给 Bot 选模型", "AI 播模型动画（表情）"],
+      "evidence": "隔离服实测",
+      "requires": [
+        { "modId": "yes_steve_model", "version": "2.6.5-neoforge+mc1.21.1", "side": "both", "license": "All Rights Reserved",
+          "modrinth": { "project": "yes-steve-model", "versionId": "HZWaR0LY", "file": "ysm-2.6.5-neoforge+mc1.21.1-release.jar", "size": 63463229,
+            "url": "https://cdn.modrinth.com/data/86xjpqqS/versions/HZWaR0LY/ysm-2.6.5-neoforge%2Bmc1.21.1-release.jar" } }
+      ]
+    },
+    {
+      "id": "iron_furnaces",
+      "name": "铁炉",
+      "nameEn": "Iron Furnaces",
+      "kind": "builtin",
+      "project": "mods/mcbot-server-control",
+      "what": ["普通铁炉（iron_furnace）烧东西"],
+      "evidence": "隔离服实测",
+      "requires": [
+        { "modId": "ironfurnaces", "version": "4.3.2", "side": "both", "license": "Apache-2.0",
+          "modrinth": { "project": "iron-furnaces", "versionId": "WZ25JeYB", "file": "ironfurnaces-neoforge-1.21.1-4.3.2.jar", "size": 576866,
+            "url": "https://cdn.modrinth.com/data/yPlaLxD1/versions/WZ25JeYB/ironfurnaces-neoforge-1.21.1-4.3.2.jar" } }
+      ]
+    }
+  ]
+}

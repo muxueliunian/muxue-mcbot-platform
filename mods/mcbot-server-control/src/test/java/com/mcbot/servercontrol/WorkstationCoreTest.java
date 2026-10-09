@@ -62,8 +62,16 @@ final class WorkstationCoreTest {
             LoaderPlatform.install(fake("neoforge","neoforge",Map.of("minecraft","1.21.1","neoforge","21.1.217","ironfurnaces","4.3.2")));
             check(McbotApi.platformMatches()&&McbotApi.versionsMatch("ironfurnaces","4.3.2"),"pinned NeoForge matches");
             check(!McbotApi.versionsMatch("ironfurnaces","4.3.1"),"other mod versions do not");
-            LoaderPlatform.install(fake("neoforge","neoforge",Map.of("minecraft","1.21.1","neoforge","21.1.229")));
-            check(!McbotApi.platformMatches(),"another NeoForge build is not the pinned platform");
+            LoaderPlatform.install(fake("neoforge","neoforge",Map.of("minecraft","1.21.1","neoforge","21.1.229","ironfurnaces","4.3.2")));
+            check(McbotApi.platformMatches()&&McbotApi.versionsMatch("ironfurnaces","4.3.2"),"a newer NeoForge 21.1 build is supported");
+            for(String older:new String[]{"21.1.216","21.1.99","21.2.5","21.10.300","","beta"}) {
+                LoaderPlatform.install(fake("neoforge","neoforge",Map.of("minecraft","1.21.1","neoforge",older)));
+                check(!McbotApi.platformMatches(),"NeoForge '"+older+"' is not a supported build");
+            }
+            LoaderPlatform.install(fake("neoforge","neoforge",Map.of("minecraft","1.21.1","neoforge","21.1.230-beta")));
+            check(McbotApi.platformMatches(),"a suffixed build on the line counts by its number");
+            LoaderPlatform.install(fake("neoforge","neoforge",Map.of("minecraft","1.21.2","neoforge","21.1.229")));
+            check(!McbotApi.platformMatches(),"another Minecraft version is not supported");
             LoaderPlatform.install(fake("fabric","fabricloader",Map.of("minecraft","1.21.1","fabricloader","0.16.5","ironfurnaces","4.3.2")));
             check(!McbotApi.versionsMatch("ironfurnaces","4.3.2"),"a loader without a pin is not supported yet");
         } finally { if(previous!=null)LoaderPlatform.install(previous); }

@@ -1,6 +1,6 @@
 # 试玩步骤
 
-适用于 MC 1.21.1 / NeoForge 21.1.217 的独立服务器（或开了局域网的单人世界）、本机 Agent、单个 Bot。玩家只开自己的客户端，Bot 是服务器里的假玩家。能做什么、验证到什么程度以[交付计划](delivery_plan.md)为准，本页只讲怎么开始玩。2026-10-08 更新；10-05 首版验收时的旧步骤见 git 历史和[首版验收](archive/server_alpha_release_validation.md)。
+适用于 MC 1.21.1 / NeoForge 21.1.217 及以上（21.1 线，实测用 21.1.217） 的独立服务器（或开了局域网的单人世界）、本机 Agent、单个 Bot。玩家只开自己的客户端，Bot 是服务器里的假玩家。能做什么、验证到什么程度以[交付计划](delivery_plan.md)为准，本页只讲怎么开始玩。2026-10-08 更新；10-05 首版验收时的旧步骤见 git 历史和[首版验收](archive/server_alpha_release_validation.md)。
 
 ## 准备
 

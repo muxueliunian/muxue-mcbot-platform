@@ -2,7 +2,7 @@
 
 MCBOT 的示例附属模组，让 Bot 能用 [Sophisticated Backpacks](https://modrinth.com/mod/sophisticated-backpacks)（精致背包）的背包。它也是 [Mod 适配接口](../../docs/mod_adapters.md) 的第二个参考例子，展示三件事：物品处理器（item handler）型容器怎么适配、对空使用物品怎么写、别的 Mod 把掉落物直接收进背包时怎么记账。
 
-- **只支持** Sophisticated Backpacks `3.25.77`，配 Sophisticated Core `1.4.86`。版本对不上时，下面的功能都报告"没安装"，Bot 不会去用。之所以不用最新版，是因为更新的版本要求 NeoForge 21.1.229 以上，而我们锁定的是 21.1.217。
+- **只支持** Sophisticated Backpacks `3.25.77`，配 Sophisticated Core `1.4.86`。版本对不上时，下面的功能都报告"没安装"，Bot 不会去用。之所以不用最新版，是因为更新的版本要求 NeoForge 21.1.229 以上，而我们实测用的是 21.1.217（MCBOT 本身 10-10 起支持 21.1.217 及以上的 NeoForge，但新版 SB 没有实测过）。
 - 用反射访问背包，编译时不依赖 SB。本模组不带 SB 的任何代码和素材（SB 是 All Rights Reserved），自身用 Apache-2.0。
 - 服务器上要同时装 `mcbot-server-control`、`sophisticatedbackpacks`、`sophisticatedcore` 和本模组。SB 需要客户端也装，玩家要装 SB 才能进服。
 

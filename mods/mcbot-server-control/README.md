@@ -2,7 +2,7 @@
 
 2026-10-03增量：当前Java build有732项检查，运行端227项；已接统一原生高差导航、威胁观察、有限防卫／安全退让和原生攻击重入停止门槛。完整实服55项及Claude-b五阶段通过，已完成30分钟受控运行及独立短复验（生命值检查缺口见记录），见[生存第二批](../../docs/archive/server_navigation_defense_validation.md)。下文387项及平地能力是此前阶段说明，以最新协议和验收为当前范围。
 
-MC 1.21.1 / NeoForge 21.1.217 的 ServerBody 控制模块。只注册一位配置指定的非 OP 生存玩家，首次显式 claim 创建／附着；不会启动另一套 MC 客户端。旧 `mcbot-server-spike` 实验命令不进入此模块，两模块不可同时安装。
+MC 1.21.1 / NeoForge 21.1.217 及以上（21.1 线，实测用 21.1.217） 的 ServerBody 控制模块。只注册一位配置指定的非 OP 生存玩家，首次显式 claim 创建／附着；不会启动另一套 MC 客户端。旧 `mcbot-server-spike` 实验命令不进入此模块，两模块不可同时安装。
 
 Java 21 编译：`$env:JAVA_HOME='D:/Java/jdk-21'; ./gradlew.bat build`。产物 `build/libs/mcbot-server-control-0.1.0.jar`。纯Java离线检查随build执行，当前可选陪伴拾取guard为**387项**（此前330＋新增57），日志见`output/server-escort-java.log`（本地证据未随仓库分发：`../../output/server-escort-java.log`）。历史第二批交互163项／持续陪伴227项／有限采集330项是当时结果，不重复相加。当前[跟随拾取验收](../../docs/archive/server_escort_validation.md)已通过23项真实程序矩阵及Claude-b／Codex各5阶段；Node143项通过。此前[有限采集验收](../../docs/archive/server_gather_validation.md)保留独立证据。
 

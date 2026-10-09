@@ -27,6 +27,8 @@ Set-Location ../mcbot-yes-steve-model   # 附属模组编译时要用核心的 j
 ./gradlew.bat build
 ```
 
+支持范围的清单是根目录的`compat.json`（网站、README、WebUI模组页都读它）；改了模组里锁的版本或jar版本号，要同步改清单，`node scripts/check-compat.mjs`核对，`mcp-server`的`npm test`也会跑。
+
 Java检查由`controlTest`接入`check`，标准Gradle `test`任务关闭；`check`还包括`loaderNeutralCheck`：只有`build.gradle`里登记的加载器文件能用`net.neoforged`，其余代码只用原版类，为以后的Fabric版留边界（见[工作站设计](workstation_design.md)）；应查看实际检查输出，不能仅凭`test SKIPPED`断言没有检查。Linux可用`bash ./gradlew build`，但本次整理版仅在Windows复验；Windows原生窗口截图、进程控制等用例不能直接外推为云端通过。
 
 ## 接入游戏

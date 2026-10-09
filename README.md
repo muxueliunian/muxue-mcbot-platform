@@ -19,7 +19,7 @@
 
 ## 现在能做什么
 
-范围：MC 1.21.1 / NeoForge 21.1.217、独立服务器或开了局域网的单人世界（[单人模式](docs/singleplayer_design.md)）、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收（[验收记录](docs/archive/server_alpha_release_validation.md)）。
+范围：MC 1.21.1 / NeoForge 21.1.217 及以上（21.1 线，实测用 21.1.217）、独立服务器或开了局域网的单人世界（[单人模式](docs/singleplayer_design.md)）、单 Bot、本机 Agent。2026-10-05 首版受限试玩已验收（[验收记录](docs/archive/server_alpha_release_validation.md)）。
 
 - 跟随、等待、跟随时捡指定物品，可以边做边聊天，随时叫停
 - 单格挖放、标准容器、走近取物再交还

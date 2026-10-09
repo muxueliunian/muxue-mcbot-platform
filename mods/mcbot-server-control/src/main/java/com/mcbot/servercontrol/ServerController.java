@@ -182,7 +182,7 @@ final class ServerController implements ControlSession.Game {
     @Override public JsonObject hello() {
         List<com.mcbot.servercontrol.api.ItemInteraction> interactions=ItemInteractions.installed();
         List<String> capabilities=new ArrayList<>(CAPABILITIES);capabilities.addAll(ItemInteractions.capabilities(interactions));
-        JsonObject hello=obj("platform",obj("minecraft","1.21.1","loader","neoforge","loaderVersion","21.1.217"),"capabilities",capabilities);
+        JsonObject hello=obj("platform",obj("minecraft","1.21.1","loader","neoforge","loaderVersion",loaderVersion()),"capabilities",capabilities);
         hello.add("interactions",ItemInteractions.ids(interactions));
         hello.add("itemInteractions",ItemInteractions.itemIds(interactions));
         hello.add("adapters",ModAdapters.containerIds());
@@ -644,6 +644,7 @@ final class ServerController implements ControlSession.Game {
         number(args,"x"); number(args,"y"); number(args,"z");
         return new Vec3(bounded(args,"x",0,-29_999_000,29_999_000),bounded(args,"y",0,-2048,2048),bounded(args,"z",0,-29_999_000,29_999_000));
     }
+    private static String loaderVersion() { String running=com.mcbot.servercontrol.api.McbotApi.modVersion("neoforge"); return running.isEmpty()?com.mcbot.servercontrol.api.McbotApi.NEOFORGE:running; }
     private static JsonObject position(Vec3 point) { return obj("x",point.x,"y",point.y,"z",point.z); }
     private static JsonObject item(int slot,ItemStack item) { return obj("slot",slot,"id",item.isEmpty()?"minecraft:air":BuiltInRegistries.ITEM.getKey(item.getItem()).toString(),"count",item.getCount()); }
 }

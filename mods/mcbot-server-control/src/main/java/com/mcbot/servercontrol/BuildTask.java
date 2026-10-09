@@ -11,6 +11,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
@@ -47,7 +48,7 @@ final class BuildTask {
         boolean air(){return state.isAir();}
     }
     record Click(BlockHitResult hit,float yaw,float pitch) {}
-    static final int MAX_CELLS=4096,MAX_DISTANCE=48,WALK_MS=15_000,SPOT_RADIUS=5,MAX_SPOTS=240;
+    static final int MAX_CELLS=4096,MAX_DISTANCE=48,WALK_MS=15_000,STALL_MS=4_000,SPOT_RADIUS=5,MAX_SPOTS=240;
     /** Decided by neighbours or by use, not by the placing click: never compared. */
     static final Set<String> AUTO=Set.of("waterlogged","shape","north","south","east","west","up","powered","occupied","open","in_wall","snowy",
         "distance","persistent","extended","enabled","triggered","lit","attached","disarmed","conditional","signal_fire","has_book","has_record","bottom",
@@ -64,6 +65,7 @@ final class BuildTask {
     private final List<Target> places=new ArrayList<>();
     private final Set<BlockPos> pendingCells=new HashSet<>(),targetCells=new HashSet<>();
     private float health;
+    private int falls;
     private final Set<Target> waiting=new HashSet<>();
     private final JsonArray skipped=new JsonArray(),wrong=new JsonArray();
     private final Map<String,Integer> skippedWhy=new TreeMap<>();
@@ -72,7 +74,8 @@ final class BuildTask {
     private NativeNavigation navigation;
     private Object walkingTo;
     private Vec3 spot;
-    private long walkStarted;
+    private long walkStarted,stallSince;
+    private Vec3 stallAt;
     // breaking a block that takes time
     private BlockPos digging;
     private BlockState digState;
@@ -224,7 +227,10 @@ final class BuildTask {
         if(!session.mayDrive(operation)){stop();return;}
         if(!operation.status.equals("running"))return;
         if(now()>=deadline){finish("TIMEOUT");return;}
-        if(player.getHealth()<health){var source=player.getLastDamageSource();throw error("BLOCKED","Body took damage while building"+(source!=null?" ("+source.getMsgId()+")":""));}
+        if(player.getHealth()<health){var source=player.getLastDamageSource();
+            // A short fall off a half-built floor, as players take while building: noted, and the walk planned again from where it landed.
+            if(source!=null&&source.is(DamageTypeTags.IS_FALL)&&player.getHealth()>=player.getMaxHealth()/2){note(String.format("fell (%.0f damage)",health-player.getHealth()));stopWalking();falls++;}
+            else throw error("BLOCKED","Body took damage while building"+(source!=null?" ("+source.getMsgId()+")":""));}
         health=player.getHealth();
         if(digging!=null){tickDig();return;}
         if(cooldown>0){cooldown--;return;}
@@ -275,6 +281,7 @@ final class BuildTask {
     private int columnHeight,riseTries,scaffoldUsed;
     private Item scaffoldItem;
     private Object columnFor;
+    private final Map<Object,Integer> columnTries=new HashMap<>();
     private final List<BlockPos> scaffold=new ArrayList<>();
     private boolean leftGround,risePlaced;
     private long stepDeadline;
@@ -348,10 +355,19 @@ final class BuildTask {
         if(scaffold.isEmpty()){mode=Mode.COLLECT;collectUntil=now()+8000;return;}
         if(!player.onGround())return;
         BlockPos top=scaffold.getLast();
-        if(!player.blockPosition().below().equals(top)){mode=Mode.GROUND;column=null;columnFor=null;return;} // pushed off: the rest is reported as left
+        if(!player.blockPosition().below().equals(top)){abandonScaffold();return;} // pushed off
         BlockHitResult hit=hitFrom(player.position(),top,Direction.UP);
-        if(hit==null){mode=Mode.GROUND;column=null;columnFor=null;return;}
+        if(hit==null){abandonScaffold();return;}
         scaffoldDig=true;dig(top,hit);
+    }
+    /**
+     * Off the column with blocks of it still standing: they are dug out later like a helper, and the next column starts
+     * from nothing (a stale count made the next one think it was already up, while still on the ground).
+     */
+    private void abandonScaffold() {
+        for(BlockPos p:scaffold)if(level().getBlockState(p).is(((BlockItem)scaffoldItem).getBlock())){helperDigs.add(p);if(!digs.contains(p))digs.add(p);}
+        note("left the scaffold with "+scaffold.size()+" standing");
+        scaffold.clear();mode=Mode.GROUND;column=null;columnFor=null;
     }
     private boolean scaffoldDig;
     private long collectUntil;
@@ -387,7 +403,7 @@ final class BuildTask {
             // One at a time: two helpers could each sit in the cell the other target needs.
             if(helperOf.isEmpty())for(Target t:layer)if(!helpers.contains(t)&&helper(t)){helped=true;break;}
             if(helped){waiting.removeAll(layer);continue;}
-            for(Target t:layer){skip(t.pos(),t.state(),whyWaiting.getOrDefault(t,"nothing to place it against"));places.remove(t);done(t);dropHelper(t);}
+            for(Target t:layer){if(!helpers.contains(t))skip(t.pos(),t.state(),whyWaiting.getOrDefault(t,"nothing to place it against"));places.remove(t);done(t);dropHelper(t);}
             waiting.removeAll(layer);
         }
     }
@@ -527,7 +543,7 @@ final class BuildTask {
 
     // ---------- walking ----------
     private void walkTo(Object work,Predicate<Vec3> goal) {
-        if(work!=walkingTo){stopWalking();walkingTo=work;walkStarted=now();spot=null;}
+        if(work!=walkingTo){stopWalking();walkingTo=work;walkStarted=now();spot=null;stallAt=null;}
         walkGoal=goal;
         if(spot==null||!goal.test(spot)) {
             if(navigation!=null)navigation.stop();navigation=null;
@@ -542,6 +558,9 @@ final class BuildTask {
         if(!(work instanceof ItemEntity)&&work!=column&&player.onGround()&&Math.hypot(at.x-spot.x,at.z-spot.z)<NativeNavigation.WAYPOINT&&Math.abs(at.y-spot.y)<0.6&&!goal.test(at)){
             unreachableSpots.add(BlockPos.containing(spot));note("spot no good on arrival");spot=null;if(navigation!=null)navigation.stop();navigation=null;return;
         }
+        // Planning over and over without moving (a half-built floor the planner keeps routing into): drop the spot early.
+        if(stallAt==null||at.distanceToSqr(stallAt)>0.25){stallAt=at;stallSince=now();}
+        else if(now()-stallSince>STALL_MS){unreachableSpots.add(BlockPos.containing(spot));if(navigation!=null)note("not moving: "+navigation.diagnostics());giveUp(work,"not moving");return;}
         if(navigation==null){NativeNavigation.conditions(player);if(!player.onGround())return;navigation=new NativeNavigation(player,session,operation);}
         try{navigation.tick(spot,goal);}
         catch(Protocol.Error failure) {
@@ -573,6 +592,12 @@ final class BuildTask {
         stopWalking();note("give up "+label(work)+": "+why);
         if(mode==Mode.TO_COLUMN&&work==column) {
             mode=Mode.GROUND;
+            // Another base not yet found unreachable (walls built so far may cut the body off from the outside ones).
+            Object f=columnFor;column=null;columnFor=null;
+            if(columnTries.merge(f,1,Integer::sum)<=6&&(f instanceof Target ct&&places.contains(ct)?planColumn(ct):f instanceof BlockPos cp&&digs.contains(cp)&&planColumn(cp,p->hitFrom(p,cp,null)!=null,cp))){
+                mode=Mode.TO_COLUMN;note("scaffold "+columnHeight+" at "+column.toShortString()+" for "+label(f)+" instead");return;
+            }
+            column=null;columnFor=f;
             String reason="could not reach a spot for a scaffold ("+why+")";
             if(columnFor instanceof Target ct){waiting.add(ct);whyWaiting.putIfAbsent(ct,reason);}else if(columnFor instanceof BlockPos cp&&digs.contains(cp))failDig(cp,reason);
             column=null;columnFor=null;return;
@@ -672,7 +697,7 @@ final class BuildTask {
     // ---------- the end ----------
     JsonObject progress() {
         return obj("cells",targets.size(),"already",already,"placed",placed,"dug",dug,"remaining",places.size()+digs.size(),"skippedCount",skippedCount,
-            "skipped",skipped,"skippedWhy",skippedWhy,"wrongState",wrong,"scaffoldUsed",scaffoldUsed,"helpersUsed",helpersUsed,"trace",new ArrayList<>(trace),"scaffoldLeft",scaffold.stream().map(NativeWorkstation::pos).toList(),"inventoryChange",delta(before,ItemDescriptions.counts(player.getInventory())),
+            "skipped",skipped,"skippedWhy",skippedWhy,"wrongState",wrong,"scaffoldUsed",scaffoldUsed,"helpersUsed",helpersUsed,"falls",falls,"trace",new ArrayList<>(trace),"scaffoldLeft",scaffold.stream().map(NativeWorkstation::pos).toList(),"inventoryChange",delta(before,ItemDescriptions.counts(player.getInventory())),
             "position",obj("x",player.getX(),"y",player.getY(),"z",player.getZ()));
     }
     private void finish(String code) {

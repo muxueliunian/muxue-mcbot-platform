@@ -80,8 +80,8 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
   for(const tool of ['get-survival-state','assess-tool','prepare-item','eat-food','set-reflexes','defend-self']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   assert.equal(CODEX_SERVER_TOOLS.includes('interact-block'),true);
   for(const tool of ['emote','equip-item','use-item']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
-  for(const tool of ['build','list-blueprints','save-blueprint']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
-  assert.equal(CODEX_SERVER_TOOLS.length,64);
+  for(const tool of ['build','list-blueprints','save-blueprint','machine-items']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
+  assert.equal(CODEX_SERVER_TOOLS.length,65);
 });
 
 test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲回合',()=>{

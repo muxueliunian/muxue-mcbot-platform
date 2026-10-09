@@ -79,6 +79,8 @@ export interface BodyHello {
   itemInteractions?: string[];
   /** Mod container adapters the server has installed (e.g. ironfurnaces:iron_furnace); informational. */
   adapters?: string[];
+  /** Mods whose machines the server owner opened to generic item-handler access (machine-items); empty or absent = none. */
+  itemHandlerMods?: string[];
   /** ServerBody: built-in gestures and add-on animation sources for the emote action. */
   emotes?: { builtin: string[]; sources: Array<{ id: string; hint: string }> };
   /** ServerBody: looks the hosting person can pick (set-appearance), with the choices the server offers. */
@@ -125,6 +127,7 @@ export interface ActionArguments {
   'build': { blocks: { x: number; y: number; z: number; state: string; rotation?: 0 | 90 | 180 | 270 }[]; replace?: 'none' | 'soft' | 'all'; dryRun?: boolean; timeoutMs?: number };
   'tend-crops': { survey?: boolean; player?: string; center?: Position; radius?: number; crops?: string[]; replant?: boolean; plant?: string; boneMeal?: number; till?: number; timeoutMs?: number };
   'use-bucket': Position & { action: 'pour' | 'scoop' };
+  'machine-items': Position & { mode: 'list' | 'insert' | 'extract'; side?: 'up' | 'down' | 'north' | 'south' | 'east' | 'west'; item?: string; count?: number; slot?: number; expectedBlock?: string };
   'emote': { name: string; source?: string; player?: string; seconds?: number };
   'set-appearance': { source: string; choice: string };
   'breed-animals': { animal: string; survey?: boolean; player?: string; center?: Position; radius?: number; food?: string; pairs?: number; timeoutMs?: number };

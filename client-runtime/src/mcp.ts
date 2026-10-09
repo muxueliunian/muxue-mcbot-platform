@@ -307,6 +307,16 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       return operationResult(await body.act('use-bucket', args));
     });
   }
+  const itemHandlerMods = body.hello.itemHandlerMods ?? [];
+  if (serverObserved && body.hello.capabilities.includes('machine-items') && itemHandlerMods.length) {
+    register('machine-items', `Use a machine block of an enabled mod (${itemHandlerMods.join(', ')}) through its item slots, without opening its screen: list what is in it, insert items from your inventory, or extract items into it. Stand within reach (about 4 blocks) with a clear view; vanilla blocks and machines with their own support (open-container, smelt-item) are refused. Machines often differ per side: side omitted uses the whole machine, or name a face (e.g. up for input, down for output, like a hopper); list shows which sides exist and each slot. insert needs item and count; extract needs item and/or slot, count defaults to all that fits. The result moved is what really moved: PARTIAL or NOT_ACCEPTED are not success; unknown means check the machine and your inventory before trying again.`, {
+      ...blockXyz, mode: z.enum(['list', 'insert', 'extract']), side: z.enum(['up', 'down', 'north', 'south', 'east', 'west']).optional(),
+      item: z.string().min(1).max(256).optional(), count: z.number().int().min(1).max(2304).optional(), slot: z.number().int().min(0).max(255).optional(), say: z.string().min(1).max(256).optional(),
+    }, async ({ say, ...args }) => {
+      idleBody(); if (say) await body.act('send-chat', { message: say });
+      return operationResult(await body.act('machine-items', args));
+    });
+  }
   if (serverObserved && body.hello.capabilities.includes('breed-animals')) {
     register('breed-animals', 'Breed animals of one kind like a player: feed pairs of grown animals that can breed now (not babies, not on the 5-minute cooldown) their breeding food from the inventory (wheat for cows and sheep, seeds for chickens, carrots for pigs...; the animal decides, modded animals too), then wait a few seconds for the babies. Only whole pairs; pairs defaults to 4 (1-8). Tamable animals and horses are not handled. survey:true only counts ready/babies/cooldown and which food you hold. NOT_READY and NO_FOOD say why. Pauses companion mode first. running: the result arrives as a task event.', {
       animal: registryId.describe('Entity type, e.g. minecraft:cow'), survey: z.boolean().optional(), ...area, food: registryId.optional(), pairs: z.number().int().min(1).max(8).optional(),

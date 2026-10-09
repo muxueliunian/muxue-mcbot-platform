@@ -232,6 +232,6 @@ public final class ControlSessionTest {
         SurvivalAlphaTest.run();
         NavigationTest.run();SurfaceRouteTest.run();BuildTaskTest.run();IdleGazeTest.run();LookAroundTest.run();
         DefenseAlphaTest.run();GuardCombatTest.run();
-        ItemInteractionsTest.run();HostingRulesTest.run();ModAdaptersTest.run();WorkstationCoreTest.run();
+        ItemInteractionsTest.run();HostingRulesTest.run();ModAdaptersTest.run();WorkstationCoreTest.run();GenericItemSlotsTest.run();
     }
 }

@@ -125,6 +125,7 @@ final class MachineItems {
         JsonArray steps=new JsonArray();for(var step:moved.steps)steps.add(obj("slot",step.slot(),"count",step.count()));result.add("slots",steps);
         if(moved.invalidSlots>0)result.addProperty("refusedByIsItemValid",moved.invalidSlots);
         if(moved.uncertain>0)result.addProperty("uncertain",moved.uncertain);
+        if(moved.withheld>0)result.addProperty("withheld",moved.withheld);
         if(moved.fault!=null)result.addProperty("detail",moved.fault);
         try { result.add("after",contents(view)); } catch(Protocol.Error unreadable) { /* the receipt still holds what moved */ }
         String verb=insert?"Inserted ":"Extracted ";
@@ -134,7 +135,10 @@ final class MachineItems {
         else {
             String code=insert?"NOT_ACCEPTED":"Inventory is full".equals(moved.fault)?"NO_ROOM":"NOTHING_TO_TAKE";
             result.addProperty("code",code);
-            operation.finish("failed",code+": "+(insert?(moved.invalidSlots>0?"isItemValid refused it in "+moved.invalidSlots+" slot(s) and no other slot took it":"No slot took it"):moved.fault!=null?moved.fault:"No matching item could be extracted"),result);
+            operation.finish("failed",code+": "+(insert?(moved.invalidSlots>0?"isItemValid refused it in "+moved.invalidSlots+" slot(s) and no other slot took it":"No slot took it")
+                :moved.fault!=null?moved.fault
+                :moved.withheld>0?"The machine holds "+moved.withheld+" matching but this side does not give them out; list other sides, or the machine may release only finished items"
+                :"No matching item could be extracted"),result);
         }
     }
 

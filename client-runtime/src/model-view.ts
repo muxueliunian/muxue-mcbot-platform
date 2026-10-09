@@ -61,8 +61,9 @@ export function summarizeOperation(operation: Operation) {
     // Workstation, travel and build receipts: what is missing, what changed, where the table/furnace is, where the body got to.
     for (const key of ['missing', 'materials', 'wrongState', 'scaffoldLeft', 'inventoryChange', 'table', 'placedTable', 'furnace', 'skipped', 'position', 'station', 'subject', 'result', 'options', 'stages', 'levels', 'harvested', 'notPlanted', 'skippedWhy', 'crops', 'center', 'foodHeld', 'buckets'])
       if (result[key] && typeof result[key] === 'object' && JSON.stringify(result[key]).length <= 2000) compact[key] = result[key];
-    // workstation-options answers: stations nearby, ways to make an item, item refs for modify-item.
-    for (const key of ['stations', 'ways', 'subjects'])
+    // workstation-options answers: stations nearby, ways to make an item, item refs for modify-item;
+    // machine-items: the handler's slots and sides, and the slots after a move.
+    for (const key of ['stations', 'ways', 'subjects', 'slots', 'sides', 'after'])
       if (Array.isArray(result[key]) && JSON.stringify(result[key]).length <= 6000) compact[key] = result[key];
     if (result.container) compact.container = summarizeContainer(result.container as Container);
     // Items a carried backpack took: where they went ({storage id: count}), bounded.

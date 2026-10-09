@@ -120,7 +120,8 @@ final class GenericItemSlotsTest {
         check(intoTop.count==3&&top.count(ORE.id())==3&&body.get("taken")==3,"the top face takes ore into its input");
         var intoBottom=GenericItemSlots.insert(bottom,STACKS,ORE,3,-1,new Body(64));
         check(intoBottom.count==0&&intoBottom.invalidSlots==1&&bottom.realInserts==0,"the bottom face refuses ore by isItemValid and is never really called");
-        check(GenericItemSlots.extract(top,STACKS,s->true,3,-1,new Body(64)).count==0,"the top face does not give its input back");
+        var fromTop=GenericItemSlots.extract(top,STACKS,s->true,3,-1,new Body(64));
+        check(fromTop.count==0&&fromTop.withheld==3&&fromTop.fault==null,"the top face does not give its input back, and says it holds 3: "+fromTop.withheld);
         var fromBottom=GenericItemSlots.extract(bottom,STACKS,s->true,64,-1,body);
         check(fromBottom.count==5&&body.get("examplemod:dust")==5&&bottom.count("examplemod:dust")==0,"the bottom face gives out its product");
 

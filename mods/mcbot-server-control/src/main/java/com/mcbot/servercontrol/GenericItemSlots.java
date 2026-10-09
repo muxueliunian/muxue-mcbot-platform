@@ -87,7 +87,8 @@ final class GenericItemSlots {
     record Step(int slot,int count) {}
     /** What really moved; uncertain counts items whose fate is unknown after a faulty real call. */
     static final class Moved {
-        final List<Step> steps=new ArrayList<>();int count,invalidSlots,uncertain;String fault;boolean unknown;
+        /** withheld: matching items the handler holds but would not give out (this side, or not finished yet). */
+        final List<Step> steps=new ArrayList<>();int count,invalidSlots,uncertain,withheld;String fault;boolean unknown;
         Moved add(int slot,int n){if(n>0){steps.add(new Step(slot,n));count+=n;}return this;}
     }
     /** A handler that failed or broke its contract; afterWrite when a real (non-simulated) call was involved. */
@@ -163,7 +164,7 @@ final class GenericItemSlots {
                 if(amount<=0) { if(moved.fault==null)moved.fault="Inventory is full";continue; }
                 S simulated=ask(()->slots.extract(i,amount,true),"simulated extractItem",false);
                 int offered=rest(stacks,simulated,present,amount,"simulated extractItem",false);
-                if(offered<=0) continue;
+                if(offered<=0) { moved.withheld+=stacks.count(present);continue; }
                 S real;
                 try { real=slots.extract(i,offered,false); }
                 catch(RuntimeException | LinkageError broken) { moved.uncertain+=offered;throw new Fault("extractItem threw "+broken.getClass().getSimpleName(),true); }

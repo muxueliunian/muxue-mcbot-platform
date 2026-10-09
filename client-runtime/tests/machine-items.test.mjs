@@ -5,6 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ServerBody } from '../dist/server-body.js';
 import { createMcpServer } from '../dist/mcp.js';
 import { EventJournal } from '../dist/events.js';
+import { summarizeOperation } from '../dist/model-view.js';
 import { mockServerControl, serverCapabilities } from './mock-server-control.mjs';
 
 // 8b：模组机器的通用物品槽适配。工具只在服务端支持且服主开了至少一个 Mod 时出现，参数原样转给服务端。
@@ -41,15 +42,25 @@ test('machine-items forwards its arguments; incomplete insert or extract never r
   const c = await client(t, body);
   await c.callTool({ name: 'machine-items', arguments: { x: 1, y: 64, z: 2, mode: 'list', side: 'up' } });
   await c.callTool({ name: 'machine-items', arguments: { x: 1, y: 64, z: 2, mode: 'insert', item: 'examplemod:ore', count: 8, say: '放矿' } });
-  await c.callTool({ name: 'machine-items', arguments: { x: 1, y: 64, z: 2, mode: 'extract', slot: 2 } });
+  await c.callTool({ name: 'machine-items', arguments: { x: 1, y: 64, z: 2, mode: 'extract', slot: 2, expectedBlock: 'examplemod:mill' } });
   assert.deepEqual(acts().map(act => [act.name, act.args]), [
     ['machine-items', { x: 1, y: 64, z: 2, mode: 'list', side: 'up' }],
     ['send-chat', { message: '放矿' }],
     ['machine-items', { x: 1, y: 64, z: 2, mode: 'insert', item: 'examplemod:ore', count: 8 }],
-    ['machine-items', { x: 1, y: 64, z: 2, mode: 'extract', slot: 2 }],
+    ['machine-items', { x: 1, y: 64, z: 2, mode: 'extract', slot: 2, expectedBlock: 'examplemod:mill' }],
   ]);
   await assert.rejects(body.act('machine-items', { x: 1, y: 64, z: 2, mode: 'insert', item: 'examplemod:ore' }), { code: 'INVALID_ARGUMENT' });
   await assert.rejects(body.act('machine-items', { x: 1, y: 64, z: 2, mode: 'extract' }), { code: 'INVALID_ARGUMENT' });
   await assert.rejects(body.act('machine-items', { x: 1, y: 64, z: 2, mode: 'list', side: 'top' }), { code: 'INVALID_ARGUMENT' });
   assert.equal(acts().length, 4);
+});
+
+test('the model sees the slots, sides and contents after a move, not only the counts', () => {
+  const slots = [{ slot: 0, item: 'examplemod:ore', count: 3, limit: 64 }, { slot: 1, item: null, count: 0, limit: 64 }];
+  const listed = summarizeOperation({ operationId: 'o1', name: 'machine-items', status: 'succeeded', summary: 'read', result: { block: { id: 'examplemod:mill' }, side: null, size: 2, sides: [{ side: null, slots: 2 }, { side: 'up', slots: 1 }], slots } });
+  assert.deepEqual(listed.result.slots, slots);
+  assert.deepEqual(listed.result.sides, [{ side: null, slots: 2 }, { side: 'up', slots: 1 }]);
+  const moved = summarizeOperation({ operationId: 'o2', name: 'machine-items', status: 'failed', summary: 'only 1', result: { moved: 1, code: 'PARTIAL', slots: [{ slot: 0, count: 1 }], after: slots } });
+  assert.equal(moved.result.code, 'PARTIAL');
+  assert.deepEqual(moved.result.after, slots);
 });

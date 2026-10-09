@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const flags = process.argv.slice(2);
 if (flags.includes('--help') || !flags.includes('--allow-fixture')) {
-  console.log('MC_SERVER_DIR=<隔离服绝对路径> node scripts/server-build-smoke.mjs --allow-fixture [--only pavilion,door]');
+  console.log('MC_SERVER_DIR=<隔离服绝对路径> node scripts/server-build-smoke.mjs --allow-fixture [--only pavilion,door] [--house <本机蓝图 JSON> [--house-from <层>]]');
   process.exit(flags.includes('--help') ? 0 : 1);
 }
 const flag = name => { const i = flags.indexOf(name); return i >= 0 ? flags[i + 1] : undefined; };
@@ -179,19 +179,38 @@ try {
     await fixture(`forceload add ${o.x - 10} ${o.z - 10} ${o.x + house.size.x + 10} ${o.z + house.size.z + 10}`);
     await fixture(`fill ${o.x - 6} ${ground} ${o.z - 6} ${o.x + house.size.x + 6} ${ground + 20} ${o.z + house.size.z + 6} air`);
     await fixture(`fill ${o.x - 6} ${ground - 1} ${o.z - 6} ${o.x + house.size.x + 6} ${ground - 1} ${o.z + house.size.z + 6} grass_block`);
+    await command(`kill @e[type=item,x=${o.x - 10},y=${ground - 5},z=${o.z - 10},dx=${house.size.x + 20},dy=40,dz=${house.size.z + 20}]`); // 前几轮掉的东西
     await fixture(`tp Claude ${o.x - 3} ${ground} ${o.z - 3}`);
     const cells = house.blocks.map(([x, y, z, state]) => ({ x: o.x + x, y: o.y + y, z: o.z + z, block: state }));
-    const slices = [[0, 0], [1, 3], [4, 5], [6, 9], [10, 13]];
-    const started = Date.now(); const houseReport = { file: path.basename(houseFile), cells: cells.length, slices: [] };
+    // --house-from <层>：这层以下用指令直接摆好（试上层时省掉盖一楼的时间），Bot 从这层开始盖；核对只算它盖的。
+    const from = Number(flag('--house-from') ?? 0);
+    // 挂着、贴着的（门、灯笼、火把……）等托着它的方块都摆好再摆，门两个半扇都摆，不然一有方块更新就掉成物品。
+    const attached = /door|torch|lantern|ladder|button|lever|sign|banner|carpet|pressure_plate|rail|flower_pot|candle|chain|skull|head|bell|tripwire_hook/;
+    const preset = cells.filter(c => c.y - o.y < from).sort((a, b) => (attached.test(a.block) - attached.test(b.block)) || a.y - b.y);
+    for (const c of preset) {
+      const state = c.block.includes(':') ? c.block : `minecraft:${c.block}`;
+      await fixture(`setblock ${c.x} ${c.y} ${c.z} ${state}`);
+      if (/_door\[/.test(state) && state.includes('half=lower')) await fixture(`setblock ${c.x} ${c.y + 1} ${c.z} ${state.replace('half=lower', 'half=upper')}`);
+    }
+    const slices = [[0, 0], [1, 3], [4, 5], [6, 9], [10, 13]].filter(([, high]) => high >= from).map(([low, high]) => [Math.max(low, from), high]);
+    const started = Date.now(); const houseReport = { file: path.basename(houseFile), cells: cells.filter(c => c.y - o.y >= from).length, from, slices: [] };
     for (const [low, high] of slices) {
       const blocks = cells.filter(c => c.y - o.y >= low && c.y - o.y <= high);
       await fixture('clear Claude');
+      // 连着盖很久会饿：每段开始前补满饱食和血（饿掉血会让 build 按受伤停下）。
+      await fixture('effect give Claude minecraft:saturation 1 20 true'); await fixture('effect give Claude minecraft:instant_health 1 5 true');
       const plan = await tool('build', { blocks, dryRun: true });
       const planned = plan.value.result ?? plan.value;
       for (const m of planned.missing ?? []) await fixture(`give Claude ${m.item} ${m.need - m.have}`);
       await fixture('give Claude minecraft:dirt 64');
       const slice = { layers: `${low}-${high}`, cells: blocks.length, calls: [] };
-      for (let call = 0; call < 4; call++) {
+      for (let call = 0; call < 6; call++) {
+        if (call > 0) {
+          await fixture('effect give Claude minecraft:saturation 1 20 true');
+          // 上一次调用中途少了的料（不该少，记下来）补上，免得这段因为缺料直接停。
+          const again = await tool('build', { blocks, dryRun: true });
+          for (const m of (again.value.result ?? again.value).missing ?? []) { await fixture(`give Claude ${m.item} ${m.need - m.have}`); (slice.toppedUp ??= []).push(m); }
+        }
         const result = await build(`house-${low}-${high}-${call}`, { blocks }, 620000);
         slice.calls.push({ status: result.status, summary: result.summary, ms: result.ms, placed: result.result.placed, scaffoldUsed: result.result.scaffoldUsed, helpersUsed: result.result.helpersUsed, skippedWhy: result.result.skippedWhy, wrongState: result.result.wrongState?.length });
         if (result.status === 'succeeded' || !/TIMEOUT/.test(result.summary ?? '')) break;
@@ -207,13 +226,17 @@ try {
     };
     const wrongByBlock = {};
     for (const c of cells) {
+      if (c.y - o.y < from) continue;
       const state = placedState(c.block);
       if (!(await isBlock(c.x, c.y, c.z, state))) wrongByBlock[c.block.replace(/\[.*$/, '')] = (wrongByBlock[c.block.replace(/\[.*$/, '')] ?? 0) + 1;
     }
     const wrong = Object.values(wrongByBlock).reduce((a, b) => a + b, 0);
-    Object.assign(houseReport, { minutes: Math.round((Date.now() - started) / 6000) / 10, right: cells.length - wrong, wrong, wrongByBlock });
+    // 地面以上还立着的泥土＝没拆掉的垫脚（蓝图里的泥土都在第 0 层）；fill 换成自己会回报格数，世界不变。
+    const dirt = await command(`fill ${o.x - 6} ${ground + 1} ${o.z - 6} ${o.x + house.size.x + 6} ${ground + 19} ${o.z + house.size.z + 6} minecraft:dirt replace minecraft:dirt`);
+    const dirtLeft = Number(dirt.match(/(\d+)/)?.[1] ?? 0);
+    Object.assign(houseReport, { minutes: Math.round((Date.now() - started) / 6000) / 10, right: houseReport.cells - wrong, wrong, wrongByBlock, dirtLeft });
     report.house = houseReport; await save();
-    console.log('house', JSON.stringify({ right: houseReport.right, wrong, minutes: houseReport.minutes, wrongByBlock }));
+    console.log('house', JSON.stringify({ right: houseReport.right, wrong, minutes: houseReport.minutes, dirtLeft, wrongByBlock }));
   }
 } finally {
   report.finished = new Date().toISOString(); await save().catch(() => {});

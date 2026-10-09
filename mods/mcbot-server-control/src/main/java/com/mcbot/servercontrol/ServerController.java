@@ -373,7 +373,10 @@ final class ServerController implements ControlSession.Game {
         if(operation.name.equals("build")) {
             BuildTask task=new BuildTask(operation,player,session);
             if(args.has("dryRun")&&bool(args,"dryRun")){operation.finish("succeeded","Build plan (nothing changed)",task.plan());return;}
-            requireWalkable();task.start();
+            // Not requireWalkable: called again right after a TIMEOUT the body may still be in the air (jumped off a
+            // roof, coming down a scaffold); the task waits for it to land before it walks.
+            NativeNavigation.conditions(player);if(!connected())throw error("BLOCKED","Body is not connected in authorized survival state");
+            task.start();
             if(operation.status.equals("running")){build=task;active=operation;}
             return;
         }

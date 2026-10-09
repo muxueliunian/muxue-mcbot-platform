@@ -231,7 +231,8 @@ final class NativeNavigation {
         if(model==null||model.level()!=body.level()){
             // A long walk steps down one block at a time: whatever it walks down it can walk back up, so it never
             // drops into a hole or onto a ledge it cannot leave (a body jumps up one block, vanilla drops three).
-            model=wide?new Zombie(EntityType.ZOMBIE,body.level()){@Override public int getMaxFallDistance(){return 1;}}:new Zombie(EntityType.ZOMBIE,body.level());
+            int drop=wide?1:maxDrop;
+            model=drop>0?new Zombie(EntityType.ZOMBIE,body.level()){@Override public int getMaxFallDistance(){return drop;}}:new Zombie(EntityType.ZOMBIE,body.level());
             // Routes never go through water (a body already in water swims out first, swim()) or powder snow. Wooden doors are opened by hand on the way (doors()).
             model.setPathfindingMalus(PathType.WATER,-1);model.setPathfindingMalus(PathType.WATER_BORDER,8);
             model.setPathfindingMalus(PathType.DANGER_FIRE,-1);model.setPathfindingMalus(PathType.DAMAGE_FIRE,-1);
@@ -263,8 +264,8 @@ final class NativeNavigation {
         body.stopInput();
         ensureModel();
         model.moveTo(feet.x,feet.y,feet.z,body.getYRot(),0);model.setOnGround(body.onGround());
-        float range=wide?MAX_RANGE:(float)Math.min(MAX_RANGE,feet.distanceTo(destination)+16);
-        visitedLimit=wide?WIDE_VISITED:Math.min(MAX_VISITED,(int)(range*16));
+        float range=wide?MAX_RANGE:(float)Math.min(MAX_RANGE,feet.distanceTo(destination)+(roomy?32:16));
+        visitedLimit=wide?WIDE_VISITED:roomy?Math.min(WIDE_VISITED,(int)(range*96)):Math.min(MAX_VISITED,(int)(range*16));
         finder=new PathFinder(evaluator,visitedLimit);
         evaluator.allowed=allowed;
         BlockPos from=body.blockPosition();int radius=(int)range+8;
@@ -318,6 +319,12 @@ final class NativeNavigation {
     /** A leg of a long walk: search the whole range with a larger node budget, to find the way round a cliff or along a river. */
     NativeNavigation wide(){wide=true;return this;}
     private boolean wide;
+    /** A bigger search for a near goal, keeping the ordinary drops and leaps: in a house the way to a spot two blocks off may go down the stairs and out of the door. */
+    NativeNavigation roomy(){roomy=true;return this;}
+    private boolean roomy;
+    /** Routes may jump down this far (a body stranded up on a roof, as a player jumps off); 0 keeps the vanilla three. */
+    NativeNavigation drops(int blocks){maxDrop=blocks;return this;}
+    private int maxDrop;
     /** Run instead of walk on ordinary legs (chasing or fleeing a mob); never on a gap leap, which is timed for walking speed. */
     NativeNavigation sprint(){sprint=true;return this;}
     private boolean sprint;

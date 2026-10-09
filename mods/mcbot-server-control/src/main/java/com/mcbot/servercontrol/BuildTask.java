@@ -12,6 +12,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
@@ -226,7 +227,16 @@ final class BuildTask {
     void tick() {
         if(!session.mayDrive(operation)){stop();return;}
         if(!operation.status.equals("running"))return;
-        if(now()>=deadline){finish("TIMEOUT");return;}
+        if(now()>=deadline) {
+            // On a scaffold, or up on a roof stepped onto from one, when time runs out: a little longer to come down and dig
+            // it back, so no pillar of dirt is left standing.
+            boolean onColumn=!scaffold.isEmpty()&&(mode==Mode.UP||mode==Mode.RISING||mode==Mode.DESCENDING)||mode==Mode.COLLECT;
+            if(now()>=deadline+60_000||!onColumn&&leftColumns.isEmpty()){finish("TIMEOUT");return;}
+            if(!wrappingUp){wrappingUp=true;note("time is up: "+mode+", on a scaffold of "+scaffold.size()+", "+leftColumns.size()+" left behind");}
+            if(mode==Mode.UP||mode==Mode.RISING){player.stopInput();mode=Mode.DESCENDING;}
+            else if(mode==Mode.TO_COLUMN){stopWalking();column=null;columnFor=null;mode=Mode.GROUND;}
+            if(mode==Mode.GROUND){if(digging!=null)tickDig();else if(cooldown>0)cooldown--;else if(!returnToColumn())finish("TIMEOUT");return;}
+        }
         if(player.getHealth()<health){var source=player.getLastDamageSource();
             // A short fall off a half-built floor, as players take while building: noted, and the walk planned again from where it landed.
             if(source!=null&&source.is(DamageTypeTags.IS_FALL)&&player.getHealth()>=player.getMaxHealth()/2){note(String.format("fell (%.0f damage)",health-player.getHealth()));stopWalking();falls++;}
@@ -234,7 +244,7 @@ final class BuildTask {
         health=player.getHealth();
         if(digging!=null){tickDig();return;}
         if(cooldown>0){cooldown--;return;}
-        switch(mode){case TO_COLUMN->{walkToColumn();return;}case RISING->{rise();return;}case DESCENDING->{descend();return;}case COLLECT->{collect();return;}default->{}}
+        switch(mode){case TO_COLUMN->{walkToColumn();return;}case RISING->{rise();return;}case DESCENDING->{descend();return;}case COLLECT->{collect();return;}case STEPPING->{step();return;}default->{}}
         Vec3 feet=player.position();
         if(mode==Mode.GROUND&&!digs.isEmpty()) {
             digs.removeIf(p->level().getBlockState(p).isAir());
@@ -257,14 +267,16 @@ final class BuildTask {
             if(player.onGround())for(Target t:places){int key=key(t);double d=Vec3.atCenterOf(t.pos()).distanceToSqr(feet);
                 if(key>bestKey||key==bestKey&&d>=bestDistance)continue;Click c=clickFrom(feet,t);if(c!=null){best=t;bestClick=c;bestKey=key;bestDistance=d;}}
             if(best!=null){player.stopInput();place(best,bestClick);cooldown=1;return;}
+            if(stepOff())return;
             if(columnFor instanceof Target ct&&places.contains(ct)){waiting.add(ct);whyWaiting.putIfAbsent(ct,"not placeable even from a scaffold");}
             if(columnFor instanceof BlockPos cp&&digs.contains(cp))failDig(cp,"not reachable even from a scaffold");
             note("down from "+scaffold.size());mode=Mode.DESCENDING;return;
         }
-        if(places.isEmpty()){finish(null);return;}
+        if(goBack){if(!returnToColumn())goBack=false;return;}
+        if(places.isEmpty()){if(!returnToColumn())finish(null);return;}
         // The lowest layer first, attached blocks after the plain ones; a block with nothing to click on yet waits.
         Target first=frontier();
-        if(first==null){finish(null);return;}
+        if(first==null){if(!returnToColumn())finish(null);return;}
         Click click=player.onGround()&&!overlaps(feet)?clickFrom(feet,first):null;
         if(click!=null){stopWalking();player.stopInput();place(first,click);cooldown=1;return;}
         // Keep walking to the block it set out for (two equally near ones would otherwise take turns every step).
@@ -274,7 +286,7 @@ final class BuildTask {
     private static int key(Target t){return (t.late()?1:0)*100_000+t.pos().getY();}
 
     // ---------- scaffold: a column of spare blocks to stand on for what the ground cannot reach ----------
-    private enum Mode { GROUND,TO_COLUMN,RISING,UP,DESCENDING,COLLECT }
+    private enum Mode { GROUND,TO_COLUMN,RISING,UP,DESCENDING,COLLECT,STEPPING }
     static final int MAX_SCAFFOLD=8;
     private Mode mode=Mode.GROUND;
     private BlockPos column;
@@ -282,6 +294,8 @@ final class BuildTask {
     private Item scaffoldItem;
     private Object columnFor;
     private final Map<Object,Integer> columnTries=new HashMap<>();
+    /** Climbs onto each roof spot: kept when stepping off (unlike columnTries), so a spot that leads nowhere is not climbed for ever. */
+    private final Map<BlockPos,Integer> climbTries=new HashMap<>();
     private final List<BlockPos> scaffold=new ArrayList<>();
     private boolean leftGround,risePlaced;
     private long stepDeadline;
@@ -306,9 +320,11 @@ final class BuildTask {
     private boolean planColumn(Target t){return planColumn(t.pos(),f->!overlaps(f)&&clickFrom(f,t)!=null,t);}
     private boolean planColumn(BlockPos near,Predicate<Vec3> reach,Object work) {
         List<BlockPos> bases=new ArrayList<>();
-        for(int dx=-4;dx<=4;dx++)for(int dz=-4;dz<=4;dz++)for(int dy=-6;dy<=0;dy++){BlockPos c=near.offset(dx,dy,dz);if(unreachableSpots.contains(c))continue;Vec3 f=standable(c);if(f!=null&&Math.abs(f.y-c.getY())<1e-6&&emptyCell(c))bases.add(c);}
-        // The lowest base first (the ground, which the body can walk to), then the nearest; the lowest column there.
-        Vec3 from=player.position();bases.sort(Comparator.comparingInt((BlockPos c)->c.getY()).thenComparingDouble(c->Vec3.atBottomCenterOf(c).distanceToSqr(from)));
+        for(int dx=-4;dx<=4;dx++)for(int dz=-4;dz<=4;dz++)for(int dy=-MAX_SCAFFOLD-1;dy<=0;dy++){BlockPos c=near.offset(dx,dy,dz);if(unreachableSpots.contains(c))continue;Vec3 f=standable(c);if(f!=null&&Math.abs(f.y-c.getY())<1e-6&&emptyCell(c))bases.add(c);}
+        // Bases on the floor the body stands on first (up on the first floor, the stairs down may be far or not built
+        // yet), then the lowest (the ground), then the nearest; the lowest column there.
+        Vec3 from=player.position();int level=player.blockPosition().getY();
+        bases.sort(Comparator.comparingInt((BlockPos c)->Math.abs(c.getY()-level)<=1?0:1).thenComparingInt(c->c.getY()).thenComparingDouble(c->Vec3.atBottomCenterOf(c).distanceToSqr(from)));
         Item item=scaffoldItem(1);if(item==null){if(work instanceof Target t)whyWaiting.putIfAbsent(t,"too high to reach and no spare blocks (dirt, planks...) to stand on");return false;}
         int tried=0;
         for(BlockPos c:bases) {
@@ -325,7 +341,7 @@ final class BuildTask {
     }
     private void walkToColumn() {
         Vec3 base=Vec3.atBottomCenterOf(column);
-        if(player.onGround()&&player.blockPosition().equals(column)&&Math.hypot(player.getX()-base.x,player.getZ()-base.z)<0.3){stopWalking();player.stopInput();mode=Mode.RISING;riseTries=0;leftGround=false;risePlaced=false;stepDeadline=now()+3000;return;}
+        if(player.onGround()&&player.blockPosition().equals(column)&&Math.hypot(player.getX()-base.x,player.getZ()-base.z)<0.3){stopWalking();player.stopInput();mode=Mode.RISING;riseTries=0;leftGround=false;risePlaced=false;placedUp=0;stepDeadline=now()+3000;return;}
         walkTo(column,f->BlockPos.containing(f).equals(column)&&Math.hypot(f.x-base.x,f.z-base.z)<0.3);
     }
     /** Jump in place and put a spare block under the feet once they clear the cell, as a player pillars up; level by level. */
@@ -351,6 +367,7 @@ final class BuildTask {
     }
     /** Dig the scaffold back from the top while standing on it; the drops land where the body is. */
     private void descend() {
+        climbing=false;
         scaffold.removeIf(p->!level().getBlockState(p).is(((BlockItem)scaffoldItem).getBlock()));
         if(scaffold.isEmpty()){mode=Mode.COLLECT;collectUntil=now()+8000;return;}
         if(!player.onGround())return;
@@ -364,8 +381,73 @@ final class BuildTask {
      * Off the column with blocks of it still standing: they are dug out later like a helper, and the next column starts
      * from nothing (a stale count made the next one think it was already up, while still on the ground).
      */
+    /** A column stepped off onto a floor or roof, with the block it is made of: dug back from its top once the work up there is done. */
+    private record Left(List<BlockPos> cells,Item item) {}
+    private final List<Left> leftColumns=new ArrayList<>();
+    private BlockPos returning;
+    private boolean wrappingUp,goBack;
+    /** The column being built is for climbing onto a roof or floor, not for reaching a block: step off it even with nothing placed. */
+    private boolean climbing;
+    /** Blocks of columns that could not be come down: dug from below like a helper, reported as left while they stand. */
+    private final Set<BlockPos> columnDigs=new HashSet<>();
+    /** Blocks placed from the column the body is up on now: stepping off one that reached nothing goes nowhere. */
+    private int placedUp;
+    /**
+     * Up on a column with nothing more in reach, beside a floor or roof already built at this height, and work left up
+     * here: step over onto it, as a player climbs onto the eaves and goes on from the roof, instead of coming down.
+     */
+    private boolean stepOff() {
+        if(!player.onGround()||scaffold.isEmpty()||placedUp==0&&!climbing)return false;
+        int y=player.blockPosition().getY();
+        if(places.stream().noneMatch(t->t.pos().getY()>=y-1))return false;
+        for(Direction d:Direction.Plane.HORIZONTAL)for(int up=0;up<=2;up++) {
+            BlockPos next=player.blockPosition().relative(d).above(up);
+            if(scaffold.contains(next.below())||pendingCells.contains(next))continue;
+            Vec3 f=standable(next);
+            if(f==null)continue;
+            double climb=f.y-player.getY();
+            if(climb<-0.6||climb>2.6)continue;
+            if(climb>1.2) {
+                // The eaves a block or two above the top: up one or two more first, then over (a body steps up 1.2 at most).
+                int more=(int)Math.ceil(climb-1.2);
+                if(scaffold.size()+more>MAX_SCAFFOLD||!emptyCell(column.above(scaffold.size()+more))||!emptyCell(column.above(scaffold.size()+more+1)))continue;
+                columnHeight=scaffold.size()+more;mode=Mode.RISING;riseTries=0;leftGround=false;risePlaced=false;stepDeadline=now()+3000;
+                note("up "+more+" more to step onto "+next.toShortString());return true;
+            }
+            leftColumns.add(new Left(new ArrayList<>(scaffold),scaffoldItem));
+            note("stepped off a scaffold of "+scaffold.size()+" onto "+next.toShortString());climbing=false;
+            scaffold.clear();column=null;columnFor=null;unreachableSpots.clear();columnTries.clear();
+            // One step over by hand: the route planner may not find the step from a pillar top onto a slab roof.
+            mode=Mode.STEPPING;stepTo=f;stepUntil=now()+2000;
+            return true;
+        }
+        return false;
+    }
+    private Vec3 stepTo;
+    private long stepUntil;
+    /** Walk straight onto the spot beside the column top, jumping if it is higher; then on as on the ground. */
+    private void step() {
+        Vec3 at=player.position(),d=stepTo.subtract(at);
+        if(player.onGround()&&d.horizontalDistance()<0.3&&Math.abs(d.y)<0.6||now()>stepUntil){player.stopInput();if(now()>stepUntil)note("could not step over");mode=Mode.GROUND;return;}
+        player.jumpInput(player.onGround()&&d.y>0.6);
+        player.moveInput(d.x,d.z,(float)Math.min(1,d.horizontalDistance()/0.4));
+    }
+    /** The work up here is done: walk back onto the top of a column stepped off from and come down it. False when none is left. */
+    private boolean returnToColumn() {
+        leftColumns.removeIf(l->{l.cells().removeIf(p->!level().getBlockState(p).is(((BlockItem)l.item()).getBlock()));return l.cells().isEmpty();});
+        if(leftColumns.isEmpty())return false;
+        Left l=leftColumns.getFirst();BlockPos stand=l.cells().getLast().above();
+        if(player.onGround()&&player.blockPosition().equals(stand)) {
+            stopWalking();player.stopInput();returning=null;leftColumns.removeFirst();
+            scaffold.clear();scaffold.addAll(l.cells());scaffoldItem=l.item();column=l.cells().getFirst();
+            note("back on a scaffold: down from "+scaffold.size());mode=Mode.DESCENDING;return true;
+        }
+        if(!stand.equals(returning))returning=stand; // the same object every tick: walkTo tells a new walk by identity
+        BlockPos to=returning;walkTo(to,f->BlockPos.containing(f).equals(to));
+        return true;
+    }
     private void abandonScaffold() {
-        for(BlockPos p:scaffold)if(level().getBlockState(p).is(((BlockItem)scaffoldItem).getBlock())){helperDigs.add(p);if(!digs.contains(p))digs.add(p);}
+        for(BlockPos p:scaffold)if(level().getBlockState(p).is(((BlockItem)scaffoldItem).getBlock())){helperDigs.add(p);columnDigs.add(p);if(!digs.contains(p))digs.add(p);}
         note("left the scaffold with "+scaffold.size()+" standing");
         scaffold.clear();mode=Mode.GROUND;column=null;columnFor=null;
     }
@@ -385,8 +467,9 @@ final class BuildTask {
     private final ArrayDeque<String> trace=new ArrayDeque<>();
     /** Floor spots the body could not walk to: not offered again. */
     private final Set<BlockPos> unreachableSpots=new HashSet<>();
+    private long spotsForgotten;
     private final long began=now();
-    private void note(String what){trace.addLast(String.format("%.1fs %s",(now()-began)/1000.0,what));while(trace.size()>40)trace.removeFirst();}
+    private void note(String what){trace.addLast(String.format("%.1fs %s",(now()-began)/1000.0,what));while(trace.size()>60)trace.removeFirst();}
     /** Nearest target of the lowest pending layer that is not waiting for a neighbour; a layer that is all waiting is given up. */
     private Target frontier() {
         while(true) {
@@ -543,35 +626,42 @@ final class BuildTask {
 
     // ---------- walking ----------
     private void walkTo(Object work,Predicate<Vec3> goal) {
-        if(work!=walkingTo){stopWalking();walkingTo=work;walkStarted=now();spot=null;stallAt=null;}
+        if(work!=walkingTo){stopWalking();walkingTo=work;walkStarted=now();spot=null;stallAt=null;dropWalk=false;}
         walkGoal=goal;
         if(spot==null||!goal.test(spot)) {
             if(navigation!=null)navigation.stop();navigation=null;
             spot=standSpot(work instanceof Target t?t.pos():work instanceof ItemEntity e?e.blockPosition():(BlockPos)work,goal);
-            if(spot==null&&!(work instanceof ItemEntity)&&mode==Mode.GROUND&&planColumn(work instanceof Target t?t.pos():(BlockPos)work,goal,work)){stopWalking();mode=Mode.TO_COLUMN;note("scaffold "+columnHeight+" at "+column.toShortString()+" for "+label(work));return;}
+            if(spot==null&&!(work instanceof ItemEntity)&&mode==Mode.GROUND&&leftColumns.isEmpty()&&planColumn(work instanceof Target t?t.pos():(BlockPos)work,goal,work)){stopWalking();mode=Mode.TO_COLUMN;note("scaffold "+columnHeight+" at "+column.toShortString()+" for "+label(work));return;}
+            // Every spot left was found unreachable: one of them up on a roof may still be climbed onto.
+            if(spot==null&&work instanceof Target t&&leftColumns.isEmpty()){Vec3 up=standSpot(t.pos(),goal,true);if(up!=null){stopWalking();if(climbTo(up,work))return;}}
             if(spot==null){giveUp(work,"no place to stand within reach");return;}
             note("walk to "+String.format("%.1f %.1f %.1f",spot.x,spot.y,spot.z)+" for "+(work instanceof Target t?t.pos().toShortString():work instanceof BlockPos p?p.toShortString():"?"));
         }
-        if(now()-walkStarted>WALK_MS){unreachableSpots.add(BlockPos.containing(spot));if(navigation!=null)note("walk timed out: "+navigation.diagnostics());giveUp(work,"walk timed out");return;}
+        if(now()-walkStarted>WALK_MS){unreachableSpots.add(spotCell(spot));if(navigation!=null)note("walk timed out: "+navigation.diagnostics());giveUp(work,"walk timed out");return;}
         // Standing on the spot and still unable to do it from here (a hair off the centre it was worked out for): another spot.
         Vec3 at=player.position();
         if(!(work instanceof ItemEntity)&&work!=column&&player.onGround()&&Math.hypot(at.x-spot.x,at.z-spot.z)<NativeNavigation.WAYPOINT&&Math.abs(at.y-spot.y)<0.6&&!goal.test(at)){
-            unreachableSpots.add(BlockPos.containing(spot));note("spot no good on arrival");spot=null;if(navigation!=null)navigation.stop();navigation=null;return;
+            unreachableSpots.add(spotCell(spot));note("spot no good on arrival");spot=null;if(navigation!=null)navigation.stop();navigation=null;return;
         }
         // Planning over and over without moving (a half-built floor the planner keeps routing into): drop the spot early.
         if(stallAt==null||at.distanceToSqr(stallAt)>0.25){stallAt=at;stallSince=now();}
-        else if(now()-stallSince>STALL_MS){unreachableSpots.add(BlockPos.containing(spot));if(navigation!=null)note("not moving: "+navigation.diagnostics());giveUp(work,"not moving");return;}
-        if(navigation==null){NativeNavigation.conditions(player);if(!player.onGround())return;navigation=new NativeNavigation(player,session,operation);}
+        else if(now()-stallSince>STALL_MS){unreachableSpots.add(spotCell(spot));if(navigation!=null)note("not moving: "+navigation.diagnostics());giveUp(work,"not moving");return;}
+        if(navigation==null){NativeNavigation.conditions(player);if(!player.onGround())return;navigation=new NativeNavigation(player,session,operation).roomy().tolerateDamage().drops(dropWalk?safeDrop():0);} // tick() judges damage
         try{navigation.tick(spot,goal);}
         catch(Protocol.Error failure) {
-            if(failure.code.equals("NO_PATH")||failure.code.equals("OUT_OF_REACH")||failure.code.equals("BLOCKED")&&!failure.getMessage().contains("damage")){unreachableSpots.add(BlockPos.containing(spot));giveUp(work,"cannot walk there ("+failure.code+")");return;}
+            // No way by steps: up on a roof or an awning, a player jumps down. Once per walk, no further than leaves half the health.
+            if(failure.code.equals("NO_PATH")&&!dropWalk&&safeDrop()>3&&spot.y<player.getY()-3){dropWalk=true;navigation.stop();navigation=null;note("no way by steps: may jump down up to "+safeDrop());return;}
+            if(failure.code.equals("NO_PATH")||failure.code.equals("OUT_OF_REACH")||failure.code.equals("BLOCKED")&&!failure.getMessage().contains("damage")){unreachableSpots.add(spotCell(spot));giveUp(work,"cannot walk there ("+failure.code+")");return;}
             throw failure;
         }
     }
+    /** The cell the feet are in when standing on a spot (on a slab the spot is half a block into the cell below it). */
+    static BlockPos spotCell(Vec3 spot){return new BlockPos(Mth.floor(spot.x),(int)Math.ceil(spot.y-1e-6),Mth.floor(spot.z));}
     /** The standable spot nearest the body, around `near`, where the goal holds (at most MAX_SPOTS tried). */
-    private Vec3 standSpot(BlockPos near,Predicate<Vec3> goal) {
+    private Vec3 standSpot(BlockPos near,Predicate<Vec3> goal){return standSpot(near,goal,false);}
+    private Vec3 standSpot(BlockPos near,Predicate<Vec3> goal,boolean evenUnreachable) {
         List<Vec3> spots=new ArrayList<>();
-        for(int dx=-SPOT_RADIUS;dx<=SPOT_RADIUS;dx++)for(int dz=-SPOT_RADIUS;dz<=SPOT_RADIUS;dz++)for(int dy=-5;dy<=2;dy++){BlockPos c=near.offset(dx,dy,dz);if(unreachableSpots.contains(c))continue;Vec3 f=standable(c);if(f!=null)spots.add(f);}
+        for(int dx=-SPOT_RADIUS;dx<=SPOT_RADIUS;dx++)for(int dz=-SPOT_RADIUS;dz<=SPOT_RADIUS;dz++)for(int dy=-5;dy<=2;dy++){BlockPos c=near.offset(dx,dy,dz);if(!evenUnreachable&&unreachableSpots.contains(c))continue;Vec3 f=standable(c);if(f!=null)spots.add(f);}
         Vec3 from=player.position();spots.sort(Comparator.comparingDouble(f->f.distanceToSqr(from)));
         int tried=0;
         for(Vec3 f:spots){if(++tried>MAX_SPOTS)break;if(goal.test(f))return f;}
@@ -588,12 +678,21 @@ final class BuildTask {
     }
     private void giveUp(Object work,String why) {
         if(work instanceof ItemEntity e){stopWalking();lostDrops.add(e.getUUID());return;}
-        Predicate<Vec3> reach=walkGoal;
+        // Cannot get back onto a column stepped off from: dig it from wherever it can be reached instead.
+        if(work instanceof BlockPos p&&p.equals(returning)) {
+            stopWalking();note("give up the way back to a scaffold: "+why);returning=null;
+            Left l=leftColumns.removeFirst();for(BlockPos c:l.cells()){helperDigs.add(c);columnDigs.add(c);if(!digs.contains(c))digs.add(c);}
+            return;
+        }
+        // Up on a floor stepped onto from a column, and this cannot be reached from up here: back down that column first
+        // (leaving the floor any other way loses the way back to it), then try again from below.
+        if(!leftColumns.isEmpty()&&mode==Mode.GROUND){stopWalking();note("back to the scaffold first, for "+label(work)+" ("+why+")");goBack=true;return;}
+        Predicate<Vec3> reach=walkGoal;Vec3 tried=spot;
         stopWalking();note("give up "+label(work)+": "+why);
         if(mode==Mode.TO_COLUMN&&work==column) {
             mode=Mode.GROUND;
             // Another base not yet found unreachable (walls built so far may cut the body off from the outside ones).
-            Object f=columnFor;column=null;columnFor=null;
+            Object f=columnFor;column=null;columnFor=null;climbing=false;
             if(columnTries.merge(f,1,Integer::sum)<=6&&(f instanceof Target ct&&places.contains(ct)?planColumn(ct):f instanceof BlockPos cp&&digs.contains(cp)&&planColumn(cp,p->hitFrom(p,cp,null)!=null,cp))){
                 mode=Mode.TO_COLUMN;note("scaffold "+columnHeight+" at "+column.toShortString()+" for "+label(f)+" instead");return;
             }
@@ -606,10 +705,20 @@ final class BuildTask {
         if(reach!=null&&mode==Mode.GROUND&&!why.startsWith("no place to stand")&&planColumn(work instanceof Target t?t.pos():(BlockPos)work,reach,work)){
             mode=Mode.TO_COLUMN;note("scaffold "+columnHeight+" at "+column.toShortString()+" for "+label(work));return;
         }
+        if(tried!=null&&why.startsWith("cannot walk")&&climbTo(tried,work))return;
         if(work instanceof Target t){waiting.add(t);whyWaiting.putIfAbsent(t,why);}
         else failDig((BlockPos)work,why);
     }
+    /** The spot is up on a roof or floor no steps lead to: a column right beside it, as high as a step up onto it. */
+    private boolean climbTo(Vec3 s,Object work) {
+        if(mode!=Mode.GROUND||!(work instanceof Target)||s.y<=player.getY()+1.2||climbTries.merge(BlockPos.containing(s),1,Integer::sum)>2)return false;
+        if(!planColumn(BlockPos.containing(s),top->s.y-top.y>=-0.6&&s.y-top.y<=1.2&&Math.abs(top.x-s.x)+Math.abs(top.z-s.z)<1.1,work))return false;
+        climbing=true;mode=Mode.TO_COLUMN;note("scaffold "+columnHeight+" at "+column.toShortString()+" to climb onto "+BlockPos.containing(s).toShortString());return true;
+    }
     private Predicate<Vec3> walkGoal;
+    private boolean dropWalk;
+    /** How far the body may jump down and land with at least half its health (fall damage is the fall less three). */
+    private int safeDrop(){return Math.min(8,(int)Math.floor(player.getHealth()-player.getMaxHealth()/2)+2);} // one block of margin: a step off an edge falls a little further
     private static String label(Object work){return work instanceof Target t?t.pos().toShortString():work instanceof BlockPos p?p.toShortString():"?";}
     /** A block that could not be dug out: reported, and so is whatever was to go in its place. */
     private void failDig(BlockPos p,String why) {
@@ -644,8 +753,11 @@ final class BuildTask {
         finally{player.setShiftKeyDown(sneaking);}
         player.swing(InteractionHand.MAIN_HAND,true);
         BlockState actual=level().getBlockState(t.pos());int used=had-plainCount(item);
-        places.remove(t);waiting.clear();note((mode==Mode.UP?"up: ":"")+(helpers.contains(t)?"helper ":"placed ")+t.pos().toShortString()+" used "+used+(matches(actual,t)?"":" WRONG "+actual));
-        if(matches(actual,t)){if(!helpers.contains(t))placed++;done(t);dropHelper(t);return;}
+        places.remove(t);waiting.clear();
+        // What was out of reach may not be any more (stairs went in, the body is elsewhere): offered again, now and then.
+        if(now()-spotsForgotten>20_000){unreachableSpots.clear();columnTries.clear();climbTries.clear();spotsForgotten=now();}
+        note((mode==Mode.UP?"up: ":"")+(helpers.contains(t)?"helper ":"placed ")+t.pos().toShortString()+" used "+used+(matches(actual,t)?"":" WRONG "+actual));
+        if(matches(actual,t)){if(!helpers.contains(t))placed++;if(mode==Mode.UP)placedUp++;done(t);dropHelper(t);return;}
         done(t);
         if(actual.is(t.state().getBlock())&&used==1){if(wrong.size()<12)wrong.add(obj("at",pos(t.pos()),"wanted",t.state().toString(),"got",actual.toString()));skippedCount++;skippedWhy.merge("placed with another state",1,Integer::sum);return;}
         if(used>0)throw error("UNKNOWN","The item was used but "+t.pos().toShortString()+" is now "+actual+"; observe before repeating");
@@ -697,7 +809,7 @@ final class BuildTask {
     // ---------- the end ----------
     JsonObject progress() {
         return obj("cells",targets.size(),"already",already,"placed",placed,"dug",dug,"remaining",places.size()+digs.size(),"skippedCount",skippedCount,
-            "skipped",skipped,"skippedWhy",skippedWhy,"wrongState",wrong,"scaffoldUsed",scaffoldUsed,"helpersUsed",helpersUsed,"falls",falls,"trace",new ArrayList<>(trace),"scaffoldLeft",scaffold.stream().map(NativeWorkstation::pos).toList(),"inventoryChange",delta(before,ItemDescriptions.counts(player.getInventory())),
+            "skipped",skipped,"skippedWhy",skippedWhy,"wrongState",wrong,"scaffoldUsed",scaffoldUsed,"helpersUsed",helpersUsed,"falls",falls,"trace",new ArrayList<>(trace),"scaffoldLeft",java.util.stream.Stream.of(scaffold.stream(),leftColumns.stream().flatMap(l->l.cells().stream()),columnDigs.stream().filter(p->!level().getBlockState(p).isAir())).flatMap(s->s).distinct().map(NativeWorkstation::pos).toList(),"inventoryChange",delta(before,ItemDescriptions.counts(player.getInventory())),
             "position",obj("x",player.getX(),"y",player.getY(),"z",player.getZ()));
     }
     private void finish(String code) {

@@ -13,6 +13,7 @@ import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.world.level.block.entity.BrewingStandBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
@@ -180,6 +181,12 @@ final class VanillaWorkstations {
         @Override public int burnTicks(BlockState state,ItemStack fuel){return fuel.is(Items.BLAZE_POWDER)?20:0;}
         @Override public int fuelLeft(AbstractContainerMenu menu){return ((BrewingStandMenu)menu).getFuel();}
         @Override public boolean working(AbstractContainerMenu menu){return ((BrewingStandMenu)menu).getBrewingTicks()>0;}
+        /** Bottles 0-2, reagent 3, blaze powder 4; brew time counts down from 400 (1.21.1 saved key BrewTime). */
+        @Override public StationProgress progress(Level level,BlockPos pos,BlockState state) {
+            if(!block(state)||!(level.getBlockEntity(pos) instanceof BrewingStandBlockEntity stand))return null;
+            int brewing=stand.saveWithoutMetadata(level.registryAccess()).getShort("BrewTime");
+            return new StationProgress(List.of(stand.getItem(3)),List.of(stand.getItem(0),stand.getItem(1),stand.getItem(2)),stand.getItem(4),brewing>0,stand.getItem(3).isEmpty()?0:brewing>0?brewing:-1,-1);
+        }
     };
 
     static final WorkstationAdapter ENCHANTING_TABLE=new Fixed("minecraft:enchanting_table",Template.MODIFIER,s->s.is(Blocks.ENCHANTING_TABLE),EnchantmentMenu.class,MenuType.ENCHANTMENT,2,

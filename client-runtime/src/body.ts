@@ -122,7 +122,7 @@ export interface ActionArguments {
   'smelt-item': { input?: string; count?: number; fuel?: string; wait?: boolean; furnace?: Position; timeoutMs?: number };
   'travel-to': { x: number; y?: number; z: number; tolerance?: number; timeoutMs?: number };
   'workstation-options': { item?: string; potion?: string; count?: number; subjects?: string };
-  'produce-item': { item: string; count?: number; potion?: string; station?: Position; timeoutMs?: number };
+  'produce-item': { item: string; count?: number; potion?: string; wait?: boolean; station?: Position; timeoutMs?: number };
   'modify-item': { subject: string; action: ModifyAction; preview?: boolean; maxLevels?: number; expect?: string; station?: Position; timeoutMs?: number };
   'build': { blocks: { x: number; y: number; z: number; state: string; rotation?: 0 | 90 | 180 | 270 }[]; replace?: 'none' | 'soft' | 'all'; dryRun?: boolean; timeoutMs?: number };
   'tend-crops': { survey?: boolean; player?: string; center?: Position; radius?: number; crops?: string[]; replant?: boolean; plant?: string; boneMeal?: number; till?: number; timeoutMs?: number };

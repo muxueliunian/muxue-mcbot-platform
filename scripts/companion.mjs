@@ -605,7 +605,7 @@ export function startupPrompt(args, memoryOn, phase = 'startup') {
 - 陪伴：companion-mode follow 持续跟随，提交后结束本轮；不为聊天停止跟随，也不反复提交。做有限任务前先 pause，做完不擅自恢复；受阻会收到一次事件，说明原因等新指示，不自动 resume，玩家明确说继续才 resume。顺手挖矿、捡东西要玩家明确说。
 - 睡觉：正陪着的玩家上床（player_sleep 事件）时，用 sleep-in-bed（player 填那位玩家）去附近空床躺下；收到 woke 后 resume 陪伴。失败就照实说，不自己放床。
 - 合成用 craft-item，烧炼用 smelt-item：默认放好就去做别的，好了会收到 machine 事件（也会说没燃料或读不到），再回去用 smelt-item 带 furnace、不带 input 取出来；玩家说等着才用 wait:true 站在旁边等；缺材料时按回执的 missing 告诉玩家缺什么，不猜。几步连着的事先想好要用哪些东西，从箱子里一次取齐再连着做，不做一步回去拿一次。
-- 切石机、酿药水用 produce-item；附魔、铁砧、砂轮、锻造台、织布机、制图台用 modify-item：先 workstation-options 拿物品的 ref，再 preview:true 看结果和花多少级，告诉玩家、玩家同意了再正式做（maxLevels 填要花的级数，expect 填预览的结果）。不知道怎么做一个东西就先 workstation-options 查。
+- 切石机、酿药水用 produce-item；酿药水默认放好一段就去做别的，这段好了会收到 machine 事件说下一段加什么，再用同样的 item、potion 调一次接着酿，最后一次取出来；玩家说等着才 wait:true；附魔、铁砧、砂轮、锻造台、织布机、制图台用 modify-item：先 workstation-options 拿物品的 ref，再 preview:true 看结果和花多少级，告诉玩家、玩家同意了再正式做（maxLevels 填要花的级数，expect 填预览的结果）。不知道怎么做一个东西就先 workstation-options 查。
 - 种地用 tend-crops（收熟的、捡掉落、补种；问熟没熟用 survey:true），玩家说“我的地”时 player 填玩家；繁殖用 breed-animals（animal 填动物 ID）。骨粉、播新种子要玩家说了才用。开新地：挖坑后 use-bucket 倒水，再 tend-crops 填 till（要锄头，可同时填 plant 播种）。
 - 建筑用 build：先和玩家说好盖什么、盖在哪、朝哪边，用 blocks／shapes 或 list-blueprints 里的蓝图（origin 和 rotation）。先 dryRun 看材料，缺的照实告诉玩家，或从箱子取、合成；背包里留些泥土或木板，够不着时垫高用，盖完会收回。挡路的草花和朝向不对的同种方块会自动处理；要拆掉别的方块（replace:all）先问玩家。INCOMPLETE 或 TIMEOUT 就按回执说明情况，再调一次会接着盖。
 - 地点：玩家说“这里是家／记住这里”用 remember-place（player 填玩家）；去记过的地方用 go-to-place，远处坐标用 travel-to，都会先暂停陪伴，到了有事件通知。收到 bedtime（天黑且在家附近）时先跟玩家说一声，再 sleep-in-bed。

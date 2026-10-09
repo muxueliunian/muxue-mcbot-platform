@@ -107,7 +107,7 @@ try {
   report.runs.brewMissing = brewMissing.value;
   check('什么都没有时酿迅捷：MISSING_MATERIALS，列出水瓶、地狱疣、糖', codeOf(brewMissing) === 'MISSING_MATERIALS' && ['nether_wart', 'sugar', 'water'].every(w => JSON.stringify(brewMissing.value.result?.missing ?? []).includes(w)), brewMissing.value);
   await give('potion[potion_contents={potion:"minecraft:water"}]', 3); await give('nether_wart', 1); await give('sugar', 1); await give('blaze_powder', 1);
-  const brew = await settle(await tool('produce-item', { item: 'minecraft:potion', potion: 'minecraft:swiftness', count: 3 }), 120000);
+  const brew = await settle(await tool('produce-item', { item: 'minecraft:potion', potion: 'minecraft:swiftness', count: 3, wait: true }), 120000);
   report.runs.brew = brew.value;
   inv = await held();
   check('酿造：3 瓶水两段酿成 3 瓶迅捷药水，自动放了烈焰粉', brew.value.status === 'succeeded' && brew.value.result?.made === 3 && inv['minecraft:potion[potion=minecraft:swiftness]'] === 3 && !inv['minecraft:nether_wart'] && !inv['minecraft:sugar'] && brew.value.result?.fuelAdded === 1, { op: brew.value, inv });

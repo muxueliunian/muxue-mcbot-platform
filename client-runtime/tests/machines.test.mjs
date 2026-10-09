@@ -97,6 +97,48 @@ test('waiting with wait:true, failed loads and other tools are not tracked; a co
   assert.equal(t.book.list()[0].quiet, false);
 });
 
+test('no processing time is not zero: a machine that cannot be read is never called done by the clock', async () => {
+  const unread = setup({ position: FURNACE, state: 'loaded', id: 'minecraft:furnace', supported: false });
+  await unread.watch.tick('minecraft:overworld'); unread.events.recordOperation(loaded({ readyInSeconds: 0 }));
+  unread.advance(2000); await unread.watch.tick('minecraft:overworld');
+  assert.equal(unread.machine().length, 1);
+  assert.match(unread.machine()[0].text, /不知道要多久/);
+  assert.doesNotMatch(unread.machine()[0].text, /应该好了/);
+
+  let left = 2;
+  const readable = setup(() => ({ ...done, inputs: left ? [{ item: 'minecraft:raw_iron', count: left }] : [], working: left > 0, results: [{ item: 'minecraft:iron_ingot', count: 8 - left }] }));
+  await readable.watch.tick('minecraft:overworld'); readable.events.recordOperation(loaded({ readyInSeconds: undefined }));
+  readable.advance(2000); await readable.watch.tick('minecraft:overworld');
+  assert.equal(readable.machine().length, 0, 'readable and still working: no guess, keep reading');
+  assert.equal(readable.watch.waiting()[0].readyInSeconds, 30, 'no ticksLeft: read again in 30 s');
+  left = 0; readable.advance(30_000); await readable.watch.tick('minecraft:overworld');
+  assert.match(readable.machine()[0].text, /烧好了/);
+});
+
+test('a brewing stage left in the stand wakes the model with what goes in next, then the last one says take them out', async () => {
+  const STAND = { x: 4, y: 64, z: 4 };
+  let reagent = [{ item: 'minecraft:sugar', count: 1 }];
+  const t = setup(() => ({ position: STAND, state: 'loaded', id: 'minecraft:brewing_stand', supported: true, inputs: reagent, results: [{ item: 'minecraft:potion', count: 1 }, { item: 'minecraft:potion', count: 1 }],
+    fuel: { item: 'minecraft:blaze_powder', count: 1 }, working: reagent.length > 0, ticksLeft: reagent.length ? 100 : 0, stalled: false }));
+  const stage = (over = {}) => ({ operationId: `brew-${Math.random()}`, sessionId: 's', name: 'produce-item', status: 'succeeded', summary: 'Stage brewing',
+    result: { item: 'minecraft:potion', potion: 'minecraft:swiftness', station: STAND, stage: 1, of: 2, bottles: 2, brewing: true, readyInSeconds: 20, nextIngredient: 'minecraft:sugar', ...over } });
+  await t.watch.tick('minecraft:overworld');
+  t.events.recordOperation(stage());
+  assert.equal(t.book.list()[0].kind, 'brewing');
+  t.advance(22_000); await t.watch.tick('minecraft:overworld');
+  assert.equal(t.machine().length, 0, 'the stand says 5 s more: wait');
+  reagent = []; t.advance(7_000); await t.watch.tick('minecraft:overworld');
+  assert.match(t.machine()[0].text, /第 1\/2 段酿好了.*produce-item（item=minecraft:potion，potion=minecraft:swiftness.*加 sugar/);
+  t.events.recordOperation({ ...stage({ stage: 2, nextIngredient: undefined }), operationId: 'brew-2' });
+  t.advance(22_000); await t.watch.tick('minecraft:overworld');
+  assert.match(t.machine()[1].text, /酿好了，2 瓶 swiftness.*把药水取出来/);
+  t.events.recordOperation({ operationId: 'brewed', sessionId: 's', name: 'produce-item', status: 'succeeded', summary: 'Brewed', result: { station: STAND, made: 2 } });
+  assert.equal(t.book.list().length, 0, 'taken out: forgotten');
+  t.events.recordOperation(stage());
+  t.events.recordOperation({ operationId: 'early', sessionId: 's', name: 'produce-item', status: 'failed', summary: 'STILL_BREWING', result: { station: STAND, code: 'STILL_BREWING' } });
+  assert.equal(t.book.list().length, 1, 'coming too early keeps following it');
+});
+
 test('the list survives a restart of the runtime (per world file)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-machines-'));
   try {

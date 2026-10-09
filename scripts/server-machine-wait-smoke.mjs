@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 8b “放好就走、到时回来取”的隔离服实测：熔炉放料不等，运行端记账；到时间读炉子（machine-status，不走过去），
-// 好了发 machine 事件；燃料不够时报“停了”；回去不带 input 取出后销账。平坦世界，不启停服务器、不调用模型、不计算哈希。
+// 好了发 machine 事件；燃料不够时报“停了”；回去不带 input 取出后销账。酿造台每段放好就走，好了叫醒，回来接着酿，最后取出。平坦世界，不启停服务器、不调用模型、不计算哈希。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -11,7 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const flags = process.argv.slice(2);
 if (flags.includes('--help') || !flags.includes('--allow-fixture')) {
   console.log('MC_SERVER_DIR=<隔离服绝对路径> node scripts/server-machine-wait-smoke.mjs --allow-fixture');
-  console.log('固定25568/25578；夹具区 x6400 z6400 y200 以上；约 2 分钟。');
+  console.log('固定25568/25578；夹具区 x6400 z6400 y200 以上；约 3 分钟。');
   process.exit(flags.includes('--help') ? 0 : 1);
 }
 assert(process.env.MC_SERVER_DIR && path.isAbsolute(process.env.MC_SERVER_DIR), '必须明确设置绝对路径MC_SERVER_DIR');
@@ -71,7 +71,7 @@ async function machineEvents(seconds) {
   return found;
 }
 const at = ([x, y, z]) => `${x} ${y} ${z}`, xyz = ([x, y, z]) => ({ x, y, z });
-const FURNACE = [6402, 201, 6400], SHORT = [6398, 201, 6400];
+const FURNACE = [6402, 201, 6400], SHORT = [6398, 201, 6400], STAND = [6400, 201, 6403];
 let forced = [];
 try {
   const h = await hello();
@@ -132,11 +132,38 @@ try {
   report.facts.after = after;
   check('取完后这台不在等着的列表里，停了的那台还在（已告知）', !after.some(m => m.position.x === FURNACE[0]) && after.some(m => m.position.x === SHORT[0] && m.told), after);
   check('取完没有多余的 machine 事件', (await machineEvents(1)).length === 0);
+
+  // 5. 酿造台：2 瓶水 → 粗制（地狱疣）→ 迅捷（糖），每段放好就走，好了叫醒，回来接着酿，最后取出
+  await fixture(`setblock ${at(STAND)} minecraft:brewing_stand`);
+  await fixture('give Claude minecraft:potion[potion_contents={potion:"minecraft:water"}] 2');
+  await fixture('give Claude minecraft:nether_wart 1'); await fixture('give Claude minecraft:sugar 1'); await fixture('give Claude minecraft:blaze_powder 1');
+  const brewArgs = { item: 'minecraft:potion', potion: 'minecraft:swiftness', count: 2 };
+  const first = await settle(await tool('produce-item', brewArgs));
+  report.facts.brewFirst = first.value;
+  check('酿药第 1 段：放好瓶子、地狱疣和烈焰粉就走，回执说下一段加糖、约 20 秒', first.value.status === 'succeeded' && first.value.result?.brewing === true && first.value.result?.stage === 1 && first.value.result?.of === 2 &&
+    first.value.result?.nextIngredient === 'minecraft:sugar' && first.value.result?.readyInSeconds > 15 && count(await inventory(), 'minecraft:potion') === 0, first.value);
+  const tooEarly = await settle(await tool('produce-item', brewArgs));
+  report.facts.brewEarly = tooEarly.value;
+  check('来早了：STILL_BREWING，瓶子还在台上', (tooEarly.value.result?.code ?? tooEarly.value.code) === 'STILL_BREWING' && count(await inventory(), 'minecraft:potion') === 0, tooEarly.value);
+  const stage1 = await machineEvents(40);
+  report.facts.brewEvent1 = stage1;
+  check('第 1 段好了叫醒：说加糖、怎么接着酿', /第 1\/2 段酿好了.*potion=minecraft:swiftness.*加 sugar/.test(stage1[0]?.text ?? ''), stage1);
+  const second = await settle(await tool('produce-item', brewArgs));
+  report.facts.brewSecond = second.value;
+  check('回来接着酿第 2 段（最后一段），糖放进去了', second.value.status === 'succeeded' && second.value.result?.brewing === true && second.value.result?.of === 1 && !second.value.result?.nextIngredient && count(await inventory(), 'minecraft:sugar') === 0, second.value);
+  const stage2 = await machineEvents(40);
+  report.facts.brewEvent2 = stage2;
+  check('全部酿好叫醒：说把药水取出来', /酿好了，2 瓶 swiftness.*取出来/.test(stage2[0]?.text ?? ''), stage2);
+  const taken = await settle(await tool('produce-item', brewArgs));
+  report.facts.brewTaken = taken.value;
+  check('最后再调一次：取出 2 瓶迅捷药水', taken.value.status === 'succeeded' && taken.value.result?.made === 2 && count(await inventory(), 'minecraft:potion') === 2, taken.value);
+  await wait(4000);
+  check('取出后酿造台不在等着的列表里', !(await machines()).some(m => m.position.x === STAND[0] && m.position.z === STAND[2]));
   report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.error = redact(error.stack ?? error.message); process.exitCode = 1; console.error(redact(error.message));
 } finally {
-  for (const pos of [FURNACE, SHORT]) { try { await command(`setblock ${at(pos)} minecraft:air`); report.cleanup.push({ cleared: pos }); } catch (error) { report.cleanup.push({ clearFailed: pos, error: redact(error.message) }); } }
+  for (const pos of [FURNACE, SHORT, STAND]) { try { await command(`setblock ${at(pos)} minecraft:air`); report.cleanup.push({ cleared: pos }); } catch (error) { report.cleanup.push({ clearFailed: pos, error: redact(error.message) }); } }
   try { await command('kill @e[type=item,x=6400,y=201,z=6400,distance=..16]'); } catch {}
   for (const range of forced) { try { await command(`forceload remove ${range}`); report.cleanup.push({ forceloadRemoved: range }); } catch (error) { report.cleanup.push({ forceloadRemoveFailed: range, error: redact(error.message) }); } }
   try { await client?.close(); } catch {}

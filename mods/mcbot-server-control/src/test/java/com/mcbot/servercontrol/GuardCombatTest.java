@@ -30,7 +30,15 @@ final class GuardCombatTest {
         public float attack(GuardCombat.Foe foe){attacks++;if(duringAttack!=null)duringAttack.run();return 6;}
         public boolean hasBow(){return bow;}
         public boolean armBow(){return bow;}
-        public boolean clearShot(GuardCombat.Foe foe){return clear;}
+        /** A spot the view finds for a shot (null: none), where an arrow is clear from, the candidates last offered, and how often it was asked. */
+        Vec3 spotResult,clearFrom;List<Vec3> offered;int spotSearches,walks;boolean noRoute;
+        public boolean clearShot(GuardCombat.Foe foe){return clear||clearFrom!=null&&feet.distanceTo(clearFrom)<=1.2;}
+        public Vec3 shootingSpot(GuardCombat.Foe foe,List<Vec3> candidates){spotSearches++;offered=candidates;return spotResult;}
+        public boolean reposition(Vec3 spot,Vec3 companion,double limit){
+            if(noRoute)throw error("NO_PATH","no way");
+            walks++;Vec3 step=spot.subtract(feet);feet=step.length()<=1?spot:feet.add(step.normalize());
+            return feet.distanceTo(spot)<=1.2;
+        }
         public int drawing(){return drawn;}
         public void draw(GuardCombat.Foe foe){if(drawn<0){drawn=0;draws++;}}
         public void release(GuardCombat.Foe foe){releases++;drawn=-1;}
@@ -49,6 +57,7 @@ final class GuardCombatTest {
     static void run() {
         interruptedExecution();
         options();geometry();melee();preference();bow();retreat();creeper();noPath();friendlyFire();arming();unarmed();
+        blastShield();outrun();reposition();spotCandidates();
         System.out.println("GuardCombatTest: "+checks+" checks passed");
     }
     /** No melee weapon: hold a weapon, keep a bare or armed hand, take an empty hotbar slot, else stow what is held into the main inventory; full everywhere gives up. */
@@ -173,6 +182,114 @@ final class GuardCombatTest {
         FakeView archer=new FakeView();archer.bow=true;GuardCombat shoot=guard(archer);
         archer.foes.add(foe("creeper","minecraft:creeper",6,5,false,false,true,false));shoot.tick(COMPANION);
         check(archer.draws==1&&archer.approaches==0,"a creeper is shot from range when there is a bow");
+    }
+    static GuardCombat.Foe creeperFoe(String id,double distance,boolean lit,int fuse,double blast) {
+        return new GuardCombat.Foe(id,id,"minecraft:creeper",new Vec3(distance,64,0),distance,distance+2,false,false,false,true,lit,false,true,fuse,blast);
+    }
+    /** A lit creeper the body cannot run clear of: stand, face it, shield up; otherwise run or do nothing special. */
+    private static void blastShield() {
+        // Fuse of 10 ticks, blast out to 6 blocks, creeper 3 away: two blocks of running cannot get out.
+        FakeView view=new FakeView();view.shield=true;GuardCombat guard=guard(view);
+        view.foes.add(creeperFoe("c",3,true,10,6));
+        check(guard.tick(COMPANION)&&guard.state().equals("shielding"),"cannot outrun a lit creeper: shield held");
+        check(view.shieldUp&&view.retreats==0&&view.approaches==0&&view.attacks==0,"and the body stays put, no swing");
+        check(guard.json().get("shields").getAsInt()==1,"one hold counted");
+        view.tick();guard.tick(COMPANION);
+        check(guard.json().get("shields").getAsInt()==1&&view.shieldUp,"holding on the next tick is still one hold");
+        view.foes.clear();view.tick();
+        check(!guard.tick(COMPANION)&&!view.shieldUp&&guard.state().equals("idle"),"creeper gone (exploded): shield lowered");
+        // Plenty of fuse: the same creeper is run from, without the shield (a body using an item does not sprint).
+        FakeView far=new FakeView();far.shield=true;GuardCombat run=guard(far);
+        far.foes.add(creeperFoe("c",3,true,30,6));
+        check(run.tick(COMPANION)&&run.state().equals("evading")&&far.retreats==1&&!far.shieldUp,"can outrun it: retreat as before, no shield");
+        // Not lit: no shield and no evading; in reach it is fought like anything else.
+        FakeView calm=new FakeView();calm.shield=true;GuardCombat idle=guard(calm);
+        calm.foes.add(creeperFoe("c",3,false,30,6));
+        idle.tick(COMPANION);
+        check(!calm.shieldUp&&calm.raised==0&&calm.retreats==0&&idle.state().equals("fighting"),"an unlit creeper is no reason to shield");
+        // A bow being drawn is put down first.
+        FakeView archer=new FakeView();archer.shield=true;archer.bow=true;GuardCombat shoot=guard(archer);
+        archer.foes.add(creeperFoe("c",12,false,30,6));shoot.tick(COMPANION);
+        check(archer.drawn>=0,"the creeper far off is being shot at");
+        archer.tick();archer.foes.set(0,creeperFoe("c",4,true,5,6));shoot.tick(COMPANION);
+        check(archer.drawn<0&&archer.shieldUp&&shoot.state().equals("shielding")&&"SHIELD".equals(shoot.json().get("lastDrop").getAsString()),"drawn bow lowered before the shield goes up");
+        // No shield to hold: run as best it can, and say why.
+        FakeView bare=new FakeView();GuardCombat nothing=guard(bare);
+        bare.foes.add(creeperFoe("c",3,true,10,6));
+        check(nothing.tick(COMPANION)&&nothing.state().equals("evading")&&bare.retreats==1&&"NO_SHIELD".equals(nothing.json().get("lastShield").getAsString()),"no shield on hand: still backs off, the reason is reported");
+        FakeView off=new FakeView();off.shield=true;GuardCombat declined=new GuardCombat(off,GuardCombat.Options.parse(JsonParser.parseString("{\"shield\":false}")));
+        off.foes.add(creeperFoe("c",3,true,10,6));declined.tick(COMPANION);
+        check(!off.shieldUp&&off.retreats==1&&"OFF".equals(declined.json().get("lastShield").getAsString()),"shield:false is respected");
+        // The blast reaches farther than the old 5 blocks: a lit creeper 5.5 away is already a reason to move.
+        FakeView wide=new FakeView();GuardCombat reach=guard(wide);
+        wide.foes.add(creeperFoe("c",5.5,true,30,6));
+        check(reach.tick(COMPANION)&&reach.state().equals("evading"),"inside the blast radius, not only inside 5 blocks");
+    }
+    private static void outrun() {
+        Vec3 feet=new Vec3(0,64,0),creeper=new Vec3(3,64,0),player=new Vec3(-2,64,0);
+        check(GuardCombat.canOutrun(feet,creeper,player,12,6,-1),"an unknown fuse counts as: run, as before");
+        check(!GuardCombat.canOutrun(feet,creeper,player,12,6,10)&&GuardCombat.canOutrun(feet,creeper,player,12,6,30),"ten ticks are too few, thirty enough");
+        check(GuardCombat.canOutrun(feet,new Vec3(20,64,0),player,12,6,1),"already outside the blast");
+        // The player's leash stops the run: body 10 out, creeper between it and the player's side.
+        Vec3 edge=new Vec3(10,64,0),near=new Vec3(4,64,0),origin=new Vec3(0,64,0);
+        check(GuardCombat.canOutrun(edge,near,origin,30,8,100)&&!GuardCombat.canOutrun(edge,near,origin,12,8,100),"a short leash leaves no room to run even with plenty of fuse");
+        check(!GuardCombat.canOutrun(feet,creeper,player,12,12,25)&&GuardCombat.canOutrun(feet,creeper,player,12,6,25),"a charged creeper's blast is twice as far");
+    }
+    /** The body shoots from a better spot when the arrow cannot reach from where it stands. */
+    private static void reposition() {
+        FakeView view=new FakeView();view.bow=true;GuardCombat guard=guard(view);
+        view.foes.add(foe("skeleton","minecraft:skeleton",12,10,false,true,false,false));
+        view.clear=false;view.spotResult=new Vec3(1,64,2);view.clearFrom=view.spotResult;
+        check(guard.tick(COMPANION)&&guard.state().equals("repositioning"),"arrow blocked and a spot found: walk there");
+        check(view.spotSearches==1&&view.walks==1&&view.drawn<0&&view.draws==0,"one search, one step, no draw while walking");
+        check(view.offered!=null&&view.offered.stream().allMatch(v->v.distanceTo(COMPANION)<=GuardCombat.spotLimit(guard.options)),"only spots inside the protection range were offered");
+        check("WALKING".equals(guard.json().get("lastReposition").getAsString())&&guard.json().get("repositions").getAsInt()==1,"the walk is readable in the state");
+        for(int i=0;i<6&&view.draws==0;i++){view.tick();guard.tick(COMPANION);}
+        check(view.feet.distanceTo(view.spotResult)<=1.2&&view.draws==1&&guard.state().equals("shooting"),"at the spot the bow is drawn");
+        check(view.spotSearches==1,"no second search once the shot is clear");
+        // Nothing reachable: stay, do not draw into the wall, say why; search again only after the cooldown.
+        FakeView stuck=new FakeView();stuck.bow=true;GuardCombat still=guard(stuck);
+        stuck.foes.add(foe("skeleton","minecraft:skeleton",12,10,false,true,false,false));stuck.clear=false;
+        check(still.tick(COMPANION)&&still.state().equals("aiming")&&stuck.walks==0,"no spot: hold position");
+        check("NO_SPOT".equals(still.json().get("lastReposition").getAsString()),"and the reason can be read: "+still.json());
+        for(int i=0;i<5;i++){stuck.tick();still.tick(COMPANION);}
+        check(stuck.spotSearches==1,"searching is rationed, not every tick");
+        for(int i=0;i<20;i++){stuck.tick();still.tick(COMPANION);}
+        check(stuck.spotSearches==2&&stuck.walks==0,"after the cooldown it looks again");
+        // A spot with no way to walk: the foe is marked, the spot is not offered again, no endless trying.
+        FakeView walled=new FakeView();walled.bow=true;GuardCombat blocked=guard(walled);
+        walled.foes.add(foe("skeleton","minecraft:skeleton",12,10,false,true,false,false));walled.clear=false;
+        walled.spotResult=new Vec3(1,64,0);walled.noRoute=true;
+        check(blocked.tick(COMPANION)&&"NO_PATH".equals(blocked.json().get("lastReposition").getAsString()),"no path to the spot: given up, reason reported");
+        walled.noRoute=false;for(int i=0;i<25;i++){walled.tick();blocked.tick(COMPANION);}
+        check(walled.offered.stream().noneMatch(v->Math.hypot(v.x-1,v.z)<1.0),"a spot that had no way is not offered again");
+        // Melee takes over: a foe that closes in stops the walk.
+        FakeView close=new FakeView();close.bow=true;GuardCombat fight=guard(close);
+        close.foes.add(foe("skeleton","minecraft:skeleton",12,10,false,true,false,false));close.clear=false;close.spotResult=new Vec3(0,64,3);
+        fight.tick(COMPANION);
+        close.foes.set(0,foe("skeleton","minecraft:skeleton",2,3,false,true,false,false));close.tick();fight.tick(COMPANION);
+        check(fight.state().equals("fighting")&&close.attacks==1,"a foe in reach is fought, the walk dropped");
+    }
+    /** Candidate spots: rings around the feet, nearest first, inside the protection range, never close enough to switch to melee. */
+    private static void spotCandidates() {
+        GuardCombat.Options defaults=GuardCombat.Options.parse(JsonParser.parseString("true"));
+        check(Math.abs(GuardCombat.spotLimit(defaults)-(12-GuardCombat.SPOT_EDGE))<1e-9,"default leash 12: spots stay 1.5 inside it");
+        GuardCombat.Options wide=GuardCombat.Options.parse(JsonParser.parseString("{\"radius\":12}"));
+        check(GuardCombat.spotLimit(wide)<=GuardDuty.ENGAGE_RANGE-GuardCombat.SPOT_EDGE,"a leash of 16 is still held inside the range the duty takes the body in (ENGAGE_RANGE, body to player)");
+        Vec3 feet=new Vec3(0,64,0),foe=new Vec3(15,64,0),player=new Vec3(-2,64,0);
+        List<Vec3> all=GuardCombat.repositionCandidates(feet,foe,player,10.5,List.of());
+        check(all.size()==32,"four rings of eight directions when nothing is excluded");
+        for(int i=1;i<all.size();i++)check(feet.distanceTo(all.get(i-1))<=feet.distanceTo(all.get(i))+1e-9,"nearest first");
+        Vec3 rim=new Vec3(10,64,0);
+        List<Vec3> edge=GuardCombat.repositionCandidates(rim,new Vec3(30,64,0),new Vec3(0,64,0),10.5,List.of());
+        check(!edge.isEmpty()&&edge.stream().allMatch(v->v.distanceTo(new Vec3(0,64,0))<=10.5),"at the rim of the range, no candidate leads out of it");
+        check(edge.stream().noneMatch(v->v.x>10.5),"outward spots are dropped");
+        List<Vec3> none=GuardCombat.repositionCandidates(new Vec3(10.4,64,0),new Vec3(30,64,0),new Vec3(0,64,0),10.0,List.of());
+        check(none.stream().allMatch(v->v.distanceTo(new Vec3(0,64,0))<=10.0),"a body already outside the limit is only offered spots back inside");
+        List<Vec3> nearFoe=GuardCombat.repositionCandidates(feet,new Vec3(5,64,0),player,10.5,List.of());
+        check(nearFoe.stream().allMatch(v->Math.hypot(v.x-5,v.z)>=GuardCombat.BOW_MIN),"no spot within bow minimum of the foe (that would be melee)");
+        List<Vec3> avoided=GuardCombat.repositionCandidates(feet,foe,player,10.5,List.of(new Vec3(1,64,0)));
+        check(avoided.stream().noneMatch(v->Math.hypot(v.x-1,v.z)<1.0)&&avoided.size()<all.size(),"spots near one that had no way are left out");
     }
     private static void noPath() {
         FakeView view=new FakeView();view.noPath=true;GuardCombat guard=guard(view);

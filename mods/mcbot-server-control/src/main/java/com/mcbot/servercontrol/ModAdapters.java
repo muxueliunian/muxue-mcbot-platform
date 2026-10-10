@@ -40,6 +40,7 @@ final class ModAdapters {
     private static volatile List<EmoteSource> emoteSources=List.of();
     private static volatile List<AppearanceSource> appearances=List.of();
     private static volatile Set<String> itemHandlerMods=Set.of();
+    private static volatile List<McbotApi.Hint> hints=List.of();
 
     /** Freezes add-on registration and loads JSON interactions from {@code <config>/interactions}. */
     static synchronized Loaded load(Path configDirectory) {
@@ -52,6 +53,7 @@ final class ModAdapters {
         for(var w:addonWorkstations)ids.add(safeId(w::id));
         emoteSources=installedUnique(registered.emotes(),EmoteSource::id,EmoteSource::installed,ids,problems,"emote source");
         appearances=installedUnique(registered.appearances(),AppearanceSource::id,AppearanceSource::installed,ids,problems,"appearance source");
+        hints=registered.hints();
         itemHandlerMods=GenericItemSlots.enabled(GenericItemSlots.load(configDirectory.resolve(GenericItemSlots.FILE),problems),McbotApi::versionsMatch,problems);
         loaded=new Loaded(combined.containers(),combined.interactions(),List.copyOf(problems),installedSinks(registered.pickupSinks()));
         return loaded;
@@ -197,6 +199,34 @@ final class ModAdapters {
     }
     /** Mods the server owner enabled for generic item-handler access (pinned version installed). */
     static Set<String> itemHandlerMods() {return itemHandlerMods;}
+    /**
+     * Add-on usage notes for hello: only those whose namespace has something installed right now (a container, an
+     * interaction, a workstation, an emote or appearance source, a pickup sink), so a note never describes tools that
+     * are absent because the adapted mod is missing or the wrong version.
+     */
+    static JsonArray hintsJson() {
+        Set<String> live=new HashSet<>();
+        for(ContainerAdapter a:containers()) live.add(namespaceOf(safeId(a::id)));
+        for(ItemInteraction i:ItemInteractions.installed()) live.add(namespaceOf(safeId(i::id)));
+        for(WorkstationAdapter w:addonWorkstations) if(installed(w::installed)) live.add(namespaceOf(safeId(w::id)));
+        for(EmoteSource e:emoteSources) live.add(namespaceOf(safeId(e::id)));
+        for(AppearanceSource a:appearances) live.add(namespaceOf(safeId(a::id)));
+        for(PickupSink p:pickupSinks()) live.add(namespaceOf(safeId(p::id)));
+        return hintsJson(hints,live);
+    }
+    /** hello.hints: [{id, text}] for the registered hints whose namespace is live. */
+    static JsonArray hintsJson(List<McbotApi.Hint> registered,Set<String> liveNamespaces) {
+        JsonArray out=new JsonArray();
+        for(McbotApi.Hint hint:liveHints(registered,liveNamespaces)) { com.google.gson.JsonObject o=new com.google.gson.JsonObject();o.addProperty("id",hint.id());o.addProperty("text",hint.text());out.add(o); }
+        return out;
+    }
+    static List<McbotApi.Hint> liveHints(List<McbotApi.Hint> registered,Set<String> liveNamespaces) {
+        List<McbotApi.Hint> result=new ArrayList<>();
+        for(McbotApi.Hint hint:registered) if(liveNamespaces.contains(namespaceOf(hint.id()))) result.add(hint);
+        return List.copyOf(result);
+    }
+    private static String namespaceOf(String id) {int at=id==null?-1:id.indexOf(':');return at<0?"":id.substring(0,at);}
+
     static JsonArray itemHandlerModIds() {JsonArray ids=new JsonArray();for(String mod:itemHandlerMods)ids.add(mod);return ids;}
     /** The dedicated storage adapter (container or add-on workstation) of a block, or null. */
     static String dedicatedAdapter(BlockState state) {

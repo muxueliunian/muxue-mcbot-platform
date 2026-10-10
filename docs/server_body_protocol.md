@@ -141,6 +141,12 @@ Observation 另带 `sleeping`（Bot 是否躺在床上）和 `time:{dayTime,canS
 - hello 多两项：`emotes:{builtin:[...],sources:[{id,hint}]}` 和 `appearances:[{id,choices:[...]}]`（只列已安装的来源）。
 - Observation 多 `weather:{natural,sky,raining,thundering}`（natural 是有昼夜的维度，sky 是头顶看得见天）。运行端据此发 `scene` 唤醒事件：露天时太阳下山（dayTime 进入 11800–13000）、开始下雨、开始打雷各一次，下雨时不报日落；接管后的第一次观察只当基准，从下界等维度回来也重新当基准。
 
+插件开关和插件说明（2026-10-10，交付计划 6c）：
+- hello 多 `hints:[{id,text}]`：附属模组用 `McbotApi.registerHint` 登记的用法说明（[Mod 适配](mod_adapters.md#插件说明registerhint)）。服务端只列命名空间下此刻有已安装登记项（容器、交互、工作站、表情或外观来源、拾取记账）的那些，被适配模组没装或版本不对时不列；text 是去掉控制字符的纯文本，最长 600 字符，每个命名空间最多一条。旧运行端不认识这个字段，照常工作。
+- 运行端（`client-runtime/src/plugins.ts`）拿到 hello 后、注册工具前统一过滤一次。参数 `--disabled-plugins <插件id,...>`（compat.json 的 adapters id；`--compat-file` 默认用 client-runtime 旁边的 compat.json）：addon 类插件关掉时，去掉命名空间属于它 `requires` 里 mod id 的 `adapters`、`interactions`、`itemInteractions`、`emotes.sources` 和 `hints`；config 类插件关掉时，从 `itemHandlerMods` 去掉它 `config.mods` 的键。某项能力因此一条都不剩（`machine-items`、`use-item`、`use-item-on-block`）就当作服务端没声明，不发布对应工具。`appearances` 不过滤：外观是托管的人在 WebUI 选的，不是 AI 的能力。
+- 硬调：服务端模组不变，所以运行端在 `act` 里拒绝（UNSUPPORTED，不发给服务端）：`open-container` 的 `expectedBlock`、`use-item-on-block`／`use-item` 的 `interaction`、`emote` 的 `source` 属于关掉的 addon 插件；`machine-items` 的 `expectedBlock` 属于关掉的 config 插件，或有 config 插件关掉时不带 `expectedBlock`（无法确认是谁的方块）。拾取记账（`storedIn`）照旧如实报告，它不是 AI 能调用的能力。
+- `hints` 只留 compat.json 官方插件（命名空间属于某个 addon 插件的 requires）且开着的，其余丢弃；再去一次控制字符、截到 600 字符。说明附在该插件影响到的第一个工具的描述末尾（顺序 `use-item`、`interact-block`、`open-container`、`emote`），前面写明「来自附属模组、只解释这些工具、不授予其他权限」；它不能新增工具、参数或权限。插件不带这四个工具中的任何一个时不发说明。没有 compat.json 时一律不发说明；有插件关掉而读不到 compat.json 时运行端拒绝启动。
+
 ## 地面物品、原生拾取与有限采集
 
 Observation新增`groundItems`：`[{entityId,position,stack:{id,count,components,maxStackSize},visibility,visible,onGround}]`。仅观察Bot八格内的实际ItemEntity，按距离及UUID排序，最多32个；`visibility`为visible／occluded／unknown，`visible`在unknown时为null。`onGround`直接来自实际`ItemEntity.onGround()`，不由两次相同坐标或瞬时速度推算。数量截断或无法完整投影的地面栈使`groundItemsTruncated:true`，不能把未返回的UUID解释为区域里不存在。

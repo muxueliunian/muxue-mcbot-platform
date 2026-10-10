@@ -272,6 +272,9 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 .plug .pw{font-size:12.5px}
 .plug .chips{display:flex;flex-wrap:wrap;gap:6px}
 .plug .pb{display:flex;align-items:center;gap:8px;margin-top:4px}.plug .pb .meta{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plug .ai{display:flex;align-items:center;gap:8px;font-size:12.5px;padding-top:6px;border-top:1px solid var(--fill-hover)}
+.plug .ai label{display:flex;align-items:center;gap:8px;cursor:pointer;flex:none}
+.plug .ai small{color:var(--muted);font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plug .ai small.errc{color:var(--err)}
 .plug-warn{margin-bottom:12px;padding:10px 14px;border-radius:12px;background:rgba(227,145,43,.12);color:var(--busy);font-size:12.5px}
 /* 安装确认框 */
 .dlg-wrap{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.22);backdrop-filter:blur(2px);animation:enter .25s ease}
@@ -804,7 +807,9 @@ function partChip(x) {
 }
 function plugCard() {
   const d = el('div', 'plug');
-  d.innerHTML = '<div class="pt"><b></b><small></small><span class="chip"></span></div><div class="pw"></div><div class="chips"></div><div class="pb"><span class="meta"></span><button type="button" class="small go"></button><button type="button" class="small ghost un">卸载</button></div>';
+  d.innerHTML = '<div class="pt"><b></b><small></small><span class="chip"></span></div><div class="pw"></div><div class="chips"></div><div class="pb"><span class="meta"></span><button type="button" class="small go"></button><button type="button" class="small ghost un">卸载</button></div>'
+    + '<div class="ai" hidden><label><input type="checkbox" class="sw">给 AI 使用</label><small></small></div>';
+  $('.ai input', d).onchange = (e) => pluginAi(d, e.target.checked);
   $('.go', d).onclick = () => pluginAction(d._p, 'install');
   $('.un', d).onclick = () => pluginAction(d._p, 'uninstall');
   return d;
@@ -822,10 +827,28 @@ function updatePlug(d, p) {
   un.hidden = !p.canUninstall; go.disabled = blocked || bad; un.disabled = blocked;
   go.title = un.title = blocked ? '游戏运行中，无法修改。请先关闭游戏' : '';
   if (bad) go.title = plug.unsupported;
+  // 「给 AI 使用」：每个已安装的插件一个，默认开启；关闭后 AI 看不到此插件的工具，玩家照常使用
+  const ai = $('.ai', d), on = !(plug?.aiOff || []).includes(p.id);
+  ai.hidden = core || p.overall === 'none';
+  $('input', ai).checked = on;
+  if (!ai._msg) { const s = $('small', ai); s.className = ''; s.textContent = on ? '下次启动托管时生效' : '已对 AI 关闭，下次启动托管时生效'; }
+  ai.title = p.id === 'yes_steve_model' ? '仅控制 AI 能否播放 YSM 动画；Bot 的外观仍在「角色」中选择' : '关闭后 AI 无法看到或调用此插件带来的工具和说明；游戏中的玩家不受影响。修改在下次启动托管时生效';
+}
+async function pluginAi(d, enabled) {
+  const ai = $('.ai', d), s = $('small', ai), input = $('input', ai);
+  input.disabled = true;
+  let r; try { r = await post('/api/plugins/ai', { dir: gameDir, id: d._p.id, enabled }); } catch (e) { r = { ok: false, error: e.message }; }
+  input.disabled = false;
+  if (r.ok && plug) plug.aiOff = r.disabled;
+  else input.checked = !enabled;
+  ai._msg = true; clearTimeout(ai._t);
+  s.className = r.ok ? 'okc' : 'errc';
+  s.textContent = r.ok ? (enabled ? '已开启' : '已关闭') + '，下次启动托管时生效' : (r.error || '保存失败');
+  ai._t = setTimeout(() => { ai._msg = false; if (d._p) updatePlug(d, d._p); }, 4000);
 }
 function renderPlugins() {
   const box = $('#plugs'), w = $('#p-warn'), g = curGame();
-  $('#p-where').textContent = g ? '安装到「' + g.name + '」（' + (g.type === 'server' ? '服务器' : '单人 / 局域网') + '）。安装后需重启' + (g.type === 'server' ? '服务器' : '游戏') + '才生效。' : '安装到「连接配置」中选择的游戏。';
+  $('#p-where').textContent = g ? '安装到「' + g.name + '」（' + (g.type === 'server' ? '服务器' : '单人 / 局域网') + '）。安装后需重启' + (g.type === 'server' ? '服务器' : '游戏') + '才生效；「给 AI 使用」开关在下次启动托管时生效。' : '安装到「连接配置」中选择的游戏。';
   if (!plug) { w.hidden = true; return emptyIn(box, plugErr || '读取中…'); }
   w.hidden = !plug.unsupported && !plug.online && plug.type !== 'server';
   w.textContent = plug.unsupported ? plug.unsupported + '。此游戏无法安装插件。' : plug.online ? (plug.type === 'server' ? '服务器运行中：请先关闭服务器，再安装或卸载。' : '世界运行中：请先退出世界并关闭游戏，再安装或卸载。')

@@ -18,6 +18,8 @@ import { BodyError, type Body, type GuardOptions } from './body.js';
 import { PlaceBook } from './places.js';
 import { MachineBook, MachineWatch } from './machines.js';
 import { BlueprintShelf } from './blueprints.js';
+import { loadPluginPolicy } from './plugins.js';
+import { fileURLToPath } from 'node:url';
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: {
@@ -28,6 +30,8 @@ async function main(): Promise<void> {
     'memory-dir': { type: 'string' }, 'blueprint-dir': { type: 'string' }, 'memory-agent': { type: 'string' }, hosted: { type: 'boolean', default: false },
     guard: { type: 'string', default: 'on' }, 'guard-radius': { type: 'string' }, 'guard-low-health': { type: 'string' }, 'guard-bow': { type: 'string', default: 'on' }, 'guard-shield': { type: 'string', default: 'on' },
     appearance: { type: 'string' },
+    // Plugins (compat.json adapter ids) the hosting person turned off for the agent; compat.json defaults to the one next to client-runtime.
+    'disabled-plugins': { type: 'string', default: '' }, 'compat-file': { type: 'string' },
   } });
   const guardDefaults = guardSetting(values);
   if (!['client', 'server'].includes(values.body!)) throw new Error('--body 只允许 client 或 server');
@@ -39,6 +43,11 @@ async function main(): Promise<void> {
     const result = await ServerBody.respawn({ connection: await readServerConnection(values['connection-file']), username: values.username, worldId: values['world-id'] });
     process.stdout.write(`${JSON.stringify(result)}\n`); return;
   }
+  const plugins = values.body === 'server'
+    ? loadPluginPolicy(path.resolve(values['compat-file'] ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'compat.json')), values['disabled-plugins'])
+    : undefined;
+  if (values.body !== 'server' && values['disabled-plugins']) throw new Error('--disabled-plugins 仅用于 --body server');
+  if (plugins?.disabled.length) process.stderr.write(`已对 AI 关闭的插件：${plugins.disabled.join(', ')}\n`);
   const runtimeDir = path.resolve(values['runtime-dir']!);
   const heartbeatFile = path.join(runtimeDir, `companion-${values.username}.json`);
   if (values.hosted && !hostedHeartbeatFresh(heartbeatFile)) throw new Error('托管驱动心跳不存在或过期，未接管身体');
@@ -87,7 +96,7 @@ async function main(): Promise<void> {
   try {
     const shared = { username: values.username, worldId: values['world-id'], onLost: loseControl };
     body = values.body === 'server'
-      ? await ServerBody.connect({ ...shared, connection: await readServerConnection(values['connection-file']), controllerId: values['controller-id'], onLease: acquired => {
+      ? await ServerBody.connect({ ...shared, plugins, connection: await readServerConnection(values['connection-file']), controllerId: values['controller-id'], onLease: acquired => {
         lease = acquired;
         const temporary = `${controlFile}.${randomUUID()}.tmp`;
         try {

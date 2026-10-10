@@ -184,6 +184,35 @@ export function inspectPlugins(gameDir, catalog = loadCatalog()) {
   return { minecraft: catalog.minecraft, core, plugins: catalog.plugins.map((p) => withCore(describe(p))) };
 }
 
+// ---- 「给 AI 用」开关：按游戏目录存在 runtime/webui-plugins.json（WebUI 自己的数据，不写进游戏目录） ----
+// 关掉的插件 id 在下次启动托管时经 start-server-play → mcp.json → 运行端（--disabled-plugins）生效；游戏和服务端模组不变，玩家照常用。
+
+const AI_FILE = 'webui-plugins.json';
+const sameDir = (a, b) => path.normalize(String(a)).toLowerCase() === path.normalize(String(b)).toLowerCase();
+function readAiFile(runtime) {
+  const data = readJson(path.join(runtime, AI_FILE));
+  return Array.isArray(data?.games) ? data.games.filter((g) => g && typeof g.dir === 'string' && Array.isArray(g.disabled)) : [];
+}
+/** 此游戏对 AI 关闭的插件；只返回 compat.json 里还有的插件（清单删掉的插件自动失效）。默认全部开启。 */
+export function disabledPlugins(runtime, gameDir, catalog = loadCatalog()) {
+  const known = new Set(catalog.plugins.map((p) => p.id));
+  const entry = readAiFile(runtime).find((g) => sameDir(g.dir, gameDir));
+  return [...new Set((entry?.disabled || []).filter((id) => typeof id === 'string' && known.has(id)))].sort();
+}
+/** 打开或关闭一个插件的「给 AI 用」；核心模组没有开关。 */
+export function setPluginAi(runtime, gameDir, id, enabled, catalog = loadCatalog()) {
+  if (!catalog.plugins.some((p) => p.id === id)) return { ok: false, error: '插件不存在' };
+  if (typeof enabled !== 'boolean') return { ok: false, error: '开关状态须为布尔值' };
+  const games = readAiFile(runtime).filter((g) => !sameDir(g.dir, gameDir));
+  const set = new Set(disabledPlugins(runtime, gameDir, catalog));
+  if (enabled) set.delete(id); else set.add(id);
+  if (set.size) games.push({ dir: path.normalize(gameDir), disabled: [...set].sort() });
+  fs.mkdirSync(runtime, { recursive: true });
+  const file = path.join(runtime, AI_FILE), tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, games }, null, 2) + '\n'); fs.renameSync(tmp, file);
+  return { ok: true, disabled: [...set].sort() };
+}
+
 // ---- 计划和执行 ----
 
 const fmtSize = (n) => (n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');

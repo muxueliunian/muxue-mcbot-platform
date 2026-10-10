@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // 核对 compat.json 和各模组代码里锁的版本是否一致：平台版本、jar 名、被适配模组的 mod id 和确切版本。
+// 还核对每个附属模组登记的 id：命名空间必须是它 requires 里的 mod id（运行端的「给 AI 用」开关按这个对应关系过滤）。
 // 用法：node scripts/check-compat.mjs [compat.json]；有不一致时列出来并以 1 退出。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,6 +38,31 @@ function jarName(project) {
   return version ? `${name}-${version}.jar` : undefined;
 }
 
+/**
+ * 附属模组源码里登记给 MCBOT 的 id：id() 返回的字面量或常量、带 String id 参数的 record 构造时传的字面量、registerHint 的第一个参数。
+ * 认不出来的写法放进 unresolved，宁可报错也不让对应关系悄悄失效。
+ */
+export function registeredIds(sources) {
+  const ids = [], unresolved = [];
+  for (const m of sources.matchAll(/\bString\s+id\s*\(\s*\)\s*\{\s*return\s+([^;]+?)\s*;/g)) {
+    const expr = m[1];
+    if (/^"[^"]*"$/.test(expr)) ids.push(expr.slice(1, -1));
+    else if (/^[A-Z][A-Z0-9_]*$/.test(expr)) {
+      const c = new RegExp(`\\b${expr}\\s*=\\s*"([^"]+)"`).exec(sources);
+      if (c) ids.push(c[1]); else unresolved.push(expr);
+    } else unresolved.push(expr);
+  }
+  for (const m of sources.matchAll(/\brecord\s+(\w+)\s*\(\s*String\s+id\b/g)) {
+    for (const n of sources.matchAll(new RegExp(`\\bnew\\s+${m[1]}\\s*\\(\\s*([^,)]+)`, 'g'))) {
+      if (/^"[^"]*"$/.test(n[1].trim())) ids.push(n[1].trim().slice(1, -1)); else unresolved.push(n[1].trim());
+    }
+  }
+  for (const m of sources.matchAll(/\bregisterHint\s*\(\s*([^,)]+)/g)) {
+    if (/^"[^"]*"$/.test(m[1].trim())) ids.push(m[1].trim().slice(1, -1)); else unresolved.push(m[1].trim());
+  }
+  return { ids: [...new Set(ids)], unresolved };
+}
+
 export function checkCompat(compat) {
   const problems = [];
   const core = compat.core;
@@ -68,6 +94,17 @@ export function checkCompat(compat) {
       if (!sources.includes(`"${need.version}"`)) problems.push(`${adapter.id}：代码里没有锁 ${need.modId} 的版本 "${need.version}"`);
       const m = need.modrinth;
       if (!m || !/^https:\/\/cdn\.modrinth\.com\//.test(m.url ?? '') || !m.file || !(m.size > 0)) problems.push(`${adapter.id}：${need.modId} 缺官方下载信息（Modrinth 的 url、文件名、大小）`);
+    }
+    if (adapter.kind === 'addon') {
+      // 运行端按命名空间把 hello 里的条目对应到插件（「给 AI 用」开关、插件说明），所以登记的 id 必须在 requires 的 mod id 下
+      const modIds = (adapter.requires ?? []).filter(r => r.modId).map(r => r.modId);
+      const { ids: registered, unresolved } = registeredIds(sources);
+      for (const expr of unresolved) problems.push(`${adapter.id}：无法从源码确定登记的 id（${expr}），请改用字面量或常量`);
+      if (!registered.length && !unresolved.length) problems.push(`${adapter.id}：源码里没有找到登记给 MCBOT 的 id`);
+      for (const id of registered) {
+        const ns = id.includes(':') ? id.slice(0, id.indexOf(':')) : '';
+        if (!modIds.includes(ns)) problems.push(`${adapter.id}：登记的 id ${id} 的命名空间不是 requires 中的 mod id（${modIds.join('、')}）`);
+      }
     }
     if (adapter.kind === 'config') {
       for (const [mod, version] of Object.entries(adapter.config?.mods ?? {})) {

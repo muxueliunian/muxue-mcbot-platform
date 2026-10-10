@@ -96,7 +96,7 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
 公开接口都在 `com.mcbot.servercontrol.api` 包里：
 
-- `McbotApi`：负责登记（`registerContainer`、`registerInteraction`），提供版本检查（`modVersion`、`versionsMatch`），以及拒绝时用的 `refuse(code, message)`。拒绝码只能是 `INTERACTION_NOT_READY` 或 `UNSUPPORTED`，写别的码会按 `INTERACTION_NOT_READY` 处理。
+- `McbotApi`：负责登记（`registerContainer`、`registerInteraction`，以及下面各接口的 `register*` 和[插件说明](#插件说明registerhint) `registerHint`），提供版本检查（`modVersion`、`versionsMatch`），以及拒绝时用的 `refuse(code, message)`。拒绝码只能是 `INTERACTION_NOT_READY` 或 `UNSUPPORTED`，写别的码会按 `INTERACTION_NOT_READY` 处理。
 - `ContainerAdapter`：用来接管容器和机器，要实现这些方法：
   - 识别方块（`block`），核对方块实体（`entity`）
   - 在方块自己不提供菜单时给出菜单（`provider`）
@@ -145,9 +145,31 @@ public final class McbotExampleCook {
 - [mcbot-sophisticated-backpacks](../mods/mcbot-sophisticated-backpacks/README.md)：独立的附属模组。打开手里的背包（对空使用）、把放在地上的背包当容器（物品处理器型存储）、拾取升级的记账（`PickupSink`）。
 - [mcbot-yes-steve-model](../mods/mcbot-yes-steve-model/README.md)：独立的附属模组。YSM 的模型（`AppearanceSource`）和动画（`EmoteSource`），只执行 YSM 自己的服务端指令。
 
+### 插件说明（registerHint）
+
+2026-10-10 加（交付计划 6c，只做加法，`API_VERSION` 仍是 1）。附属模组可以登记一段给 AI 看的用法说明，经 `hello.hints` 下发：
+
+```java
+McbotApi.registerHint("examplecook:hint", "Wok: add oil first, then ingredients, then stir with repeatUntil ...");
+```
+
+- id 规则和其他登记一样（`命名空间:路径`，和容器、交互等共用一个 id 集合，不能重复），**同一命名空间只能登记一条**；服务器启动后冻结，再登记抛 `IllegalStateException`。命名空间要用被适配模组的 mod id（运行端靠它对应插件，`check-compat` 会查）。
+- 文本：控制字符和格式字符换成空格、合并连续空格、去掉首尾空白后，不能为空，最长 `McbotApi.HINT_MAX`（600）字符，超了直接抛 `IllegalArgumentException`（加载模组时就发现）。
+- 服务端只在这个命名空间下有已安装的登记项（容器、交互、工作站、表情或外观来源、拾取记账）时才下发；被适配模组没装或版本不对时不发。
+- 运行端把说明当不可信文本：只收命名空间属于 `compat.json` 官方插件、且「给 AI 用」开着的；附在该插件影响到的第一个工具（`use-item`、`interact-block`、`open-container`、`emote`）的描述末尾，前缀写明来自附属模组、只解释这些工具。它不能新增工具、参数或权限。插件不带这四个工具中的任何一个时说明不会出现。
+- 只写模组里已经实现、有测试证据的用法。现有 4 个附属模组的说明写在各自的 `Mcbot*` 主类（`HINT` 常量），离线测试检查长度和控制字符。config 类插件（通用物品槽）这一轮没有说明。
+
+## 「给 AI 用」开关
+
+2026-10-10 加。插件可以装在游戏里给玩家自己用、但不让 AI 用：WebUI「插件」页每个已安装的插件有一个「给 AI 使用」开关，默认开启，按游戏目录存在 WebUI 自己的 `runtime/webui-plugins.json`（不写进游戏目录），**下次启动托管时生效**。关掉的插件 id 经 `start-server-play.mjs --disabled-plugins` → `mcp.json` 里运行端的参数（驱动器生成托管配置时原样保留）→ 运行端。
+
+效果（细节见[协议](server_body_protocol.md)）：运行端注册工具前统一过滤 hello，AI 看不到这个插件带来的任何工具、参数和说明（addon 类按 `requires` 的 mod id 匹配命名空间：容器适配、交互、表情来源、插件说明；config 类去掉 `itemHandlerMods` 里的 mod）；AI 硬调时运行端返回 UNSUPPORTED，不发给服务端。服务端模组和游戏不变，玩家照常使用。关掉 YSM 只影响 AI 能不能播放 YSM 动画，外观仍由托管的人在「角色」页选。
+
+这套对应关系依赖「附属模组登记的 id 的命名空间等于 compat.json 里它 `requires` 的 mod id」：`node scripts/check-compat.mjs` 会从源码里取出每个附属模组登记的 id（`id()` 返回的字面量或常量、带 `String id` 参数的 record 构造时的字面量、`registerHint` 的第一个参数），命名空间不在 requires 里、或写法认不出来都报错。
+
 ## 测试
 
-- 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`GenericItemSlotsTest`（通用物品槽适配：配置、分派、方向面、放入取出、出错）。
+- 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式、`registerHint` 的校验和 hello 的 `hints`）、运行端 `client-runtime/tests/plugins.test.mjs`（开关过滤、硬调拒绝、说明的过滤和位置）、`ItemInteractionsTest`、`GenericItemSlotsTest`（通用物品槽适配：配置、分派、方向面、放入取出、出错）。
 - 铁炉附属模组的离线测试 `IronFurnaceAdapterTest` 在 `mods/mcbot-iron-furnaces`，由它自己的 `gradlew build` 运行。
 - 隔离服：`scripts/server-adapter-smoke.mjs`。测试服要临时装上 Iron Furnaces 4.3.2 和 `mcbot-iron-furnaces` 附属模组，并在 `interactions/` 里放一份正确的重生锚声明和一份故意写错的声明。
 - 示例附属模组：`scripts/server-cooking-smoke.mjs`（森罗厨房）、`scripts/server-backpack-smoke.mjs`（SB，开服前先运行 `scripts/server-backpack-fixture.mjs`）、`scripts/server-emote-smoke.mjs`（YSM，也测内置手势和场景提示）。

@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
 import { applyPluginPolicy, pluginRefusal, type PluginPolicy } from './plugins.js';
 import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus, type GuardDutyRequest, type GuardDutyState, type StopOptions } from './body.js';
+import { serverDetail } from './claim-failure.js';
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -253,7 +254,7 @@ export class ServerBody implements Body {
       // Never relay arbitrary server error text that could accidentally include credentials.
       const code = /^[A-Z_]{1,64}$/.test(parsed.error.code) ? parsed.error.code : 'INVALID_RESPONSE';
       if (code === 'OPERATION_LIMIT') throw new BodyError(code, '当前租约的动作额度已耗尽；仍可读取状态和叫停。需明确释放并重新接管，不能自动续做旧任务。');
-      throw new BodyError(code, `服务端拒绝请求（${code}）`);
+      throw new BodyError(code, `服务端拒绝请求（${code}）`, serverDetail(parsed.error.message));
     }
     if (!response.ok) throw new BodyError('HTTP_ERROR', `服务端控制请求失败（HTTP ${response.status}）`);
     return parsed.result;

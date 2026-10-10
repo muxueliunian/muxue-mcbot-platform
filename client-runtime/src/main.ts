@@ -19,6 +19,7 @@ import { PlaceBook } from './places.js';
 import { MachineBook, MachineWatch } from './machines.js';
 import { BlueprintShelf } from './blueprints.js';
 import { writePosture } from './posture.js';
+import { logClaimFailure } from './claim-failure.js';
 import { loadPluginPolicy } from './plugins.js';
 import { fileURLToPath } from 'node:url';
 
@@ -144,7 +145,11 @@ async function main(): Promise<void> {
     process.stdin.once('end', () => { void shutdown(); });
     await server.connect(transport);
     monitor.start();
-  } catch (error) { await shutdown(error as Error); }
+  } catch (error) {
+    // Taking the body failed (body never connected): the hosting person sees why in the WebUI log, not only on stderr.
+    if (values.hosted && !body) logClaimFailure(path.join(runtimeDir, `activity-${values.username}.jsonl`), error as Error);
+    await shutdown(error as Error);
+  }
 }
 /**
  * The look the hosting person picked (WebUI → --appearance <source>=<choice>), applied each time control is taken so a

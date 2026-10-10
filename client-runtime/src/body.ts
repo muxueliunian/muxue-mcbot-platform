@@ -208,5 +208,6 @@ export interface Body {
   close(): Promise<void>;
 }
 export class BodyError extends Error {
-  constructor(readonly code: string, message: string) { super(message); this.name = 'BodyError'; }
+  /** detail: the server's own rejection text, for the local hosting log only; message is what the agent sees. */
+  constructor(readonly code: string, message: string, readonly detail?: string) { super(message); this.name = 'BodyError'; }
 }

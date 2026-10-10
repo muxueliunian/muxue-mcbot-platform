@@ -30,16 +30,21 @@ const short = (id?: string) => id?.replace(/^minecraft:/, '') ?? '?';
 export class MachineBook {
   private machines = new Map<string, PendingMachine>();
   private readonly file?: string;
-  constructor(runtimeDir?: string, worldId?: string) {
+  constructor(runtimeDir?: string, private readonly worldId?: string) {
     if (!runtimeDir || !worldId) return;
-    this.file = path.join(runtimeDir, 'machines', `${worldId.replace(/[^A-Za-z0-9_.-]/g, '_')}.json`);
-    try { for (const machine of JSON.parse(fs.readFileSync(this.file, 'utf8')) as PendingMachine[]) if (machine?.key && machine.position) this.machines.set(machine.key, machine); } catch {}
+    // Same lossless Windows filename encoding as PlaceBook; safe ASCII legacy names stay unchanged.
+    this.file = path.join(runtimeDir, 'machines', `${worldId.replace(/[%<>:"/\\|?*\u0000-\u001f]/g, c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))}.json`);
+    try {
+      const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      const machines: PendingMachine[] = Array.isArray(saved) && /^[A-Za-z0-9_.-]+$/.test(worldId) ? saved : saved?.worldId === worldId && Array.isArray(saved.machines) ? saved.machines : [];
+      for (const machine of machines) if (machine?.key && machine.position) this.machines.set(machine.key, machine);
+    } catch {}
   }
   private save(): void {
     if (!this.file) return;
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = `${this.file}.${process.pid}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify([...this.machines.values()], null, 2));
+    fs.writeFileSync(temporary, JSON.stringify({ worldId: this.worldId, machines: [...this.machines.values()] }, null, 2));
     fs.renameSync(temporary, this.file);
   }
   list(): PendingMachine[] { return [...this.machines.values()].sort((a, b) => a.readyAt - b.readyAt); }

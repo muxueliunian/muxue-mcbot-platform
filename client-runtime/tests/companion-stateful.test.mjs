@@ -11,6 +11,8 @@ import { createMcpServer } from '../dist/mcp.js';
 import { RuntimeMonitor } from '../dist/lifecycle.js';
 import { EventJournal } from '../dist/events.js';
 import { companionReflexHooks, createActionStop } from '../dist/action-stop.js';
+import { SurvivalTasks } from '../dist/survival-tasks.js';
+import { SurvivalReflexes } from '../dist/survival-reflexes.js';
 import { mockServerControl } from './mock-server-control.mjs';
 
 // Following is a state, not a task: tools that use the body make it step aside (paused + suspendedFor) and it picks up again by itself.
@@ -50,6 +52,39 @@ async function fixture(t, { guard = true } = {}) {
   return { mock, body, events, mode, monitor, client, player, sent, stops, call, finishMove, ticks, follow };
 }
 const moveTo = { x: 1, y: 64, z: 0 };
+
+test('self defense stops a raw body action while the follow is already stepping aside', async t => {
+  const f = await fixture(t); await f.follow();
+  const tasks = new ContainerTasks(f.body), gather = new GatherTasks(f.body, f.events);
+  const survival = new SurvivalTasks(f.body);
+  const stop = createActionStop(f.body, tasks, gather, f.mode, survival);
+  const bodyBusy = () => f.body.isBusy() || f.body.pendingOperations().length > 0;
+  f.body.hello.capabilities.push('survival-state', 'defend-entity', 'retreat-from-entity');
+  const threat = { entityId: randomUUID(), type: 'minecraft:zombie', classification: 'hostile', hostilitySource: 'vanilla_hostile_allowlist',
+    distance: 2, lineOfSight: true, alive: true, defenseEligible: true };
+  f.body.survivalState = async () => ({ instanceId: f.body.hello.instanceId, sessionId: f.body.hello.sessionId,
+    controlGeneration: f.body.controlGeneration, dimension: 'minecraft:overworld', serverTick: 1, health: 20, maxHealth: 20, food: 20, selectedSlot: 0,
+    inventory: [{ slot: 0, id: 'minecraft:air', count: 0, maxStackSize: 64, components: {} }], threats: { serverTick: 1, nearby: [threat] } });
+  const act = f.mock.handlers.act;
+  f.mock.handlers.act = (params, ctx) => {
+    const op = act(params, ctx);
+    return params.name === 'defend-entity' ? { ...op, result: { entityId: threat.entityId, attemptedAttacks: 1, confirmedHits: 1,
+      confirmedDamage: 1, damageConfirmation: 'native_damage_event', terminationReason: 'attack-limit', sideEffects: 'confirmed' } } : op;
+  };
+  const reflexes = new SurvivalReflexes(f.body, survival, f.events, { stopCurrent: stop, ordinaryBusy: bodyBusy,
+    ...companionReflexHooks(tasks, gather, f.mode, stop.keepCompanion, survival, bodyBusy) });
+  await f.call('move-to-position', moveTo);
+  const walk = [...f.mock.operations.values()].find(op => op.name === 'move-to-position');
+  const from = f.mock.calls.length;
+  const defended = await reflexes.defendSelf(threat.entityId);
+  assert.equal(defended.status, 'succeeded', JSON.stringify(defended));
+  const calls = f.mock.calls.slice(from);
+  assert.ok(calls.findIndex(c => c.method === 'stop') >= 0);
+  assert.ok(calls.findIndex(c => c.method === 'stop') < calls.findIndex(c => c.method === 'act' && c.params.name === 'defend-entity'));
+  assert.equal(f.mock.operations.get(walk.operationId).status, 'cancelled');
+  assert.equal(reflexes.read().armed, true); assert.equal(reflexes.read().phase, 'idle');
+  assert.equal(f.mode.snapshot().intent, 'follow');
+});
 
 test('a tool that uses the body makes the follow step aside, and it picks up again by itself once the walk ends', async t => {
   const f = await fixture(t); await f.follow();

@@ -770,7 +770,7 @@ final class BuildTask {
         for(int i=0;i<36;i++){ItemStack s=inventory.getItem(i);if(s.isEmpty())continue;
             if(state.requiresCorrectToolForDrops()&&!s.isCorrectToolForDrops(state))continue;
             float v=s.getDestroySpeed(state);if(v>speed){speed=v;best=i;}}
-        if(best>=0){int slot=best;hold(s->s==inventory.getItem(slot));}
+        if(best>=0){ItemStack tool=inventory.getItem(best);hold(s->s==tool);}
         else if(inventory.getSelected().isDamageableItem())hold(s->s.isEmpty()||!s.isDamageableItem());
     }
     private void dig(BlockPos pos,BlockHitResult hit) {

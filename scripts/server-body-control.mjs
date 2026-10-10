@@ -52,10 +52,10 @@ export async function respawnIfDead(scope, { timeoutMs = 10000 } = {}) {
 }
 
 export function createServerBodyControl({ scope, runtimeDir, controllerId, isStop, isNewTask,
-  onStop, onNewTask, botPlayers = [], log = () => {}, intervalMs = 500, requestTimeoutMs = 1800 }) {
+  onStop, onNewTask, onLost = () => {}, botPlayers = [], log = () => {}, intervalMs = 500, requestTimeoutMs = 1800 }) {
   const file = path.join(runtimeDir, `server-control-${scope.username}.json`);
   let cached = null, cursor = 0, observedCursor = 0, pending = [], stopped = false, revoking = 0, polling = false, timer = null, closed = false;
-  let lastError = '';
+  let lastError = '', lostNotified = false;
 
   function capture() {
     const value = readJson(file);
@@ -70,6 +70,7 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
       observedCursor = cursor;
       pending = [];
       stopped = false;
+      lostNotified = false;
     }
     return cached;
   }
@@ -160,6 +161,10 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
     } catch (error) {
       const code = error.code || 'CONTROL_ERROR';
       if (code !== lastError) { log(`服务端停止通道：${code}`); lastError = code; }
+      if (!closed && stopped && code === 'CONTROL_IDENTITY_CHANGED' && !lostNotified) {
+        lostNotified = true;
+        onLost(code);
+      }
     } finally { polling = false; }
   }
 

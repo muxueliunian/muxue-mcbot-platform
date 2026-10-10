@@ -28,7 +28,7 @@ export function createActionStop(body: Body, tasks: ContainerTasks, gather: Gath
   return Object.assign(barrier(options => companion ? companion.stop(undefined, options) : body.stop(options)), { generation: () => revision, keepCompanion: barrier(() => companion ? companion.stopWork() : body.stop()) });
 }
 /** Reflex hooks around a follow: the server guard owns fighting, and a short reflex steps the follow aside instead of discarding it. */
-export function companionReflexHooks(tasks: ContainerTasks, gather: GatherTasks, companion?: CompanionMode, stopWork?: () => Promise<{ stopped: true }>, survival?: SurvivalTasks) {
+export function companionReflexHooks(tasks: ContainerTasks, gather: GatherTasks, companion?: CompanionMode, stopWork?: () => Promise<{ stopped: true }>, survival?: SurvivalTasks, bodyBusy?: () => boolean) {
   return {
     guarding: () => companion?.guarding() === true,
     pauseCompanion: async (reason = 'reflex') => {
@@ -36,7 +36,7 @@ export function companionReflexHooks(tasks: ContainerTasks, gather: GatherTasks,
       const now = companion.snapshot();
       if (!(['following', 'waiting'].includes(now.state) || (now.state === 'paused' && now.suspendedFor))) return undefined;
       // Work that is still running (a gather or meal while the follow stood aside) must be cancelled first, and the follow outlives that.
-      let busy = false;
+      let busy = bodyBusy?.() === true;
       try { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); } catch { busy = true; }
       if (busy && !stopWork) return undefined;
       const lease = await companion.yieldTo(reason);

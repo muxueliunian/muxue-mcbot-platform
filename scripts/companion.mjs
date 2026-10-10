@@ -1298,6 +1298,8 @@ function main() {
     // 身体断了（游戏关了、退出世界、角色死了）：MCP 里的控制已经终止，Agent 接着跑也动不了。
     // 交给外层等世界重新打开、复活后重新接管（会话照常接着）。
     if (args.body === 'server' && args.reconnect && e.type === 'disconnect') {
+      // Revoking on purpose can leave a late LEASE_LOST from the old MCP process.
+      if (waitingNewServerTask || cancellingActions) return;
       if (!shuttingDown) { info(`事件 disconnect: ${e.text}`); shutdown('角色断开，等重新连接', RECONNECT_EXIT); }
       return;
     }
@@ -1611,6 +1613,7 @@ function main() {
       isStop: (event) => isAddressedStop(event, args),
       isNewTask: (event) => [args.name, args.nickname].some(name => name && event.message.toLowerCase().includes(name.toLowerCase())),
       onStop: (event, owner) => stopServerAgent('玩家叫停（独立聊天通道）', event, owner),
+      onLost: (code) => { if (args.reconnect && waitingNewServerTask && !shuttingDown) shutdown(`停止后世界身份已变化（${code}），等重新连接`, RECONNECT_EXIT); },
       onNewTask: newServerTask, log: info });
     serverControl.start();
   }

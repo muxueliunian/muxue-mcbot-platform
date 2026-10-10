@@ -123,28 +123,30 @@ final class WorkstationTask {
         Inventory inventory=player.getInventory();StationRecipe first=null;
         for(StationRecipe plan:recipes)if(plan.fits(layout.gridWidth(),layout.gridHeight())&&feasible(plan,inventory,1)>0){first=plan;break;}
         if(first==null){if(menu!=player.inventoryMenu)closeMenu(player);throw missingError(recipes);}
-        int perCraft=first.result().getCount();int crafts=(count+perCraft-1)/perCraft,done=0;
+        int crafts=0,done=0;
         String used=null;
         try {
             for(StationRecipe plan:recipes) {
-                if(done>=crafts)break;
+                if(done>=count)break;
                 if(!plan.fits(layout.gridWidth(),layout.gridHeight())||feasible(plan,inventory,1)==0)continue;
-                int made=craft(player,menu,layout,plan,crafts-done);
+                int perCraft=plan.result().getCount();
+                int made=craft(player,menu,layout,plan,(count-done+perCraft-1)/perCraft);
                 if(made>0)used=plan.id().toString();
-                done+=made;
+                crafts+=made;done+=made*perCraft;
             }
         } finally { if(menu!=player.inventoryMenu)closeMenu(player); }
-        JsonObject result=obj("item",id(wanted),"requestedCount",count,"crafts",done,"made",done*perCraft,"recipe",used,"inventoryChange",delta(before,counts(inventory)));
+        JsonObject result=obj("item",id(wanted),"requestedCount",count,"crafts",crafts,"made",done,"recipe",used,"inventoryChange",delta(before,counts(inventory)));
         if(table!=null)result.add("table",pos(table));
         if(placedTable!=null)result.add("placedTable",pos(placedTable));
         if(madeTable)result.addProperty("madeTable",true);
-        if(done<crafts){
-            JsonArray short_=missing(first,inventory,crafts-done);
+        if(done<count){
+            int perCraft=first.result().getCount();
+            JsonArray short_=missing(first,inventory,(count-done+perCraft-1)/perCraft);
             result.add("missing",short_);
             if(done==0){result.addProperty("code",short_.isEmpty()?"INVENTORY_FULL":"MISSING_MATERIALS");operation.finish("failed",(short_.isEmpty()?"INVENTORY_FULL":"MISSING_MATERIALS")+": crafted nothing",result);return;}
-            operation.finish("succeeded","Crafted "+done*perCraft+" of "+count+"; the rest is short of materials",result);return;
+            operation.finish("succeeded","Crafted "+done+" of "+count+"; the rest is short of materials",result);return;
         }
-        operation.finish("succeeded","Crafted "+done*perCraft+" "+id(wanted),result);
+        operation.finish("succeeded","Crafted "+done+" "+id(wanted),result);
     }
     private BlockPos placedTable;
     private boolean madeTable;

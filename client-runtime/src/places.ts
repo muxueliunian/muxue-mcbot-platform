@@ -15,19 +15,22 @@ export const placeName = (name: string) => name.trim().toLowerCase();
 export class PlaceBook {
   private places = new Map<string, Place>();
   private readonly file?: string;
-  constructor(runtimeDir?: string, worldId?: string) {
+  constructor(runtimeDir?: string, private readonly worldId?: string) {
     if (!runtimeDir || !worldId) return;
-    this.file = path.join(runtimeDir, 'places', `${worldId.replace(/[^A-Za-z0-9_.-]/g, '_')}.json`);
+    // Keep Unicode names short; escape Windows-forbidden characters and the escape marker without losing identity.
+    this.file = path.join(runtimeDir, 'places', `${worldId.replace(/[%<>:"/\\|?*\u0000-\u001f]/g, c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))}.json`);
     try {
-      const saved = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Place[];
-      for (const place of saved) if (place?.name && place.position) this.places.set(placeName(place.name), place);
+      const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      // Legacy arrays are unambiguous only for IDs whose old filenames were unchanged.
+      const places: Place[] = Array.isArray(saved) && /^[A-Za-z0-9_.-]+$/.test(worldId) ? saved : saved?.worldId === worldId && Array.isArray(saved.places) ? saved.places : [];
+      for (const place of places) if (place?.name && place.position) this.places.set(placeName(place.name), place);
     } catch {}
   }
   private save(): void {
     if (!this.file) return;
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = `${this.file}.${process.pid}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify([...this.places.values()], null, 2));
+    fs.writeFileSync(temporary, JSON.stringify({ worldId: this.worldId, places: [...this.places.values()] }, null, 2));
     fs.renameSync(temporary, this.file);
   }
   list(): Place[] { return [...this.places.values()].sort((a, b) => a.name.localeCompare(b.name)); }

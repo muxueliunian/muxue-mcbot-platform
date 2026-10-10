@@ -247,7 +247,7 @@ public final class ControlSessionTest {
         NativeActionBoundaryTest.run();
         ToolAssessmentTest.run();
         SurvivalAlphaTest.run();
-        NavigationTest.run();SurfaceRouteTest.run();BuildTaskTest.run();IdleGazeTest.run();LookAroundTest.run();
+        NavigationTest.run();SurfaceRouteTest.run();BuildTaskTest.run();ActionMethodsTest.run();IdleGazeTest.run();LookAroundTest.run();
         DefenseAlphaTest.run();GuardCombatTest.run();GuardDutyTest.run();GuardLifecycleTest.run();
         ItemInteractionsTest.run();HostingRulesTest.run();ModAdaptersTest.run();WorkstationCoreTest.run();GenericItemSlotsTest.run();
     }

@@ -23,6 +23,7 @@ async function mock(){
     let raw='';for await(const p of req)raw+=p;const {method,params:p}=JSON.parse(raw);state.calls.push({method,leaseId:p.leaseId,...(p.leave!==undefined?{leave:p.leave}:{})});
     const ok=result=>res.end(JSON.stringify({ok:true,result}));const fail=code=>res.end(JSON.stringify({ok:false,error:{code,message:code}}));
     if(req.headers.authorization!=='Bearer test-only-token')return fail('FORBIDDEN');
+    if(method==='hello'&&state.unreachable){req.socket.destroy();return;}
     if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:[]});
     // Like the server: a revoke may name the session the body already left (it is matched against the retired lease).
     if(p.instanceId!==state.instanceId||p.sessionId&&p.sessionId!==state.sessionId&&method!=='revoke')return fail('WRONG_INSTANCE');
@@ -319,11 +320,11 @@ test('start-server-play.mjs只要Node：参数和ps1一样转进mcp.json和驱�
     assert.throws(bad(['--appearance','ds_whale.ysm']),/appearance/);
     assert.throws(bad(['--guard-radius','2']),/guard-radius/);
     assert.throws(bad(['--agent','gpt']),/agent/);
-    assert.throws(bad(['--unknown','x']),/不认识/);
+    assert.throws(bad(['--unknown','x']),/不支持/);
     fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://192.168.1.5:8766/v2',token:'t',worldId:'w',username:'NodePrep'}));
     assert.throws(bad([]),/本机 http/);
     fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'t',worldId:'w',username:'NodePrep'}));
-    assert.throws(()=>prepareServerPlay(parseArgs(['--connection-file',connectionFile]),{root:dir}),/找不到运行端/,'没构建就说清楚');
+    assert.throws(()=>prepareServerPlay(parseArgs(['--connection-file',connectionFile]),{root:dir}),/未找到运行端/,'没构建就说清楚');
     const cli=spawnSync(process.execPath,[path.join(ROOT,'scripts/start-server-play.mjs'),'--connection-file',path.join(dir,'none.json')],{encoding:'utf8',windowsHide:true});
     assert.equal(cli.status,2);assert.match(cli.stderr,/connection\.json/);
     const waiting=prepareServerPlay(parseArgs(['--connection-file',connectionFile,'--wait','--prepare-only']),{root:dir});
@@ -340,11 +341,11 @@ test('start-server-play --wait：等到能接管才启动托管，断开（75）
     assert.equal((await readiness(connectionFile,'Claude',{respawn:async()=>'alive'})).code,'NO_CONNECTION_FILE');
     fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'t',worldId:'sp-w',username:'ServerBot'}));
     const pending=await readiness(connectionFile,'Claude',{respawn:async()=>{throw new Error('名字不对时不该去问');}});
-    assert.equal(pending.code,'NAME_PENDING');assert.match(pending.wait,/还叫 ServerBot.*Claude/);
+    assert.equal(pending.code,'NAME_PENDING');assert.match(pending.wait,/仍为 ServerBot.*Claude/);
     let seen;
     assert.match((await readiness(connectionFile,'ServerBot',{respawn:async(s)=>{seen=s;return 'SINGLEPLAYER_NOT_LAN';}})).wait,/对局域网开放/);
     assert.deepEqual(seen,{connectionFile,username:'ServerBot',worldId:'sp-w'});
-    assert.match((await readiness(connectionFile,'ServerBot',{respawn:async()=>'CONTROL_UNREACHABLE'})).wait,/等世界打开/);
+    assert.match((await readiness(connectionFile,'ServerBot',{respawn:async()=>'CONTROL_UNREACHABLE'})).wait,/等待世界打开/);
     assert.deepEqual(await readiness(connectionFile,'ServerBot',{respawn:async()=>'respawned'}),{ok:true,respawned:true});
     // supervise：没好就等，好了就跑；75 回去等，第二次正常退出就结束
     const states=[{ok:false,wait:'等世界打开'},{ok:false,wait:'等世界打开'},{ok:true,respawned:false},{ok:false,wait:'等世界打开'},{ok:true,respawned:true}];
@@ -353,7 +354,7 @@ test('start-server-play --wait：等到能接管才启动托管，断开（75）
     const code=await supervise(fakePrepare,{runtime:dir,prepare,check:async()=>states.shift(),run:async(p,respawned)=>{runs.push(respawned);return codes.shift();},sleep:async()=>{},log:(l)=>logs.push(l),pollMs:0});
     assert.equal(code,0);assert.deepEqual(runs,[false,true],'复活过的告诉驱动器');
     assert.equal(logs.filter(l=>l==='[等待] 等世界打开').length,2,'同一句等待只在变化时说');
-    assert.ok(logs.some(l=>/角色断开了/.test(l)));assert.ok(logs.some(l=>/已经原生复活/.test(l)));
+    assert.ok(logs.some(l=>/角色已断开/.test(l)));assert.ok(logs.some(l=>/现已原生复活/.test(l)));
     // 等待中放停止标记：不启动就退出
     fs.writeFileSync(path.join(dir,'companion-ServerBot.stop'),'1');
     let ran=false;
@@ -427,4 +428,65 @@ test('托管启动时角色死了就原生重生，活着的不动，服务器�
     assert.equal(await respawnIfDead(scope),'CONTROL_IDENTITY_CHANGED');
   }finally{await api.close();}
   try{assert.equal(await respawnIfDead(scope,{timeoutMs:500}),'CONTROL_UNREACHABLE');}finally{cleanup(dir);}
+});
+
+test('stopped host reports changed identity once, but ignores temporary unreachable and active owners',async()=>{
+  const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
+  fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));
+  const owner={protocol:2,backend:'server',...scope,controllerId:'owner',instanceId:'instance-a',sessionId:'session-a',leaseId:'old',stopToken:'old-stop',chatCursor:10};
+  const controlFile=path.join(dir,'server-control-ServerTest.json');fs.writeFileSync(controlFile,JSON.stringify(owner));api.state.lease=owner;
+  const lost=[];
+  const control=createServerBodyControl({scope,runtimeDir:dir,controllerId:'owner',isStop:()=>false,isNewTask:()=>false,onStop:()=>{},onNewTask:()=>{},onLost:code=>lost.push(code)});
+  try{
+    control.capture();api.state.instanceId='instance-b';await control.poll();assert.deepEqual(lost,[],'active MCP owns loss reporting');
+    api.state.instanceId='instance-a';await control.revoke();assert.equal(control.stopped,true);
+    api.state.unreachable=true;await control.poll();assert.deepEqual(lost,[],'loading/unreachable is retried');
+    api.state.unreachable=false;await control.poll();assert.deepEqual(lost,[]);
+    api.state.instanceId='instance-b';await control.poll();await control.poll();
+    assert.deepEqual(lost,['CONTROL_IDENTITY_CHANGED'],'one notification for the stopped owner');
+    const next={...owner,instanceId:'instance-b',leaseId:'new',stopToken:'new-stop'};fs.writeFileSync(controlFile,JSON.stringify(next));api.state.lease=next;
+    control.capture();await control.revoke();api.state.sessionId='session-b';await control.poll();await control.poll();
+    assert.equal(lost.length,2,'replacement owner gets its own loss notification');
+  }finally{control.close();await api.close();cleanup(dir);}
+});
+
+test('reconnect preserves a halt across late disconnects and a later world restart',async()=>{
+  const dir=temp(),api=await mock(),runtime=path.join(dir,'runtime');fs.mkdirSync(runtime);
+  const connectionFile=path.join(dir,'connection.json'),configFile=path.join(dir,'mcp.json'),agentLog=path.join(dir,'agent.jsonl');
+  fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:'world-a',username:'ServerTest'}));
+  fs.writeFileSync(configFile,JSON.stringify({mcpServers:{minecraft:{command:process.execPath,args:['not-executed.mjs','--body','server','--connection-file',connectionFile,'--world-id','world-a','--username','ServerTest']}}}));
+  const F=runtimeFiles(runtime,'ServerTest');let driver,exit,output='';
+  const launch=()=>{
+    driver=spawn(process.execPath,[path.join(ROOT,'scripts/companion.mjs'),'--agent','claude','--body','server','--name','ServerTest','--nickname','小克','--mcp-config',configFile,'--headless','--reconnect'],
+      {windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,COMPANION_RUNTIME_DIR:runtime,COMPANION_MEMORY_DIR:path.join(dir,'memory'),COMPANION_AGENT_CMD:JSON.stringify([process.execPath,path.join(HERE,'fixtures/fake-server-agent.mjs')]),FAKE_SERVER_AGENT:'claude',FAKE_AGENT_LOG:agentLog,FAKE_AGENT_CLOSE_DELAY_MS:'1200'}});
+    driver.stdout.on('data',d=>output+=d);driver.stderr.on('data',d=>output+=d);exit=new Promise(r=>driver.once('exit',r));
+  };
+  const event=(seq,type,text)=>fs.appendFileSync(F.events,JSON.stringify({session:'halt-regression',seq,timestamp:Date.now(),type,text})+'\n');
+  try{
+    launch();await waitFor(()=>api.state.claims===1&&records(agentLog).some(r=>r.kind==='turn'),'initial startup');
+    event(1,'chat','tester: [hold] 小克执行旧任务 OLD_TASK_MARK');
+    await waitFor(()=>records(agentLog).some(r=>r.kind==='turn'&&r.text.includes('OLD_TASK_MARK')),'old task');
+    fs.writeFileSync(F.halt,'1');await waitFor(()=>records(agentLog).some(r=>r.kind==='stdin_closing'),'halt teardown');
+    event(2,'disconnect','服务端拒绝请求（LEASE_LOST）');
+    await waitFor(()=>records(agentLog).some(r=>r.kind==='stdin_closed'),'old Agent exit');await sleep(350);
+    assert.equal(driver.exitCode,null,output);assert.equal(api.state.claims,1,'halt does not automatically reclaim');
+    event(3,'disconnect','服务端拒绝请求（LEASE_LOST）');await sleep(700);
+    assert.equal(driver.exitCode,null,output);
+    const stoppedAt=readSessionState(F.session).lastStopAt;assert.ok(stoppedAt);
+    api.state.instanceId='instance-b';api.state.sessionId='session-b';
+    await waitFor(()=>driver.exitCode!==null,'stopped watcher detects new world');assert.equal(await exit,75,output);
+    const previousTurns=records(agentLog).filter(r=>r.kind==='turn').length;
+    launch();await waitFor(()=>api.state.claims===2&&records(agentLog).filter(r=>r.kind==='turn').length>previousTurns,'supervisor restarts driver');
+    const startup=records(agentLog).filter(r=>r.kind==='turn')[previousTurns].text;
+    assert.match(startup,/本轮只确认准备好并结束，不调用游戏工具/);assert.doesNotMatch(startup,/OLD_TASK_MARK/);
+    assert.equal(readSessionState(F.session).lastStopAt,stoppedAt);
+    event(4,'chat','tester: 小克，查询位置 NEW_TASK_MARK');
+    await waitFor(()=>records(agentLog).some(r=>r.kind==='turn'&&r.text.includes('NEW_TASK_MARK')),'new explicit task');
+    const next=records(agentLog).find(r=>r.kind==='turn'&&r.text.includes('NEW_TASK_MARK')).text;
+    assert.match(next,/停止记录.*旧任务已取消/);assert.doesNotMatch(next,/OLD_TASK_MARK/);
+    fs.writeFileSync(F.stop,'1');await waitFor(()=>driver.exitCode!==null,'normal shutdown');assert.equal(await exit,0,output);
+  }finally{
+    if(driver&&driver.exitCode===null&&driver.signalCode===null){if(process.platform==='win32')spawnSync('taskkill',['/PID',String(driver.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else driver.kill();}
+    if(exit)await exit;await api.close();cleanup(dir);
+  }
 });

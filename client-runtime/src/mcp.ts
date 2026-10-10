@@ -31,7 +31,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   const companion = rawBody.hello.capabilities.includes('follow-companion') ? options.companion ?? new CompanionMode(rawBody, events, gather) : undefined;
   const survival = options.survival ?? (['survival-state', 'swap-inventory', 'eat-item'].every(cap => rawBody.hello.capabilities.includes(cap)) ? new SurvivalTasks(rawBody, Date.now, operation => events.recordOperation(operation)) : undefined);
   const stopCurrent = options.stopCurrent ?? createActionStop(rawBody, tasks, gather, companion, survival);
-  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(rawBody, survival, events, { stopCurrent, stopWork: stopCurrent.keepCompanion, ...companionReflexHooks(tasks, gather, companion, stopCurrent.keepCompanion, survival), ordinaryBusy: () => {
+  const reflexes = options.reflexes ?? (survival ? new SurvivalReflexes(rawBody, survival, events, { stopCurrent, stopWork: stopCurrent.keepCompanion, ...companionReflexHooks(tasks, gather, companion, stopCurrent.keepCompanion, survival, () => rawBody.isBusy?.() === true || rawBody.pendingOperations().length > 0), ordinaryBusy: () => {
     try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); } catch { return true; }
     return rawBody.isBusy?.() === true || rawBody.pendingOperations().length > 0 || !!companion && (!['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state) || companion.guardFighting());
   } }) : undefined);

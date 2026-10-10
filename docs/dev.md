@@ -49,7 +49,7 @@ node scripts/start-server-play.mjs --connection-file '<server>/config/mcbot-serv
 ./start-server-play.ps1 -ConnectionFile '<server>/config/mcbot-server-control/connection.json' -Agent claude
 ```
 
-当前仅支持loopback。Agent账号由使用者在本机配置；真实模型测试前确认使用的账号，不自动切换或复制凭据。Codex可用同一入口的`-Agent codex`。不要安装spike和正式控制Mod到同一实例。
+当前仅支持loopback。目前只支持生存模式：单人游戏开局域网时，游戏模式请选「生存」；Bot 不是生存模式时服务端拒绝接管（`FORBIDDEN`），不会自动切换游戏模式。Agent账号由使用者在本机配置；真实模型测试前确认使用的账号，不自动切换或复制凭据。Codex可用同一入口的`-Agent codex`。不要安装spike和正式控制Mod到同一实例。
 
 2026-10-03用户指定Claude-b；该日之后每轮真实Claude测试先问账号，不擅自回退。`-ConfigDir "$env:USERPROFILE/.claude-b"`仅选本机已有登录环境。
 

@@ -220,6 +220,7 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .fields.addr{margin-top:16px}
 .ro{padding:10px 14px;border-radius:12px;background:var(--fill);color:var(--muted);font-size:14px;cursor:default}
 .wait-note{margin:12px 0 0}
+.game-mode-note{margin:6px 0 0}
 .pane-note button{margin-left:auto}
 .games{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .game{all:unset;box-sizing:border-box;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
@@ -350,6 +351,7 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
   <div class="f"><label for="c-port">端口</label><input id="c-port" type="number" min="1024" max="65535" placeholder="8766"><span class="hint">通常无需修改；同一台电脑运行两个游戏时需设置不同端口</span></div>
 </div>
 <div class="pane-note wait-note">启动托管后将持续等待：世界打开并对局域网开放后自动连接；游戏关闭或 Bot 死亡后，可连接时自动恢复。</div>
+<div class="pane-note game-mode-note">目前只支持生存模式；单人游戏开局域网时，游戏模式请选「生存」。</div>
 </div>
 
 <div class="pane" data-pane="role" hidden>

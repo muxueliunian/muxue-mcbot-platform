@@ -82,11 +82,11 @@ function writeExtraDirs(runtime, dirs) {
 /** 手动加一个目录：服务器目录、启动器实例的游戏目录，或带 versions 的 .minecraft。 */
 export function addGameDir(runtime, input) {
   const raw = String(input ?? '').trim().replace(/^"(.*)"$/, '$1');
-  if (!raw || /[\u0000-\u001f]/.test(raw) || raw.length > 400) return { ok: false, error: '目录格式不对' };
+  if (!raw || /[\u0000-\u001f]/.test(raw) || raw.length > 400) return { ok: false, error: '目录格式错误' };
   const dir = path.normalize(raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw);
-  if (!path.isAbsolute(dir)) return { ok: false, error: '要填完整路径' };
-  if (!isDir(dir)) return { ok: false, error: '这个目录不存在' };
-  if (!expand(dir, '手动添加', path.basename(dir)).length) return { ok: false, error: '这里看不出是游戏目录：没有 mods 文件夹、server.properties 或 versions 里的游戏' };
+  if (!path.isAbsolute(dir)) return { ok: false, error: '须为完整路径' };
+  if (!isDir(dir)) return { ok: false, error: '此目录不存在' };
+  if (!expand(dir, '手动添加', path.basename(dir)).length) return { ok: false, error: '无法识别为游戏目录：缺少 mods 文件夹、server.properties 或 versions 中的游戏' };
   const dirs = loadExtraDirs(runtime);
   if (!dirs.some((d) => d.toLowerCase() === dir.toLowerCase())) writeExtraDirs(runtime, [...dirs, dir]);
   return { ok: true, dir };
@@ -165,12 +165,12 @@ export function readGameConfig(dir) {
  * 只改 username 和 port，其余字段原样保留；还没有文件就按模组的默认值建一个（单人 worldId 用 auto，按存档区分）。
  */
 export function writeGameConfig(dir, { username, port } = {}) {
-  if (!NAME_RE.test(String(username ?? ''))) return { ok: false, error: '游戏名只能用英文字母、数字和下划线，最多 16 个' };
+  if (!NAME_RE.test(String(username ?? ''))) return { ok: false, error: '游戏名仅可使用英文字母、数字和下划线，最多 16 个字符' };
   const p = port ?? DEFAULT_PORT;
-  if (!Number.isInteger(p) || p < 1024 || p > 65535) return { ok: false, error: '端口要是 1024～65535 的整数' };
+  if (!Number.isInteger(p) || p < 1024 || p > 65535) return { ok: false, error: '端口须为 1024～65535 的整数' };
   const control = path.join(String(dir), CONTROL_DIR), file = path.join(control, 'server.json');
   let data = readJson(file);
-  if (fs.existsSync(file) && (!data || typeof data !== 'object' || Array.isArray(data))) return { ok: false, error: '游戏里的 server.json 读不了，先修好或删掉它' };
+  if (fs.existsSync(file) && (!data || typeof data !== 'object' || Array.isArray(data))) return { ok: false, error: '游戏中的 server.json 无法读取，请先修复或删除该文件' };
   data ||= { worldId: gameType(dir) === 'server' ? 'serverbody-validation' : 'auto', username, uuid: '9c6882e0-e80c-4c3e-8f20-8e3f42c738a1', port: p, spawn: null };
   if (data.username === username && data.port === p && fs.existsSync(file)) return { ok: true, changed: false };
   data.username = username; data.port = p;
@@ -215,7 +215,7 @@ export function modelLabels(gameDir, choices) {
 export function personaFile({ agent, memoryDir = '', username = '' }, root = ROOT) {
   const protocol = getAgentProtocol(agent);
   if (protocol.identity === 'independent') {
-    if (!NAME_RE.test(username)) throw new Error('先在「连接配置」选好游戏，读到 Bot 的游戏名才知道人设放哪');
+    if (!NAME_RE.test(username)) throw new Error('请先在「连接配置」中选择游戏；读取到 Bot 的游戏名后才能确定人设位置');
     return path.join(memoryDir || path.join(root, 'runtime', `${agent}-memory`), username.toLowerCase(), 'persona.md');
   }
   return path.join(memoryDir || path.join(root, 'memory'), protocol.memoryAgent || 'xiaoke', 'persona.md');
@@ -224,10 +224,10 @@ export function readPersona(opts, root = ROOT) {
   let file;
   try { file = personaFile(opts, root); } catch (e) { return { ok: false, error: e.message }; }
   try { return { ok: true, file, exists: true, text: fs.readFileSync(file, 'utf8') }; }
-  catch (e) { return e.code === 'ENOENT' ? { ok: true, file, exists: false, text: '' } : { ok: false, error: '人设文件读不了' }; }
+  catch (e) { return e.code === 'ENOENT' ? { ok: true, file, exists: false, text: '' } : { ok: false, error: '人设文件无法读取' }; }
 }
 export function writePersona(opts, text, root = ROOT) {
-  if (typeof text !== 'string' || text.length > PERSONA_MAX || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { ok: false, error: `人设最多 ${PERSONA_MAX} 个字，不能有控制字符` };
+  if (typeof text !== 'string' || text.length > PERSONA_MAX || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { ok: false, error: `人设最多 ${PERSONA_MAX} 个字符，且不可包含控制字符` };
   let file;
   try { file = personaFile(opts, root); } catch (e) { return { ok: false, error: e.message }; }
   fs.mkdirSync(path.dirname(file), { recursive: true });

@@ -260,6 +260,28 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 .persona-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .persona-bar .hint{font-size:12px;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:640px){.role{flex-direction:column}.form-head .head-label{width:100%}}
+/* 插件页：核心一行，下面每个插件一张卡片 */
+.plugs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.plug{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:14px;background:var(--fill);border:1px solid transparent;min-width:0;transition:background .2s,border-color .25s}
+.plug.core{grid-column:1/-1}
+.plug.st-ok{border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.plug .pt{display:flex;align-items:center;gap:8px;min-width:0}.plug .pt b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plug .pt small{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plug .pt .chip{margin-left:auto}
+.plug .pw{font-size:12.5px}
+.plug .chips{display:flex;flex-wrap:wrap;gap:6px}
+.plug .pb{display:flex;align-items:center;gap:8px;margin-top:4px}.plug .pb .meta{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plug-warn{margin-bottom:12px;padding:10px 14px;border-radius:12px;background:rgba(227,145,43,.12);color:var(--busy);font-size:12.5px}
+/* 安装确认框 */
+.dlg-wrap{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.22);backdrop-filter:blur(2px);animation:enter .25s ease}
+.dlg{width:min(560px,100%);max-height:calc(100vh - 32px);overflow:auto;padding:20px 22px;background:var(--glass-strong);animation:popin .35s var(--spring) both}
+.dlg h3{margin:0 0 12px;font-size:16px}
+.dlg ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.dlg li{padding:8px 12px;border-radius:10px;background:var(--fill);font-size:13px;word-break:break-all}
+.dlg li b{font-weight:600;margin-right:6px}.dlg li.rm b{color:var(--busy)}.dlg li.dl b{color:var(--reply)}.dlg li.add b{color:var(--ok)}.dlg li.cf b{color:var(--tool)}
+.dlg .notes{margin-top:10px;color:var(--muted);font-size:12.5px;display:flex;flex-direction:column;gap:4px}
+.prog{margin-top:12px;height:8px;border-radius:999px;background:var(--fill-hover);overflow:hidden}.prog i{display:block;height:100%;width:0;background:var(--primary);border-radius:999px;transition:width .3s}
+.dlg .msg{margin-top:10px;font-size:13px;min-height:1em;white-space:pre-wrap;word-break:break-all}
+.dlg .actions{margin-top:16px}
 
 .actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap;align-items:center}
 .actions button{font-size:13px;padding:8px 18px}
@@ -286,7 +308,7 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 <aside id="side"><div class="brand"><i></i>mcbot</div><div class="brand-sub">本地控制台</div>
 <nav><button class="nav-item on" id="tab-monitor"><svg class="i" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>监控<span class="pip"></span></button>
 <button class="nav-item" id="tab-config"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>配置<span class="pip"></span></button></nav>
-<div class="side-foot"><button class="wide" id="theme-btn">主题：跟随系统</button><div class="note">只在本机可见</div></div></aside>
+<div class="side-foot"><button class="wide" id="theme-btn">主题：跟随系统</button><div class="note">仅本机可见</div></div></aside>
 <div class="scrim" id="scrim"></div>
 <div class="content">
 <header class="topbar"><button class="icon ghost" id="menu" aria-label="菜单"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
@@ -294,7 +316,7 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 
 <main class="view" id="view-monitor"><div class="grid">
 <div class="col"><div class="col-title">托管中的 Bot</div><section class="list" id="bots"></section></div>
-<section class="feed glass"><div class="bar"><span id="title">选择左边的 Bot</span><span style="flex:1"></span>
+<section class="feed glass"><div class="bar"><span id="title">请选择左侧的 Bot</span><span style="flex:1"></span>
 <label><input type="checkbox" class="sw" id="f-tool" checked>工具调用</label><label><input type="checkbox" class="sw" id="f-info">驱动器提示</label><label><input type="checkbox" class="sw" id="f-auto" checked>自动滚动</label></div>
 <div class="bar" id="now"></div><div id="rows"></div></section></div></main>
 
@@ -302,12 +324,13 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 <div class="col"><div class="col-title">配置档案<button type="button" class="small" id="c-new">＋ 新建</button></div><section class="list" id="profiles"></section></div>
 <form class="form glass" id="cform" autocomplete="off">
 <div class="form-head"><h2 id="c-title">新配置</h2>
-  <div class="f head-label"><label for="c-label">配置名称</label><input id="c-label" maxlength="40" placeholder="留空自动起名"></div></div>
+  <div class="f head-label"><label for="c-label">配置名称</label><input id="c-label" maxlength="40" placeholder="留空则自动命名"></div></div>
 <div class="seg tabs" id="c-tabs"><span class="thumb"></span>
   <button type="button" class="on" data-pane="conn">连接配置<i class="tdot" id="t-conn"></i></button>
   <button type="button" data-pane="role">角色</button>
   <button type="button" data-pane="soul">灵魂设置<i class="tdot" id="t-soul"></i></button>
   <button type="button" data-pane="act">行为</button>
+  <button type="button" data-pane="plug">插件<i class="tdot" id="t-plug"></i></button>
   <button type="button" data-pane="adv">高级</button>
 </div>
 
@@ -318,10 +341,10 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 <div class="games" id="games"></div>
 <div class="g-add"><div class="inline"><input id="g-dir"><button type="button" id="g-add">添加</button></div><span class="hint" id="h-conn"></span></div>
 <div class="fields addr">
-  <div class="f"><span class="lb">地址</span><div class="ro" title="控制口只开在这台电脑上，别的电脑连不进来">这台电脑（127.0.0.1）</div></div>
-  <div class="f"><label for="c-port">端口</label><input id="c-port" type="number" min="1024" max="65535" placeholder="8766"><span class="hint">一般不用改；同一台电脑开两个游戏时才要错开</span></div>
+  <div class="f"><span class="lb">地址</span><div class="ro" title="控制端口仅在本机开放，其他电脑无法连接">本机（127.0.0.1）</div></div>
+  <div class="f"><label for="c-port">端口</label><input id="c-port" type="number" min="1024" max="65535" placeholder="8766"><span class="hint">通常无需修改；同一台电脑运行两个游戏时需设置不同端口</span></div>
 </div>
-<div class="pane-note wait-note">启动托管后会一直等：世界开了、对局域网开放了就连上；游戏关了、Bot 死了，能连上时自动接上。</div>
+<div class="pane-note wait-note">启动托管后将持续等待：世界打开并对局域网开放后自动连接；游戏关闭或 Bot 死亡后，可连接时自动恢复。</div>
 </div>
 
 <div class="pane" data-pane="role" hidden>
@@ -329,7 +352,7 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
   <div class="avatar" id="r-avatar"><span>?</span></div>
   <div class="fields role-fields">
     <div class="f"><label for="r-name">游戏名</label><input id="r-name" maxlength="16" placeholder="Claude"><span class="hint" id="h-name"></span></div>
-    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">聊天里也可以这样叫它</span></div>
+    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">聊天中也可使用此名称称呼 Bot</span></div>
   </div>
 </div>
 <div class="f look-f"><span class="lb">外观</span><div class="looks" id="looks"></div><span class="hint" id="h-appearance"></span></div>
@@ -338,43 +361,53 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 <div class="pane" data-pane="soul" hidden>
 <div class="fields">
   <div class="f"><label for="c-agent">Agent</label><select id="c-agent" hidden></select></div>
-  <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空用默认模型"><span class="hint" id="h-model"></span></div>
+  <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空则使用默认模型"><span class="hint" id="h-model"></span></div>
   <div class="f"><label for="c-effort">思考强度</label><select id="c-effort" hidden></select><span class="hint" id="h-effort"></span></div>
-  <div class="f"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空用默认账号"><span class="hint" id="h-account"></span></div>
-  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="10" maxlength="8000" placeholder="它叫什么、什么性格、怎么说话。没写的话说话会比较像客服，可以先点「填入示例」再改。"></textarea>
+  <div class="f"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空则使用默认账号"><span class="hint" id="h-account"></span></div>
+  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="10" maxlength="8000" placeholder="填写 Bot 的名字、性格和说话方式。未填写时回复会偏向客服语气，可先点击「填入示例」再修改。"></textarea>
     <div class="persona-bar"><span class="hint" id="h-persona"></span><span style="flex:1"></span><button type="button" class="ghost small" id="s-sample">填入示例</button><button type="button" class="small" id="s-save">保存人设</button></div></div>
 </div>
 </div>
 
 <div class="pane" data-pane="act" hidden>
-<div class="pane-note">跟着玩家时怎么保护玩家。</div>
+<div class="pane-note">跟随玩家时的保护方式。</div>
 <div class="fields">
-  <div class="f"><span class="lb">主动保护</span><div class="switches"><label><input type="checkbox" class="sw" id="c-guard" checked>打靠近玩家的怪</label></div><span class="hint">关掉就只在自己挨打时还手</span></div>
-  <div class="f"><span class="lb">装备</span><div class="switches" id="c-guard-gear"><label><input type="checkbox" class="sw" id="c-guardBow" checked>用弓</label><label><input type="checkbox" class="sw" id="c-guardShield" checked>举盾</label></div></div>
+  <div class="f"><span class="lb">主动保护</span><div class="switches"><label><input type="checkbox" class="sw" id="c-guard" checked>攻击靠近玩家的敌对生物</label></div><span class="hint">关闭后仅在自身受到攻击时反击</span></div>
+  <div class="f"><span class="lb">装备</span><div class="switches" id="c-guard-gear"><label><input type="checkbox" class="sw" id="c-guardBow" checked>使用弓</label><label><input type="checkbox" class="sw" id="c-guardShield" checked>举盾</label></div></div>
   <div class="f"><label for="c-guardRadius">保护范围（格）</label><input id="c-guardRadius" type="number" min="3" max="12" placeholder="8"></div>
-  <div class="f"><label for="c-guardLowHealth">撤退血量</label><input id="c-guardLowHealth" type="number" min="4" max="16" placeholder="8"><span class="hint">满血 20，低于它就往玩家那边撤</span></div>
+  <div class="f"><label for="c-guardLowHealth">撤退血量</label><input id="c-guardLowHealth" type="number" min="4" max="16" placeholder="8"><span class="hint">满血为 20；低于此值时向玩家方向撤退</span></div>
 </div>
 </div>
 
+<div class="pane" data-pane="plug" hidden>
+<div class="pane-note"><span id="p-where">安装到「连接配置」中选择的游戏。</span><button type="button" class="small ghost" id="p-refresh">刷新</button></div>
+<div class="plug-warn" id="p-warn" hidden></div>
+<div class="plugs" id="plugs"></div>
+</div>
+
 <div class="pane" data-pane="adv" hidden>
-<div class="pane-note">一般不用动。</div>
+<div class="pane-note">通常无需修改。</div>
 <div class="fields">
-  <div class="f"><span class="lb">凭据</span><div class="seg" id="c-cred"><span class="thumb"></span><button type="button" class="on">用本机已有的登录</button><button type="button" disabled title="以后支持">API key（以后支持）</button></div></div>
-  <div class="f"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空用自带或 PATH 里的 node"></div>
-  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空用默认位置"><span class="hint" id="h-mem"></span></div>
-  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空用 runtime/blueprints"></div>
+  <div class="f"><span class="lb">凭据</span><div class="seg" id="c-cred"><span class="thumb"></span><button type="button" class="on">使用本机已有登录</button><button type="button" disabled title="暂不支持">API key（暂不支持）</button></div></div>
+  <div class="f"><label for="c-nodePath">Node 路径</label><input id="c-nodePath" placeholder="留空则使用自带或 PATH 中的 node"></div>
+  <div class="f"><label for="c-memoryDir">记忆目录</label><input id="c-memoryDir" placeholder="留空则使用默认位置"><span class="hint" id="h-mem"></span></div>
+  <div class="f"><label for="c-blueprintDir">蓝图目录</label><input id="c-blueprintDir" placeholder="留空则使用 runtime/blueprints"></div>
 </div>
 <div class="fields four" style="margin-top:14px">
-  <div class="f"><label for="c-idleMinutes">空闲提醒（分钟）</label><input id="c-idleMinutes" type="number" min="0" max="1440" placeholder="0（关）"></div>
-  <div class="f"><label for="c-resumeWindowMin">接着旧会话（分钟）</label><input id="c-resumeWindowMin" type="number" min="0" max="1440" placeholder="50"></div>
-  <div class="f"><label for="c-rotateTokens">换新会话（tokens）</label><input id="c-rotateTokens" type="number" min="0" max="2000000" step="1000" placeholder="200000"></div>
+  <div class="f"><label for="c-idleMinutes">空闲提醒（分钟）</label><input id="c-idleMinutes" type="number" min="0" max="1440" placeholder="0（关闭）"></div>
+  <div class="f"><label for="c-resumeWindowMin">沿用旧会话（分钟）</label><input id="c-resumeWindowMin" type="number" min="0" max="1440" placeholder="50"></div>
+  <div class="f"><label for="c-rotateTokens">切换新会话（tokens）</label><input id="c-rotateTokens" type="number" min="0" max="2000000" step="1000" placeholder="200000"></div>
   <div class="f"><label for="c-maxRestarts">最多重启（次）</label><input id="c-maxRestarts" type="number" min="0" max="100" placeholder="10"></div>
 </div>
 </div>
-<div class="actions"><button type="submit">保存</button><button type="button" class="primary" id="c-launch">保存并启动托管</button><button type="button" class="danger" id="c-stop">停止托管</button><span style="flex:1"></span><button type="button" class="ghost" id="c-del">删除这份配置</button></div>
+<div class="actions"><button type="submit">保存</button><button type="button" class="primary" id="c-launch">保存并启动托管</button><button type="button" class="danger" id="c-stop">停止托管</button><span style="flex:1"></span><button type="button" class="ghost" id="c-del">删除此配置</button></div>
 <div id="c-msg"></div><div class="status" id="c-status" hidden></div>
 </form></div></section>
 </div></div>
+<div class="dlg-wrap" id="p-dlg" hidden><div class="dlg glass" role="dialog" aria-modal="true" aria-labelledby="p-dlg-title">
+<h3 id="p-dlg-title"></h3><ul id="p-steps"></ul><div class="notes" id="p-notes"></div>
+<div class="prog" id="p-prog" hidden><i></i></div><div class="msg" id="p-msg"></div>
+<div class="actions"><button type="button" class="primary" id="p-ok">确认</button><button type="button" class="ghost" id="p-cancel">取消</button></div></div></div>
 <script>
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
@@ -387,7 +420,7 @@ async function post(p, b) { return api(p, { method: 'POST', headers: { 'content-
 
 // 直接当文件打开时接口都连不上，提示从 WebUI 打开
 if (location.protocol === 'file:') document.addEventListener('DOMContentLoaded', () => {
-  const b = el('div', 'glass', '这是页面文件的预览，接口连不上。请运行 node scripts/webui.mjs --open，用终端里打印的地址打开。');
+  const b = el('div', 'glass', '当前为页面文件预览，无法连接接口。请运行 node scripts/webui.mjs --open，并使用终端输出的地址打开。');
   b.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:99;padding:10px 16px;color:var(--err);font-size:13px';
   document.body.append(b);
 });
@@ -471,7 +504,7 @@ function combo(input, getItems, { footer } = {}) {
       shown = all.some((it) => it.value.toLowerCase() === q) || !q ? all : all.filter((it) => (it.value + ' ' + it.label + ' ' + (it.desc || '')).toLowerCase().includes(q));
       const nodes = shown.map((it, i) => { const n = optNode(it, i, it.value === input.value.trim()); if (i === act) n.classList.add('act');
         n.addEventListener('pointerdown', (e) => e.preventDefault()); n.onclick = () => self.pick(it.value); return n; });
-      if (!nodes.length) nodes.push(el('div', 'note', all.length ? '没有匹配的，保存时用你填的名字' : '没有可选项，可以直接填'));
+      if (!nodes.length) nodes.push(el('div', 'note', all.length ? '无匹配项，保存时使用输入的名称' : '无可选项，可直接输入'));
       const f = footer?.(); if (f) nodes.push(f);
       pop.replaceChildren(...nodes);
     },
@@ -496,14 +529,14 @@ function combo(input, getItems, { footer } = {}) {
 // ---- 监控页 ----
 let bots = [], sel = store.get('mcbot.sel', ''), offset = -1, items = [];
 const seenRows = new WeakSet();
-const TAG = { event: '事件', reply: '回复', tool: '工具', turn: '本轮', turn_start: '开始', info: '提示', error: '出错', halt: '叫停' };
+const TAG = { event: '事件', reply: '回复', tool: '工具', turn: '本轮', turn_start: '开始', info: '提示', error: '错误', halt: '叫停' };
 function botCard(b) {
   const d = el('div', 'card');
   d.innerHTML = '<div class="top"><span class="dot"></span><span class="nm"></span></div><div class="meta"></div><div class="meta"></div><div class="btns"><button class="halt">叫停</button><button class="danger stop">停止托管</button></div>';
   const h = $('.halt', d), s = $('.stop', d);
-  h.title = '停下当前动作和推理，等你在游戏里给新任务'; s.title = '关掉托管，Bot 会下线';
+  h.title = '停止当前动作和推理，等待玩家在游戏中下达新任务'; s.title = '结束托管，Bot 将下线';
   h.onclick = (e) => { e.stopPropagation(); control('halt', d._b); };
-  s.onclick = (e) => { e.stopPropagation(); if (confirm('停止托管 ' + d._b.nickname + '？Bot 会下线')) control('stop', d._b); };
+  s.onclick = (e) => { e.stopPropagation(); if (confirm('停止托管 ' + d._b.nickname + '？Bot 将下线')) control('stop', d._b); };
   d.onclick = () => select(d._b.name);
   return d;
 }
@@ -516,7 +549,7 @@ function updateBot(d, b) {
   m[1].textContent = '上下文 ' + (b.contextTokens ? Math.round(b.contextTokens / 1000) + 'k' : '—') + ' · 上次请求 ' + ago(b.lastRequestAt);
   $('.halt', d).disabled = !b.running || b.body !== 'server'; $('.stop', d).disabled = !b.running;
 }
-function renderBots() { const box = $('#bots'); if (!bots.length) return emptyIn(box, '还没有托管记录'); keyed(box, bots, (b) => b.name, botCard, updateBot); }
+function renderBots() { const box = $('#bots'); if (!bots.length) return emptyIn(box, '暂无托管记录'); keyed(box, bots, (b) => b.name, botCard, updateBot); }
 async function control(a, b) { const r = await api('/api/' + a + '?name=' + encodeURIComponent(b.name), { method: 'POST' }); if (!r.ok) alert(r.error || '失败'); }
 function select(n) { if (n === sel) return; sel = n; store.set('mcbot.sel', n); offset = -1; items = []; $('#rows').replaceChildren(); renderBots(); poll(); }
 function rowOf(it) {
@@ -526,7 +559,7 @@ function rowOf(it) {
   let text = it.text || '';
   if (chat) text = (it.from ? it.from + '：' : '') + text;
   if (k === 'tool') text = it.name + ' ' + (it.input || '');
-  if (k === 'turn_start') text = '开始一轮（' + (it.turnKind || '事件') + '）';
+  if (k === 'turn_start') text = '开始新一轮（' + (it.turnKind || '事件') + '）';
   if (it.error && k === 'turn') text += '\n' + it.error;
   d.append(el('span', 't', fmt(it.t)), el('span', 'tag', k === 'event' && it.type === 'chat' ? '聊天' : (TAG[k] || k)), el('span', 'msg', text));
   return d;
@@ -550,13 +583,13 @@ function renderNow() {
     if (it.kind === 'error' || (it.kind === 'turn' && it.error)) err = it;
   }
   const parts = ['陪伴模式：' + (mode || '无'), '最近工具：' + (tool ? tool.name + '（' + fmt(tool.t) + '）' : '—')];
-  if (err) parts.push('最近出错：' + fmt(err.t) + ' ' + (err.error || err.text || '').slice(0, 80));
+  if (err) parts.push('最近错误：' + fmt(err.t) + ' ' + (err.error || err.text || '').slice(0, 80));
   $('#now').textContent = sel ? parts.join('　·　') : '';
 }
 function renderRows() {
   renderNow();
   const box = $('#rows'), shown = items.filter(visible);
-  if (!shown.length) return emptyIn(box, sel ? '暂无记录' : '选择左边的 Bot');
+  if (!shown.length) return emptyIn(box, sel ? '暂无记录' : '请选择左侧的 Bot');
   box.replaceChildren(...shown.slice(-1500).map(rowOf));
   if ($('#f-auto').checked) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
 }
@@ -565,7 +598,7 @@ async function poll() {
     const r = await api('/api/bots'); bots = r.bots || [];
     if (!sel && bots.length) sel = (bots.find((b) => b.running) || bots[0]).name;
     renderBots();
-    const b = bots.find((x) => x.name === sel); $('#title').textContent = b ? b.nickname + ' 的记录' : '选择左边的 Bot';
+    const b = bots.find((x) => x.name === sel); $('#title').textContent = b ? b.nickname + ' 的记录' : '请选择左侧的 Bot';
     if (sel) {
       const first = offset < 0;
       const a = await api('/api/activity?name=' + encodeURIComponent(sel) + '&after=' + offset);
@@ -573,7 +606,7 @@ async function poll() {
       if (first || a.items.length) { items = items.concat(a.items).slice(-3000); renderRows(); }
       offset = a.offset;
     } else renderRows();
-  } catch (e) { $('#title').textContent = '连不上 WebUI 服务：' + e.message; }
+  } catch (e) { $('#title').textContent = '无法连接 WebUI 服务：' + e.message; }
 }
 for (const id of ['#f-tool', '#f-info']) $(id).onchange = () => { items.forEach((it) => seenRows.add(it)); renderRows(); };
 poll(); setInterval(poll, 1500);
@@ -583,7 +616,7 @@ let cfg = null, cur = null, cfgTimer = 0, models = null, modelsKey = '', modelsL
 const NUMS = ['port', 'idleMinutes', 'resumeWindowMin', 'rotateTokens', 'maxRestarts', 'guardRadius', 'guardLowHealth'];
 const SWITCHES = ['guard', 'guardBow', 'guardShield'];
 const TEXTS = ['label', 'configDir', 'model', 'nickname', 'memoryDir', 'blueprintDir', 'nodePath'];
-const EFFORT_DESC = { low: '快、省额度', medium: '均衡', high: '更仔细', xhigh: '很仔细', max: '最强', ultra: '最强，最慢' };
+const EFFORT_DESC = { low: '速度快、额度消耗少', medium: '均衡', high: '较精细', xhigh: '精细', max: '最强', ultra: '最强、最慢' };
 function say(t, err) { const m = $('#c-msg'); m.textContent = t || ''; m.className = err ? 'err' : ''; if (t) { void m.offsetWidth; m.classList.add('show'); } }
 function opts(select, list, label) { select.replaceChildren(...list.map((v) => { const o = el('option'); o.value = v; o.textContent = label ? label(v) : v; return o; })); }
 
@@ -594,7 +627,7 @@ const accountCombo = combo($('#c-configDir'), () => (cfg?.accounts[$('#c-agent')
 let appearanceWant = '', appearanceSeq = 0, looks = { list: [], labels: {} };
 const glyph = (s) => (String(s || '?').replace(/^[^\p{L}\p{N}]+/u, '')[0] || '?').toUpperCase();
 function lookLabel(v) {
-  if (!v) return { name: '不设置', sub: '保持游戏里现在的样子' };
+  if (!v) return { name: '不设置', sub: '保持游戏中的当前外观' };
   const i = v.indexOf('='), src = v.slice(0, i), c = v.slice(i + 1), l = looks.labels[c];
   return { name: l?.name || c.replace(/\.ysm$/i, ''), sub: (src === 'yes_steve_model:model' ? 'YSM' : src) + (l?.authors?.length ? ' · ' + l.authors.join('、') : ' · ' + c) };
 }
@@ -612,13 +645,13 @@ function renderLooks() {
 /** Models the server offers; the list needs the world to be open. */
 async function loadAppearances() {
   const seq = ++appearanceSeq, dir = gameDir;
-  const r = dir ? await post('/api/appearances', { dir }) : { ok: false, error: '先在「连接配置」选游戏' };
+  const r = dir ? await post('/api/appearances', { dir }) : { ok: false, error: '请先在「连接配置」中选择游戏' };
   if (seq !== appearanceSeq) return;
   looks = { list: [], labels: r.labels || {} };
   if (r.ok) for (const s of r.sources) for (const c of s.choices) looks.list.push(s.id + '=' + c);
   renderLooks();
   const h = $('#h-appearance');
-  h.textContent = r.ok ? (r.offline ? '世界没开，这里是游戏目录里的模型；启动托管时给 Bot 换上' : looks.list.length ? '每次启动托管时给 Bot 换上；装了 YSM 才有模型' : '游戏里没有可选的模型（要装 YSM 和它的适配模组）') : '读不到模型列表：' + r.error + '。世界开着时才能读，已选的会保留';
+  h.textContent = r.ok ? (r.offline ? '世界未运行，以下为游戏目录中的模型；启动托管时应用到 Bot' : looks.list.length ? '每次启动托管时应用到 Bot；需安装 YSM 才有可选模型' : '游戏中无可选模型（需安装 YSM 及其适配插件）') : '无法读取模型列表：' + r.error + '。仅在世界运行时可读取，已选项将保留';
   h.className = 'hint' + (r.ok ? '' : ' errc');
 }
 
@@ -627,8 +660,8 @@ async function loadAppearances() {
 let games = [], gamesLoaded = false, gameSeq = 0;
 let mode = 'lan', gameDir = '', picked = { lan: '', server: '' };
 const MODE_TEXT = {
-  lan: { note: 'Bot 进你自己开的单人世界。进世界后按 Esc，点「对局域网开放」。', add: '列表里没有？粘贴启动器实例的游戏目录（有 mods 文件夹的那个）', empty: '没找到本机的游戏，在下面粘贴游戏目录' },
-  server: { note: 'Bot 进这台电脑上开的服务器。服务器在别的电脑上的话，要在那台电脑上打开 mcbot。', add: '粘贴服务器目录（有 server.properties 的那个）', empty: '还没添加服务器，在下面粘贴服务器目录' },
+  lan: { note: 'Bot 加入本机打开的单人世界。进入世界后按 Esc，选择「对局域网开放」。', add: '列表中没有所需游戏时，请粘贴启动器实例的游戏目录（包含 mods 文件夹）', empty: '未找到本机游戏，请在下方粘贴游戏目录' },
+  server: { note: 'Bot 加入本机运行的服务器。服务器位于其他电脑时，需在该电脑上运行 mcbot。', add: '粘贴服务器目录（包含 server.properties）', empty: '尚未添加服务器，请在下方粘贴服务器目录' },
 };
 const sameFile = (a, b) => !!a && !!b && a.replace(/\//g, '\\').toLowerCase() === b.replace(/\//g, '\\').toLowerCase();
 const curGame = () => games.find((g) => sameFile(g.dir, gameDir)) || null;
@@ -641,7 +674,7 @@ function setMode(m) {
 for (const b of document.querySelectorAll('#c-mode button')) b.onclick = () => {
   if (b.dataset.mode === mode) return;
   const before = gameDir; setMode(b.dataset.mode); $('#h-conn').className = 'hint'; renderGames();
-  if (gameDir !== before) { loadAppearances(); loadPersona(); }
+  if (gameDir !== before) { loadAppearances(); loadPersona(); loadPlugins(); }
 };
 async function loadGames() {
   const seq = ++gameSeq; let r;
@@ -650,22 +683,22 @@ async function loadGames() {
   games = r.ok ? r.games : []; gamesLoaded = true; renderGames();
 }
 function gameNote(g) {
-  if (g.core === 'missing') return ['err', '没装核心模组', '把包里 mods 文件夹的 jar 放进这个游戏的 mods'];
-  if (g.core === 'different') return ['warn', '核心模组是旧版', '和这个包里的不一样，换成包里 mods 文件夹的 jar'];
+  if (g.core === 'missing') return ['err', '未安装核心模组', '选中后可在「插件」中安装'];
+  if (g.core === 'different') return ['warn', '核心模组为旧版本', '与当前安装包中的版本不一致，选中后可在「插件」中更新'];
   if (g.type === 'server') {
-    if (!g.hasConnection) return ['warn', '服务器还没开过', '装好核心模组后先开一次服务器'];
-    return g.online ? ['ok', '服务器开着', '可以启动托管'] : ['', '服务器没开', '启动托管前先开服务器'];
+    if (!g.hasConnection) return ['warn', '服务器尚未启动过', '安装核心模组后，请先启动一次服务器'];
+    return g.online ? ['ok', '服务器运行中', '可以启动托管'] : ['', '服务器未运行', '启动托管前请先启动服务器'];
   }
-  if (!g.hasConnection) return ['warn', '还没开过世界', '进游戏开世界，按 Esc 点「对局域网开放」'];
-  return g.online ? ['ok', '世界开着', '可以启动托管'] : ['', '世界没开', '启动托管前先进游戏开世界，再对局域网开放'];
+  if (!g.hasConnection) return ['warn', '尚未打开过世界', '进入游戏并打开世界，按 Esc 选择「对局域网开放」'];
+  return g.online ? ['ok', '世界运行中', '可以启动托管'] : ['', '世界未运行', '启动托管前，请先进入游戏打开世界，并对局域网开放'];
 }
 function renderGames() {
   const box = $('#games'), sel = curGame(), list = games.filter((g) => g.type === mode);
-  if (!list.length) { box.replaceChildren(el('div', 'empty', gamesLoaded ? MODE_TEXT[mode].empty : '正在找本机的游戏…')); }
+  if (!list.length) { box.replaceChildren(el('div', 'empty', gamesLoaded ? MODE_TEXT[mode].empty : '正在查找本机游戏…')); }
   else box.replaceChildren(...list.map((g) => {
     const b = el('button', 'game' + (sel === g ? ' sel' : '')); b.type = 'button';
     const top = el('div', 'gt'); top.append(el('span', 'dot' + (g.online ? ' on' : '')), el('b', '', g.name), el('span', 'chip', g.kind));
-    if (g.manual) { const x = el('span', 'gx', '移除'); x.title = '从列表里移除（不删文件）'; x.onclick = async (e) => { e.stopPropagation(); await post('/api/games/remove', { dir: g.dir }); loadGames(); }; top.append(x); }
+    if (g.manual) { const x = el('span', 'gx', '移除'); x.title = '从列表中移除（不删除文件）'; x.onclick = async (e) => { e.stopPropagation(); await post('/api/games/remove', { dir: g.dir }); loadGames(); }; top.append(x); }
     const [cls, note, tip] = gameNote(g), chips = el('div', 'chips'), nc = el('span', 'chip ' + cls, note);
     nc.title = tip; chips.append(nc); b.title = note + '：' + tip;
     if (g.username) chips.append(el('span', 'chip', 'Bot：' + g.username));
@@ -679,7 +712,7 @@ function renderGames() {
   if (sel && sel.username && !n.value.trim() && document.activeElement !== n) n.value = sel.username;
   const h = $('#h-conn');
   if (h.className.includes('okc') || h.className.includes('errc')) { /* 刚添加的结果，留着 */ }
-  else if (!sel && gameDir && gamesLoaded) { h.textContent = '之前选的目录现在找不到了，重新点一个'; h.className = 'hint errc'; }
+  else if (!sel && gameDir && gamesLoaded) { h.textContent = '未找到之前选择的目录，请重新选择'; h.className = 'hint errc'; }
   else h.textContent = '';
   syncRole(); tabDots();
 }
@@ -688,30 +721,127 @@ function pickGame(g) {
   gameDir = picked[mode] = g.dir; $('#h-conn').className = 'hint';
   // 还没填名字就用游戏里现在的
   if (!$('#r-name').value.trim() && g.username) $('#r-name').value = g.username;
-  renderGames(); loadAppearances(); loadPersona();
+  renderGames(); loadAppearances(); loadPersona(); loadPlugins();
 }
 /** 角色区：游戏名存在配置里，保存时写进游戏；头像用昵称或游戏名的第一个字。 */
 function syncRole() {
   const g = curGame(), name = $('#r-name').value.trim(), h = $('#h-name');
-  if (name && !/^[A-Za-z0-9_]{1,16}$/.test(name)) { h.textContent = '只能用英文字母、数字和下划线，最多 16 个'; h.className = 'hint errc'; }
+  if (name && !/^[A-Za-z0-9_]{1,16}$/.test(name)) { h.textContent = '仅可使用英文字母、数字和下划线，最多 16 个字符'; h.className = 'hint errc'; }
   else if (g && g.username && name && name !== g.username) {
-    h.textContent = '游戏里现在叫 ' + g.username + '，保存后改成 ' + name + (g.online ? '；世界开着，要退出世界再进来才换名' : '，下次开世界生效'); h.className = 'hint';
-  } else { h.textContent = 'Bot 在游戏里显示的名字，保存时写进游戏'; h.className = 'hint'; }
+    h.textContent = '游戏中的当前名称为 ' + g.username + '，保存后改为 ' + name + (g.online ? '；世界运行中，需退出并重新进入世界后生效' : '，下次打开世界时生效'); h.className = 'hint';
+  } else { h.textContent = 'Bot 在游戏中显示的名称，保存时写入游戏配置'; h.className = 'hint'; }
   const a = $('#r-avatar span'), t = glyph($('#c-nickname').value.trim() || name || '?');
   if (a.textContent !== t) { a.textContent = t; const av = $('#r-avatar'); av.classList.remove('bump'); void av.offsetWidth; av.classList.add('bump'); }
 }
 $('#r-name').addEventListener('input', syncRole);
 $('#c-nickname').addEventListener('input', syncRole);
-$('#g-refresh').onclick = () => { loadGames(); loadAppearances(); };
+$('#g-refresh').onclick = () => { loadGames(); loadAppearances(); loadPlugins(); };
 $('#g-add').onclick = async () => {
   const r = await post('/api/games/add', { dir: $('#g-dir').value.trim() }), h = $('#h-conn');
   h.textContent = r.ok ? '已添加' : r.error; h.className = 'hint ' + (r.ok ? 'okc' : 'errc');
   if (r.ok) {
     $('#g-dir').value = ''; await loadGames();
     const g = games.find((x) => x.dir.toLowerCase().startsWith(r.dir.toLowerCase()));
-    if (g) { pickGame(g); h.textContent = g.type === 'server' ? '已添加，是服务器目录' : '已添加'; h.className = 'hint okc'; }
+    if (g) { pickGame(g); h.textContent = g.type === 'server' ? '已添加（服务器目录）' : '已添加'; h.className = 'hint okc'; }
   }
 };
+
+// ---- 插件：按 compat.json 把核心和各个适配装进选中的游戏；先看计划，确认后才动文件 ----
+let plug = null, plugSeq = 0, plugErr = '';
+const OVERALL = { ok: ['ok', '已安装'], fix: ['warn', '需修复'], none: ['', '未安装'] };
+async function loadPlugins() {
+  const seq = ++plugSeq, dir = gameDir;
+  let r = { ok: false, error: '请先在「连接配置」中选择游戏' };
+  if (dir) { try { r = await post('/api/plugins', { dir }); } catch (e) { r = { ok: false, error: e.message }; } }
+  if (seq !== plugSeq) return;
+  plug = r.ok ? r : null; plugErr = r.ok ? '' : r.error; renderPlugins(); tabDots();
+}
+function partChip(x) {
+  let cls = x.state === 'ok' ? 'ok' : x.state === 'missing' ? 'err' : 'warn', t;
+  if (x.kind === 'jar' || x.kind === 'core') t = x.label + (x.state === 'ok' ? ' ✓' : x.state === 'different' ? '：旧版本' : '：未安装');
+  else if (x.kind === 'mod') t = x.modId + ' ' + x.want + (x.state === 'ok' ? ' ✓' : x.state === 'wrong' ? '：当前版本 ' + (x.version || '其他版本') : '：未安装');
+  else t = x.label + (x.state === 'ok' ? ' ✓' : x.state === 'broken' ? '：文件无法读取' : x.state === 'wrong' ? '：版本不匹配' : '：未配置');
+  const c = el('span', 'chip ' + cls, t);
+  c.title = x.kind === 'mod' ? (x.state === 'ok' ? x.file : x.state === 'wrong' ? '需更换为 ' + x.want + '（' + (x.files || []).join('、') + '）' : '将从 Modrinth 下载 ' + x.download.file)
+    : x.kind === 'core' ? '安装此插件时一并安装核心模组'
+    : x.kind === 'jar' ? (x.state === 'missing' ? (x.packaged ? '安装包自带，直接复制' : '安装包中缺少此 jar') : x.files?.join('、') || x.file) : x.file;
+  return c;
+}
+function plugCard() {
+  const d = el('div', 'plug');
+  d.innerHTML = '<div class="pt"><b></b><small></small><span class="chip"></span></div><div class="pw"></div><div class="chips"></div><div class="pb"><span class="meta"></span><button type="button" class="small go"></button><button type="button" class="small ghost un">卸载</button></div>';
+  $('.go', d).onclick = () => pluginAction(d._p, 'install');
+  $('.un', d).onclick = () => pluginAction(d._p, 'uninstall');
+  return d;
+}
+function updatePlug(d, p) {
+  d._p = p; const core = p.kind === 'core', [cls, text] = OVERALL[p.overall];
+  d.className = 'plug st-' + p.overall + (core ? ' core' : '');
+  $('.pt b', d).textContent = p.name; $('.pt small', d).textContent = core ? '必装' : p.nameEn && p.nameEn !== p.name ? p.nameEn : '';
+  const c = $('.pt .chip', d); c.className = 'chip ' + (core && p.overall === 'none' ? 'err' : cls); c.textContent = core && p.overall === 'fix' ? '需更新' : text;
+  $('.pw', d).textContent = (p.what || []).join('；');
+  $('.chips', d).replaceChildren(...p.parts.map(partChip));
+  $('.meta', d).textContent = p.evidence ? '验证：' + p.evidence : ''; $('.meta', d).title = $('.meta', d).textContent;
+  const go = $('.go', d), un = $('.un', d), blocked = !!plug?.online;
+  go.hidden = !p.canInstall; go.textContent = p.overall === 'none' ? '安装' : core ? '更新' : '修复'; go.className = 'small go' + (p.overall === 'none' ? ' primary' : '');
+  un.hidden = !p.canUninstall; go.disabled = un.disabled = blocked;
+  go.title = un.title = blocked ? '游戏运行中，无法修改。请先关闭游戏' : '';
+}
+function renderPlugins() {
+  const box = $('#plugs'), w = $('#p-warn'), g = curGame();
+  $('#p-where').textContent = g ? '安装到「' + g.name + '」（' + (g.type === 'server' ? '服务器' : '单人 / 局域网') + '）。安装后需重启' + (g.type === 'server' ? '服务器' : '游戏') + '才生效。' : '安装到「连接配置」中选择的游戏。';
+  if (!plug) { w.hidden = true; return emptyIn(box, plugErr || '读取中…'); }
+  w.hidden = !plug.online && plug.type !== 'server';
+  w.textContent = plug.online ? (plug.type === 'server' ? '服务器运行中：请先关闭服务器，再安装或卸载。' : '世界运行中：请先退出世界并关闭游戏，再安装或卸载。')
+    : '服务器模式：标注「客户端也需安装」的模组，加入服务器的玩家也需在自己的游戏中安装相同版本。';
+  keyed(box, [plug.core, ...plug.plugins], (p) => p.id, plugCard, updatePlug);
+}
+$('#p-refresh').onclick = loadPlugins;
+
+const STEP = {
+  download: (s) => ['dl', '下载', s.file + '（' + s.sizeText + '，来自 ' + s.source + (s.license ? '，许可证 ' + s.license : '') + '）'],
+  add: (s) => ['add', '复制到 mods', s.file + '（' + (s.from === 'package' ? '安装包自带' : '已下载') + '）'],
+  remove: (s) => ['rm', '移到备份', s.file + '（' + s.why + '）'],
+  config: (s) => ['cf', '修改配置', s.file + '：' + (s.set ? '启用 ' + Object.entries(s.set).map(([m, v]) => m + ' ' + v).join('、') : '移除 ' + s.unset.join('、'))],
+};
+let dlgTimer = 0, dlgRun = null;
+function closeDlg() { clearInterval(dlgTimer); dlgRun = null; $('#p-dlg').hidden = true; }
+async function pluginAction(p, action) {
+  const dir = gameDir, r = await post('/api/plugins/plan', { dir, id: p.id, action });
+  if (!r.ok) return showDlg(p.name, [], [], r.error, true);
+  if (r.nothing) return showDlg(p.name, [], [], '已安装，无需修改', false), loadPlugins();
+  showDlg((action === 'install' ? (p.overall === 'none' ? '安装 ' : '修复 ') : '卸载 ') + p.name, r.steps, r.notes, '', false, async () => {
+    const a = await post('/api/plugins/apply', { dir, id: p.id, action });
+    if (!a.ok) return dlgDone({ ok: false, error: a.error });
+    $('#p-ok').disabled = true; $('#p-cancel').hidden = true; $('#p-msg').textContent = '执行中…'; $('#p-msg').className = 'msg';
+    dlgTimer = setInterval(async () => {
+      let j; try { j = (await api('/api/plugins/job')).job; } catch { return; }
+      if (!j) return;
+      const bar = $('#p-prog');
+      if (j.phase === 'download' && j.total) { bar.hidden = false; $('i', bar).style.width = Math.round(j.bytes * 100 / j.total) + '%'; $('#p-msg').textContent = '下载 ' + j.file + '… ' + Math.round(j.bytes / 1048576 * 10) / 10 + ' / ' + Math.round(j.total / 1048576 * 10) / 10 + ' MB'; }
+      else if (j.phase === 'files') { $('i', bar).style.width = '100%'; $('#p-msg').textContent = '正在复制文件…'; }
+      if (j.done) { clearInterval(dlgTimer); dlgDone(j.result); }
+    }, 500);
+  });
+}
+function showDlg(title, steps, notes, msg, err, run) {
+  $('#p-dlg-title').textContent = title;
+  $('#p-steps').replaceChildren(...steps.map((s) => { const [cls, verb, text] = STEP[s.op](s), li = el('li', cls); li.append(el('b', '', verb), document.createTextNode(text)); return li; }));
+  $('#p-notes').replaceChildren(...notes.map((n) => el('div', '', '· ' + n)));
+  $('#p-prog').hidden = true; $('#p-prog i').style.width = '0';
+  $('#p-msg').textContent = msg; $('#p-msg').className = 'msg' + (err ? ' errc' : '');
+  dlgRun = run || null; $('#p-ok').disabled = false; $('#p-ok').textContent = run ? '确认' : '确定'; $('#p-cancel').hidden = !run;
+  $('#p-dlg').hidden = false; $('#p-ok').focus();
+}
+function dlgDone(r) {
+  dlgRun = null; $('#p-ok').disabled = false; $('#p-ok').textContent = '关闭'; $('#p-cancel').hidden = true;
+  $('#p-msg').textContent = r.ok ? '已完成。' + (r.backup ? '\n旧文件已移至 ' + r.backup : '') + (r.notes?.length ? '\n' + r.notes.filter((n) => !/mcbot-backups/.test(n)).join('\n') : '') : (r.error || '失败') + (r.rolledBack ? '\n已恢复原状。' : '');
+  $('#p-msg').className = 'msg ' + (r.ok ? 'okc' : 'errc');
+  loadPlugins(); loadGames();
+}
+$('#p-ok').onclick = () => { if (dlgRun) { const run = dlgRun; dlgRun = null; run(); } else closeDlg(); };
+$('#p-cancel').onclick = closeDlg;
+$('#p-dlg').addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#p-cancel').hidden) closeDlg(); });
 
 // ---- 人设：托管时带上的 persona.md ----
 let persona = { loaded: false, exists: false, file: '', sample: '', key: '' }, personaDirty = false;
@@ -720,30 +850,30 @@ function personaQuery() { const g = curGame(); return { agent: $('#c-agent').val
 async function loadPersona(force) {
   const q = personaQuery(), key = JSON.stringify(q);
   if (!force && key === persona.key && persona.loaded) return;
-  if (personaDirty && !force && !confirm('人设还没保存，换了位置会丢掉改动。继续？')) return;
+  if (personaDirty && !force && !confirm('人设尚未保存，切换后改动将丢失。是否继续？')) return;
   persona.key = key;
   const r = await post('/api/persona', q), h = $('#h-persona');
   if (key !== persona.key) return;
   persona = { ...persona, loaded: r.ok, exists: !!r.exists, file: r.file || '', sample: r.sample || persona.sample };
   $('#s-persona').value = r.ok ? r.text : ''; personaDirty = false;
   $('#s-persona').disabled = !r.ok; $('#s-save').disabled = $('#s-sample').disabled = !r.ok;
-  h.textContent = !r.ok ? r.error : r.exists ? '已有人设（鼠标停在这里看文件位置）' : '还没写人设';
+  h.textContent = !r.ok ? r.error : r.exists ? '已有人设（悬停可查看文件位置）' : '尚未填写人设';
   h.title = r.file || ''; tabDots(); h.className = 'hint' + (r.ok ? '' : ' errc');
 }
 $('#s-persona').addEventListener('input', () => { personaDirty = true; tabDots(); });
 $('#s-sample').onclick = () => {
   const t = $('#s-persona');
-  if (t.value.trim() && !confirm('用示例替换现在的人设？')) return;
+  if (t.value.trim() && !confirm('使用示例替换当前人设？')) return;
   t.value = persona.sample; personaDirty = true; t.focus();
 };
 $('#s-save').onclick = async () => {
   const r = await post('/api/persona', { ...personaQuery(), save: true, text: $('#s-persona').value }), h = $('#h-persona');
-  if (r.ok) { personaDirty = false; persona.exists = true; h.textContent = '已保存，下次启动托管生效'; h.title = r.file; h.className = 'hint okc'; tabDots(); }
+  if (r.ok) { personaDirty = false; persona.exists = true; h.textContent = '已保存，下次启动托管时生效'; h.title = r.file; h.className = 'hint okc'; tabDots(); }
   else { h.textContent = r.error; h.className = 'hint errc'; }
 };
 $('#c-memoryDir').addEventListener('change', () => loadPersona());
 const modelCombo = combo($('#c-model'), () => {
-  const list = models?.models?.length ? models.models : (cfg?.agents[$('#c-agent').value]?.fallbackModels || []).map((v) => ({ value: v, label: v, desc: '别名，总是最新版' }));
+  const list = models?.models?.length ? models.models : (cfg?.agents[$('#c-agent').value]?.fallbackModels || []).map((v) => ({ value: v, label: v, desc: '别名，始终指向最新版本' }));
   return list.map((m) => ({ value: m.value, label: m.label, code: m.value, desc: m.desc }));
 }, { footer: () => {
   const f = el('div', 'note');
@@ -766,8 +896,8 @@ function renderModelHint() {
   const h = $('#h-model'); h.replaceChildren(); h.className = 'hint';
   if (modelsLoading) { h.append(el('span', '', '正在从本机 CLI 读取模型…')); return; }
   if (models?.ok) h.append(el('span', '', '来自 ' + models.source + '，' + models.models.length + ' 个' + (models.cached ? '（' + ago(models.fetchedAt) + '读取）' : '')));
-  else if (models?.error) { h.append(el('span', '', '读不到列表：' + models.error)); h.classList.add('errc'); }
-  else h.append(el('span', '', '留空用 Agent 的默认模型'));
+  else if (models?.error) { h.append(el('span', '', '无法读取列表：' + models.error)); h.classList.add('errc'); }
+  else h.append(el('span', '', '留空则使用 Agent 的默认模型'));
   const b = el('button', 'small ghost', '重新读取'); b.type = 'button'; b.onclick = () => loadModels(true); h.append(b);
 }
 function modelInfo() { const v = $('#c-model').value.trim(); return models?.models?.find((m) => m.value === v || m.value.toLowerCase() === v.toLowerCase()) || null; }
@@ -781,11 +911,11 @@ function updateEfforts(want) {
   effortDD.sync();
   const h = $('#h-effort');
   // CLI 没列出档位（比如 Claude 的 Haiku）不代表不支持，照样给全部档位
-  h.textContent = info && !info.efforts.length ? (models?.source || 'CLI') + ' 没列出 ' + info.label + ' 的档位，这里给出全部' : info ? info.label + ' 支持 ' + list.join('、') : '越高越聪明，也越慢、越费额度；试玩一般用 low';
+  h.textContent = info && !info.efforts.length ? (models?.source || 'CLI') + ' 未列出 ' + info.label + ' 的档位，此处显示全部档位' : info ? info.label + ' 支持 ' + list.join('、') : '强度越高效果越好，但速度越慢、额度消耗越多；试玩建议使用 low';
 }
 // refill：重新填表单（第一次打开、保存或删除之后）；定时刷新只更新列表和状态，不动正在填的表单
 async function loadCfg(refill) {
-  try { cfg = await api('/api/profiles'); } catch (e) { say('连不上 WebUI 服务：' + e.message, true); return; }
+  try { cfg = await api('/api/profiles'); } catch (e) { say('无法连接 WebUI 服务：' + e.message, true); return; }
   if (!$('#c-agent').options.length) opts($('#c-agent'), Object.keys(cfg.agents), (k) => cfg.agents[k].label);
   if (cur && cur.id) cur = cfg.profiles.find((x) => x.id === cur.id) || null;
   if (refill || !$('#cform').dataset.filled) { if (!cur) cur = cfg.profiles[0] || null; fill(cur || blank()); }
@@ -805,9 +935,9 @@ function updateProfile(d, p) {
   $('.nm', d).textContent = p.label;
   const m = d.querySelectorAll('.meta');
   m[0].textContent = cfg.agents[p.agent].label + ' · ' + (p.model || '默认模型') + ' · ' + p.effort;
-  m[1].textContent = (p.mode === 'server' ? '服务器' : '局域网') + ' · ' + (p.name || '还没起名') + ' · ' + (p.running ? '在线' : ended ? ENDED[ended] : '未启动');
+  m[1].textContent = (p.mode === 'server' ? '服务器' : '局域网') + ' · ' + (p.name || '未命名') + ' · ' + (p.running ? '在线' : ended ? ENDED[ended] : '未启动');
 }
-function renderProfiles() { const box = $('#profiles'); if (!cfg.profiles.length) return emptyIn(box, '还没有配置，点右上角新建'); keyed(box, cfg.profiles, (p) => p.id, profileCard, updateProfile); }
+function renderProfiles() { const box = $('#profiles'); if (!cfg.profiles.length) return emptyIn(box, '暂无配置，请点击右上角「新建」'); keyed(box, cfg.profiles, (p) => p.id, profileCard, updateProfile); }
 function fill(p) {
   $('#cform').dataset.filled = '1'; $('#c-title').textContent = p.id ? '编辑：' + p.label : '新配置';
   for (const k of TEXTS) $('#c-' + k).value = p[k] || '';
@@ -816,7 +946,7 @@ function fill(p) {
   guardGear();
   // 先定好游戏目录：外观和人设都按它读
   picked = { lan: '', server: '' }; picked[p.mode || 'lan'] = p.gameDir || ''; setMode(p.mode || 'lan'); $('#h-conn').className = 'hint';
-  appearanceWant = p.appearance || ''; renderLooks(); loadAppearances();
+  appearanceWant = p.appearance || ''; renderLooks(); loadAppearances(); loadPlugins();
   $('#c-agent').value = p.agent || 'claude'; agentDD.sync();
   $('#r-name').value = p.username || ''; personaDirty = false; persona.key = '';
   onAgent(p.effort);
@@ -824,7 +954,7 @@ function fill(p) {
   renderGames();
   $('#c-del').disabled = !p.id; say('');
 }
-const ENDED = { disconnected: '游戏关了，已结束', stopped: '已停止', crashed: '托管中途退出', failed: '上次启动失败' };
+const ENDED = { disconnected: '游戏已关闭，托管结束', stopped: '已停止', crashed: '托管异常退出', failed: '上次启动失败' };
 /** Bow and shield only matter while guarding. */
 function guardGear() { const on = $('#c-guard').checked; for (const l of document.querySelectorAll('#c-guard-gear label')) l.classList.toggle('off', !on); for (const id of ['#c-guardRadius', '#c-guardLowHealth']) $(id).disabled = !on; }
 function onAgent(effort) {
@@ -850,10 +980,10 @@ function collect() {
   return o;
 }
 async function save() {
-  if (!gameDir) { say(mode === 'server' ? '先在「连接配置」选一个服务器' : '先在「连接配置」选一个游戏', true); setPane('conn'); return null; }
+  if (!gameDir) { say(mode === 'server' ? '请先在「连接配置」中选择服务器' : '请先在「连接配置」中选择游戏', true); setPane('conn'); return null; }
   if (personaDirty && persona.loaded) await $('#s-save').onclick();
   const r = await post('/api/profiles/save', collect()); if (!r.ok) { say(r.error || '保存失败', true); return null; } cur = r.profile; await loadCfg(true); loadGames();
-  say(r.renamed ? (r.online ? '已保存。名字已写进游戏，世界开着：退出世界再进来才会换成 ' + r.profile.username : '已保存，下次开世界就叫 ' + r.profile.username) : '已保存'); return cur; }
+  say(r.renamed ? (r.online ? '已保存。名称已写入游戏配置；世界运行中，需退出并重新进入世界后改为 ' + r.profile.username : '已保存，下次打开世界时名称为 ' + r.profile.username) : '已保存'); return cur; }
 let lastStatus = '';
 function renderStatus() {
   const box = $('#c-status'), p = cur && cur.id && cfg.profiles.find((x) => x.id === cur.id);
@@ -861,11 +991,11 @@ function renderStatus() {
   $('#c-stop').disabled = !alive; $('#c-launch').disabled = alive;
   if (!p) { box.hidden = true; lastStatus = ''; return; }
   const l = p.launch; let cls = '', text;
-  if (p.running) { text = '在线：' + p.name + ' 正在托管，去「监控」看记录'; cls = 'okc'; }
+  if (p.running) { text = '在线：' + p.name + ' 托管中，可在「监控」查看记录'; cls = 'okc'; }
   else if (l && l.exitCode === null && l.waiting) { text = '等待中：' + l.waiting; cls = 'waitc'; }
   else if (l && l.exitCode === null) text = '启动中…（' + Math.round((Date.now() - l.startedAt) / 1000) + ' 秒）';
-  else if (l && (l.ended === 'disconnected' || l.ended === 'stopped')) text = l.ended === 'disconnected' ? '游戏关了或退出了世界，托管已结束。进游戏后再点「启动托管」' : '托管已停止';
-  else if (l) { text = (l.ended === 'crashed' ? '托管跑了一阵后退出了' : '启动失败') + '（退出码 ' + l.exitCode + '）' + (l.error ? '：' + l.error : ''); cls = 'errc'; }
+  else if (l && (l.ended === 'disconnected' || l.ended === 'stopped')) text = l.ended === 'disconnected' ? '游戏已关闭或已退出世界，托管已结束。进入游戏后请重新点击「启动托管」' : '托管已停止';
+  else if (l) { text = (l.ended === 'crashed' ? '托管运行后异常退出' : '启动失败') + '（退出码 ' + l.exitCode + '）' + (l.error ? '：' + l.error : ''); cls = 'errc'; }
   else { const g = p.connection; text = g.ok || !/找不到|不是服务器|服务器目录/.test(g.error || '') ? '未启动' : g.error; cls = text === '未启动' ? '' : 'errc'; }
   const log = l && l.log && !p.running ? l.log : '';
   const sig = cls + text.replace(/\d+ 秒/, '') + log;
@@ -884,15 +1014,15 @@ $('#c-new').onclick = () => { cur = null; fill(blank()); renderProfiles(); rende
 $('#c-launch').onclick = async () => {
   const p = await save(); if (!p) return;
   const r = await post('/api/profiles/launch', { id: p.id });
-  say(r.ok ? '已启动 ' + r.name + '：世界开好、对局域网开放后就会连上' : r.error || '启动失败', !r.ok); loadCfg();
+  say(r.ok ? '已启动 ' + r.name + '：世界打开并对局域网开放后将自动连接' : r.error || '启动失败', !r.ok); loadCfg();
 };
 $('#c-stop').onclick = async () => {
   const p = cur && cfg.profiles.find((x) => x.id === cur.id);
-  if (!p || !p.name || !confirm(p.running ? '停止托管 ' + p.name + '？Bot 会下线' : '不再等世界、停止托管 ' + p.name + '？')) return;
+  if (!p || !p.name || !confirm(p.running ? '停止托管 ' + p.name + '？Bot 将下线' : '停止等待世界并停止托管 ' + p.name + '？')) return;
   const r = await api('/api/stop?name=' + encodeURIComponent(p.name), { method: 'POST' }); say(r.ok ? '已发出停止' : r.error || '失败', !r.ok); loadCfg();
 };
 $('#c-del').onclick = async () => {
-  if (!cur || !cur.id || !confirm('删除配置「' + cur.label + '」？不影响正在托管的 Bot')) return;
+  if (!cur || !cur.id || !confirm('删除配置「' + cur.label + '」？正在托管的 Bot 不受影响')) return;
   const r = await post('/api/profiles/delete', { id: cur.id }); if (!r.ok) { say(r.error || '删除失败', true); return; } cur = null; loadCfg(true);
 };
 $('#c-guard').onchange = guardGear;
@@ -913,9 +1043,12 @@ setPane(store.get('mcbot.pane', 'conn'));
 function tabDots() {
   const g = curGame(), c = $('#t-conn'), s = $('#t-soul');
   c.className = 'tdot ' + (!g ? (gameDir && !gamesLoaded ? '' : 'warn') : g.core === 'missing' ? 'err' : g.core === 'different' || !g.hasConnection ? 'warn' : g.online ? 'ok' : '');
-  c.title = !g ? '还没选游戏' : gameNote(g)[1];
+  c.title = !g ? '尚未选择游戏' : gameNote(g)[1];
   s.className = 'tdot ' + (persona.loaded && !persona.exists && !$('#s-persona').value.trim() ? 'warn' : '');
-  s.title = s.className.includes('warn') ? '还没写人设' : '';
+  s.title = s.className.includes('warn') ? '尚未填写人设' : '';
+  const pd = $('#t-plug'), core = plug?.core?.overall;
+  pd.className = 'tdot ' + (!plug ? '' : core === 'none' ? 'err' : core === 'fix' || plug.plugins.some((x) => x.overall === 'fix') ? 'warn' : '');
+  pd.title = !plug ? '' : core === 'none' ? '未安装核心模组' : core === 'fix' ? '核心模组需更新' : pd.className.includes('warn') ? '部分插件需修复' : '';
 }
 // 分段选择的滑块
 function placeThumb(seg) { const on = $('button.on', seg), t = $('.thumb', seg); if (!on || !on.offsetWidth) return; t.style.left = on.offsetLeft + 'px'; t.style.width = on.offsetWidth + 'px'; }
@@ -930,7 +1063,7 @@ function setTab(t) {
   const v = $(t === 'config' ? '#view-config' : '#view-monitor'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
   if (t === 'config') {
     loadCfg(); loadGames(); let n = 0;
-    // 游戏列表会问每个世界开着没有，刷新慢一点
+    // 游戏列表会问每个世界运行中没有，刷新慢一点
     cfgTimer = setInterval(() => { loadCfg(); if (++n % 3 === 0 && !document.hidden) loadGames(); }, 3000);
     requestAnimationFrame(() => { placeThumb($('#c-tabs')); placeThumb($('#c-cred')); });
   }

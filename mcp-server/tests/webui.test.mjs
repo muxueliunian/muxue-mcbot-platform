@@ -17,7 +17,7 @@ const act = (dir, name, rows) => fs.appendFileSync(path.join(dir, `activity-${na
 test('WebUI 参数：默认端口 8770，只认识 --port、--runtime、--open', () => {
   assert.equal(parseWebArgs([]).port, 8770);
   assert.equal(parseWebArgs(['--port', '0']).port, 0);
-  assert.throws(() => parseWebArgs(['--host', '0.0.0.0']), /不认识的参数/);
+  assert.throws(() => parseWebArgs(['--host', '0.0.0.0']), /不支持的参数/);
   assert.throws(() => parseWebArgs(['--port', 'x']), /--port/);
 });
 
@@ -67,7 +67,7 @@ test('叫停和停止托管只放标记文件；不在线、非 ServerBody 叫�
     assert.deepEqual(requestControl(dir, 'ServerBot', 'stop'), { ok: true });
     assert.ok(fs.existsSync(path.join(dir, 'companion-ServerBot.stop')));
     assert.match(requestControl(dir, 'Claude', 'halt').error, /ServerBody/);
-    assert.match(requestControl(dir, 'Nobody', 'stop').error, /没有在托管/);
+    assert.match(requestControl(dir, 'Nobody', 'stop').error, /未在托管/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -122,18 +122,18 @@ test('配置档案：只收认识的字段，不存 API key；思考强度按 Ag
     assert.equal(p.configDir, path.join(os.homedir(), '.claude-r'));
     assert.equal(p.idleMinutes, 5); assert.equal(p.rotateTokens, null);
     assert.deepEqual(p.credential, { kind: 'login' });
-    assert.throws(() => normalizeProfile(profile(dir, { apiKey: 'sk-x' })), /不认识的字段：apiKey/);
-    assert.throws(() => normalizeProfile(profile(dir, { credential: { kind: 'apiKey', value: 'sk-x' } })), /以后再做/);
+    assert.throws(() => normalizeProfile(profile(dir, { apiKey: 'sk-x' })), /不支持的字段：apiKey/);
+    assert.throws(() => normalizeProfile(profile(dir, { credential: { kind: 'apiKey', value: 'sk-x' } })), /暂不支持 API key/);
     assert.throws(() => normalizeProfile(profile(dir, { agent: 'gemini' })), /Agent/);
     assert.throws(() => normalizeProfile(profile(dir, { agent: 'dsh', effort: 'medium' })), /low、high、max/);
     assert.equal(normalizeProfile(profile(dir, { effort: 'max' })).effort, 'max');
     assert.equal(normalizeProfile(profile(dir, { agent: 'codex', effort: 'ultra' })).effort, 'ultra');
     assert.throws(() => normalizeProfile(profile(dir, { effort: 'ultra' })), /思考强度/);
-    assert.throws(() => normalizeProfile(profile(dir, { nickname: '-Headless' })), /不能以 - 开头/);
+    assert.throws(() => normalizeProfile(profile(dir, { nickname: '-Headless' })), /不可以 - 开头/);
     assert.throws(() => normalizeProfile(profile(dir, { model: 'a b' })), /模型名/);
     assert.throws(() => normalizeProfile(profile(dir, { memoryDir: 'memory' })), /完整路径/);
     assert.throws(() => normalizeProfile(profile(dir, { maxRestarts: 101 })), /maxRestarts/);
-    assert.throws(() => normalizeProfile({ ...profile(dir), gameDir: '' }), /选一个游戏/);
+    assert.throws(() => normalizeProfile({ ...profile(dir), gameDir: '' }), /选择游戏/);
     assert.equal(normalizeProfile(profile(dir)).mode, 'lan', '没有 server.properties 是单人局域网');
     assert.throws(() => normalizeProfile(profile(dir, { mode: 'remote' })), /模式/);
     assert.throws(() => normalizeProfile(profile(dir, { username: '小克' })), /英文字母/);
@@ -143,7 +143,7 @@ test('配置档案：只收认识的字段，不存 API key；思考强度按 Ag
     const { gameDir, ...legacy } = profile(dir);
     const old = normalizeProfile({ ...legacy, connectionFile: connectionFileOf(gameDir) });
     assert.deepEqual([old.gameDir, old.mode, 'connectionFile' in old], [gameDir, 'lan', false]);
-    assert.throws(() => normalizeProfile({ ...legacy, connectionFile: path.join(dir, 'connection.json') }), /重新选游戏/);
+    assert.throws(() => normalizeProfile({ ...legacy, connectionFile: path.join(dir, 'connection.json') }), /重新选择游戏/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -179,11 +179,11 @@ test('记忆目录：只看有没有小克的人设和玩家档案；留空用�
   const dir = tmp();
   try {
     assert.match(inspectMemory(dir).error, /没有 xiaoke\/persona\.md/);
-    assert.match(inspectMemory('', 'claude', dir).error, /留空时用的/);
+    assert.match(inspectMemory('', 'claude', dir).error, /留空时使用的/);
     fs.mkdirSync(path.join(dir, 'xiaoke'), { recursive: true }); fs.writeFileSync(path.join(dir, 'xiaoke', 'persona.md'), '# 人设');
     fs.mkdirSync(path.join(dir, 'shared', 'players'), { recursive: true }); fs.writeFileSync(path.join(dir, 'shared', 'players', 'muxue.md'), 'x');
     const r = inspectMemory(dir);
-    assert.deepEqual([r.ok, r.persona, r.players], [true, true, ['muxue']]); assert.match(r.text, /找到小克的人设.*muxue/);
+    assert.deepEqual([r.ok, r.persona, r.players], [true, true, ['muxue']]); assert.match(r.text, /已找到小克的人设.*muxue/);
     assert.doesNotMatch(JSON.stringify(r), /# 人设/);
     assert.equal(inspectMemory(dir, 'dsh').persona, false);
     assert.match(inspectMemory('relative/dir').error, /完整路径/);
@@ -217,7 +217,7 @@ test('保护玩家：默认开、弓和盾都开；开关和数值原样转给�
     assert.equal(after(launchArgs(normalizeProfile(profile(dir, { guard: false })), 'S.mjs'), '--guard'), 'off');
     assert.throws(() => normalizeProfile(profile(dir, { guardRadius: 20 })), /guardRadius/);
     assert.throws(() => normalizeProfile(profile(dir, { guardLowHealth: 2 })), /guardLowHealth/);
-    assert.throws(() => normalizeProfile(profile(dir, { guard: 'yes' })), /guard 要是开或关/);
+    assert.throws(() => normalizeProfile(profile(dir, { guard: 'yes' })), /guard 须为开启或关闭/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -231,7 +231,7 @@ test('外观：从服务器 hello 读模型列表，不把令牌给网页；选�
     assert.deepEqual(r, { ok: true, sources: [{ id: 'yes_steve_model:model', choices: ['ds_whale.ysm', 'claude_orange'] }] });
     assert.equal(sent.url, 'http://127.0.0.1:8767/v2'); assert.equal(sent.init.headers.authorization, 'Bearer secret-token');
     assert.doesNotMatch(JSON.stringify(r), /secret-token/);
-    assert.match((await appearanceChoices(file, async () => { throw new Error('ECONNREFUSED'); })).error, /没开/);
+    assert.match((await appearanceChoices(file, async () => { throw new Error('ECONNREFUSED'); })).error, /未运行/);
     const p = normalizeProfile(profile(dir, { appearance: 'yes_steve_model:model=ds_whale.ysm' }));
     const a = launchArgs(p, 'S.mjs');
     assert.equal(a[a.indexOf('--appearance') + 1], 'yes_steve_model:model=ds_whale.ysm');
@@ -250,16 +250,16 @@ test('启动：在线的不再启动；脚本退出后能看到退出码和输�
     const launcher = createLauncher({ runtime: dir, isRunning: () => running, command: [process.execPath, script] });
     const p = normalizeProfile(profile(dir));
     running = true;
-    assert.match(launcher.launch(p).error, /已经在托管/);
+    assert.match(launcher.launch(p).error, /已在托管中/);
     running = false;
     const r = launcher.launch(p);
     assert.equal(r.ok, true); assert.equal(r.name, 'Claude');
-    assert.match(launcher.launch(p).error, /已经启动了/);
+    assert.match(launcher.launch(p).error, /已启动/);
     assert.equal(readGameConfig(p.gameDir).username, 'Claude', '启动前把名字写进游戏');
     for (let i = 0; i < 100 && launcher.status('Claude').exitCode === null; i++) await new Promise((res) => setTimeout(res, 50));
     const s = launcher.status('Claude');
     assert.equal(s.exitCode, 3); assert.match(s.log, /ARGS .*start-server-play\.mjs\|--connection-file\|.*--headless\|--wait/);
-    assert.match(launcher.launch(normalizeProfile(profile(dir, { gameDir: path.join(dir, 'none') }))).error, /找不到这个游戏目录/);
+    assert.match(launcher.launch(normalizeProfile(profile(dir, { gameDir: path.join(dir, 'none') }))).error, /未找到此游戏目录/);
     // 世界还没开过（没有连接文件）也能启动：启动脚本会等
     fs.rmSync(connectionFileOf(p.gameDir));
     assert.equal(launcher.launch(normalizeProfile({ ...p, username: 'Other' })).ok, true);

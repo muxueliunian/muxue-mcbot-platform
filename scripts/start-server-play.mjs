@@ -27,11 +27,11 @@ export function parseArgs(argv) {
   const o = {};
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    if (!flag.startsWith('--')) throw new Error(`不认识的参数：${flag}`);
+    if (!flag.startsWith('--')) throw new Error(`不支持的参数：${flag}`);
     const key = flag.slice(2);
     if (SWITCHES.includes(key)) { o[key] = true; continue; }
-    if (!VALUE_FLAGS.includes(key)) throw new Error(`不认识的参数：${flag}`);
-    if (i + 1 >= argv.length) throw new Error(`${flag} 后面要有值`);
+    if (!VALUE_FLAGS.includes(key)) throw new Error(`不支持的参数：${flag}`);
+    if (i + 1 >= argv.length) throw new Error(`${flag} 缺少参数值`);
     o[key] = argv[++i];
   }
   return o;
@@ -44,7 +44,7 @@ const oneOf = (value, allowed, name, fallback) => {
 };
 const intIn = (value, lo, hi, name) => {
   if (value === undefined || value === '') return undefined;
-  if (!/^-?\d+$/.test(String(value))) throw new Error(`${name} 要是整数`);
+  if (!/^-?\d+$/.test(String(value))) throw new Error(`${name} 须为整数`);
   const n = Number(value);
   if (n < lo || n > hi) throw new Error(`${name} 应为 ${lo}..${hi}`);
   return n;
@@ -92,13 +92,13 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   const nickname = options.nickname || NICKNAMES[agent];
   const entry = path.join(root, 'client-runtime', 'dist', 'main.js');
   const prepareOnly = !!options['prepare-only'];
-  if (!prepareOnly && !fs.existsSync(entry)) throw new Error('找不到运行端：请先在 client-runtime 目录运行 npm install 和 npm run build');
+  if (!prepareOnly && !fs.existsSync(entry)) throw new Error('未找到运行端：请先在 client-runtime 目录运行 npm install 和 npm run build');
   // dsh 用 DeepSeek Harness 桌面版自带的，或 runtime/dsh 的锁定安装（见 docs/dev.md）；DeepSeek 凭据用 DEEPSEEK_API_KEY 或 dsh 自己的凭据配置提供，这里不读取。
   if (agent === 'dsh' && !prepareOnly && !env.MCBOT_DSH_BIN) {
     const dshBin = path.join(root, 'runtime', 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
     const desktop = env.MCBOT_DSH_DESKTOP || path.join(env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness');
     if (!fs.existsSync(dshBin) && !fs.existsSync(path.join(desktop, 'DeepSeek Harness.exe'))) {
-      throw new Error('找不到 dsh：请安装 DeepSeek Harness 桌面版，或在 runtime/dsh 里运行 npm install --save-exact @deepseek-ai/dsh@0.2.0-rc.2');
+      throw new Error('未找到 dsh：请安装 DeepSeek Harness 桌面版，或在 runtime/dsh 中运行 npm install --save-exact @deepseek-ai/dsh@0.2.0-rc.2');
     }
   }
   const playDir = path.join(root, 'runtime', 'server-play', name);
@@ -120,15 +120,15 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   if (options.headless) driverArgs.push('--headless');
   if (options.wait) driverArgs.push('--reconnect');
   const lines = [`ServerBody 配置：${configFile}`, `角色：${name}；世界：${worldId}；Agent：${agent}；思考：${effort}`,
-    `默认沿用本机现有 Agent 登录。停止托管：在 WebUI 点「停止托管」（从仓库运行时也可用 stop-companion.ps1 ${name}），角色保留`,
-    `叫停后，请用角色名或昵称明确提出新任务，例如：${nickname}，查询状态。`];
+    `默认使用本机现有的 Agent 登录。停止托管：在 WebUI 中点击「停止托管」（从仓库运行时也可使用 stop-companion.ps1 ${name}），角色将保留`,
+    `叫停后，请使用角色名或昵称明确提出新任务，例如：${nickname}，查询状态。`];
   return { name, worldId, configFile, nodePath, driverArgs, lines, prepareOnly };
 }
 
 const WAIT_TEXT = {
-  closed: '等世界打开：进游戏开世界（单人还要按 Esc 点「对局域网开放」），或者把服务器开起来',
-  SINGLEPLAYER_NOT_LAN: '世界开着，还差一步：按 Esc 点「对局域网开放」',
-  GAME_PAUSED: '游戏暂停着，回到游戏里就行',
+  closed: '等待世界打开：请进入游戏打开世界（单人模式还需按 Esc 选择「对局域网开放」），或启动服务器',
+  SINGLEPLAYER_NOT_LAN: '世界已打开：请按 Esc 选择「对局域网开放」',
+  GAME_PAUSED: '游戏已暂停：请返回游戏',
 };
 
 /**
@@ -140,7 +140,7 @@ export async function readiness(connectionPath, expected = '', { respawn = respa
   try { c = JSON.parse(fs.readFileSync(connectionPath, 'utf8').replace(/^﻿/, '')); } catch { return { ok: false, wait: WAIT_TEXT.closed, code: 'NO_CONNECTION_FILE' }; }
   const username = String(c?.username ?? ''), worldId = String(c?.worldId ?? '');
   if (expected && username && username !== expected) {
-    return { ok: false, code: 'NAME_PENDING', wait: `世界里的 Bot 还叫 ${username}，配置里是 ${expected}：退出世界再进来（服务器要重开）就会换成新名字` };
+    return { ok: false, code: 'NAME_PENDING', wait: `世界中的 Bot 名称仍为 ${username}，配置中为 ${expected}：退出并重新进入世界（服务器需重启）后改为新名称` };
   }
   const outcome = await respawn({ connectionFile: connectionPath, username, worldId });
   if (outcome === 'alive') return { ok: true, respawned: false };
@@ -152,7 +152,7 @@ function runDriver(prepared, respawned) {
   return new Promise((resolve) => {
     const child = spawn(prepared.nodePath, prepared.driverArgs, { cwd: ROOT, stdio: 'inherit', windowsHide: true,
       env: { ...process.env, ...(respawned ? { MCBOT_RESPAWNED: '1' } : {}) } });
-    child.on('error', (e) => { console.error(`驱动器没能启动：${e.message}`); resolve(1); });
+    child.on('error', (e) => { console.error(`驱动器启动失败：${e.message}`); resolve(1); });
     child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
 }
@@ -160,7 +160,7 @@ function runDriver(prepared, respawned) {
 /** --wait：等到能接管再启动托管，断开了回去等；返回最后的退出码。 */
 export async function supervise(options, { runtime = process.env.COMPANION_RUNTIME_DIR ? path.resolve(process.env.COMPANION_RUNTIME_DIR) : path.join(ROOT, 'runtime'),
   check = readiness, prepare = prepareServerPlay, run = runDriver, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log, now = Date.now, pollMs = 2000 } = {}) {
-  if (!options['connection-file']) throw new Error('请提供游戏目录里的 config/mcbot-server-control/connection.json（--connection-file）');
+  if (!options['connection-file']) throw new Error('请提供游戏目录中的 config/mcbot-server-control/connection.json（--connection-file）');
   const connectionPath = full(options['connection-file']);
   const expected = options.username || '';
   if (expected && !/^[A-Za-z0-9_]{1,16}$/.test(expected)) throw new Error('--username 必须是 1～16 位英文、数字或下划线');
@@ -172,7 +172,7 @@ export async function supervise(options, { runtime = process.env.COMPANION_RUNTI
   };
   let said = '', quickExits = 0;
   for (;;) {
-    if (stopRequested()) { log('收到停止，不再等待'); return 0; }
+    if (stopRequested()) { log('已收到停止请求，停止等待'); return 0; }
     const state = await check(connectionPath, expected);
     if (!state.ok) {
       if (state.wait !== said) { log(`[等待] ${state.wait}`); said = state.wait; }
@@ -183,13 +183,13 @@ export async function supervise(options, { runtime = process.env.COMPANION_RUNTI
     // 每次连上都重新准备：世界可能换了（worldId 跟着连接文件走）
     const prepared = prepare(options);
     for (const line of prepared.lines) log(line);
-    if (state.respawned) log('角色之前死了，已经原生复活（有床就在床边，没有就在世界出生点）');
+    if (state.respawned) log('角色此前已死亡，现已原生复活（有床时在床边，否则在世界出生点）');
     const started = now();
     const code = await run(prepared, state.respawned);
     if (code !== RECONNECT_EXIT) return code;
     // 一连上就断的（比如身份对不上）别连得太勤
     quickExits = now() - started < 30000 ? quickExits + 1 : 0;
-    log('[等待] 角色断开了，能连上时自动接上');
+    log('[等待] 角色已断开，可连接时将自动恢复');
     said = '';
     await sleep(quickExits ? Math.min(60000, 5000 * quickExits) : 1000);
   }
@@ -206,7 +206,7 @@ async function main() {
   for (const line of prepared.lines) console.log(line);
   if (prepared.prepareOnly) return;
   const child = spawn(prepared.nodePath, prepared.driverArgs, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
-  child.on('error', (e) => { console.error(`驱动器没能启动：${e.message}`); process.exit(1); });
+  child.on('error', (e) => { console.error(`驱动器启动失败：${e.message}`); process.exit(1); });
   child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
 }
 

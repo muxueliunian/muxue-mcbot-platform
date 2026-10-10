@@ -21,12 +21,12 @@ function runLines(cmd, args, { env, onStart, onLine, onExit, timeoutMs = TIMEOUT
     try { child = spawn(cmd, args, { cwd: ROOT, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { reject(e); return; }
     let buf = '', err = '', size = 0, done = false;
     const finish = (fn, v) => { if (done) return; done = true; clearTimeout(timer); try { child.stdin.end(); } catch { /* 已关 */ } child.kill(); fn(v); };
-    const timer = setTimeout(() => finish(reject, new Error(`${path.basename(cmd)} 超过 ${timeoutMs / 1000} 秒没有返回`)), timeoutMs);
+    const timer = setTimeout(() => finish(reject, new Error(`${path.basename(cmd)} 超过 ${timeoutMs / 1000} 秒未返回`)), timeoutMs);
     child.on('error', (e) => finish(reject, e));
     child.stderr.on('data', (d) => { if (err.length < 4000) err += d; });
     child.stdout.on('data', (d) => {
       size += d.length;
-      if (size > MAX_OUTPUT) return finish(reject, new Error('输出太大'));
+      if (size > MAX_OUTPUT) return finish(reject, new Error('输出过大'));
       buf += d;
       if (!onLine) return;
       let i;
@@ -139,7 +139,7 @@ export function createModelCatalog({ runtime, fetchers = {}, ttlMs = 3600000 }) 
   return {
     async get(agent, configDir = '', refresh = false) {
       const source = SOURCES[agent];
-      if (!source) return { ok: false, error: '不认识的 Agent' };
+      if (!source) return { ok: false, error: '不支持的 Agent' };
       const key = `${agent}|${configDir}`;
       const hit = cache[key];
       if (!refresh && hit && Date.now() - hit.fetchedAt < ttlMs) return { ok: true, source: source.label, cached: true, ...hit };

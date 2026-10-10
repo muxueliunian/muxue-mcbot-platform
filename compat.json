@@ -11,13 +11,13 @@
     "node": "24",
     "modes": [
       { "id": "server", "name": "独立服务器", "where": "服务器的 mods 目录" },
-      { "id": "lan", "name": "单人世界开局域网", "where": "启动器实例的 mods 目录" }
+      { "id": "lan", "name": "单人世界（对局域网开放）", "where": "启动器实例的 mods 目录" }
     ]
   },
   "agents": [
-    { "id": "claude", "name": "Claude Code", "login": "本机装好 Claude Code 并登录" },
-    { "id": "codex", "name": "Codex", "login": "本机装好 Codex CLI 并登录" },
-    { "id": "dsh", "name": "DeepSeek Harness", "login": "用 DeepSeek Harness 桌面版自带的 dsh，或单独安装；密钥只从环境变量或 dsh 自己的配置读" }
+    { "id": "claude", "name": "Claude Code", "login": "在本机安装 Claude Code 并登录" },
+    { "id": "codex", "name": "Codex", "login": "在本机安装 Codex CLI 并登录" },
+    { "id": "dsh", "name": "DeepSeek Harness", "login": "使用 DeepSeek Harness 桌面版自带的 dsh，或单独安装；密钥仅从环境变量或 dsh 自身的配置读取" }
   ],
   "core": {
     "id": "mcbot_server_control",
@@ -26,7 +26,7 @@
     "jar": "mcbot-server-control-0.1.0.jar",
     "side": "server",
     "required": true,
-    "what": "服务端身体：Bot 是服务器里的假玩家，玩家只开自己的客户端"
+    "what": "服务端身体：Bot 作为服务器中的模拟玩家运行，玩家只需使用自己的客户端"
   },
   "adapters": [
     {
@@ -36,7 +36,7 @@
       "kind": "addon",
       "project": "mods/mcbot-kaleidoscope-cookery",
       "jar": "mcbot-kaleidoscope-cookery-0.1.0.jar",
-      "what": ["炒锅做菜（放油、下料、翻炒、盛出）"],
+      "what": ["使用炒锅烹饪（放油、加料、翻炒、出锅）"],
       "evidence": "隔离服实测",
       "requires": [
         { "modId": "kaleidoscope_cookery", "version": "1.6.0-neoforge+mc1.21.1", "side": "both", "license": "CC-BY-NC-SA-4.0",
@@ -50,7 +50,7 @@
       "nameEn": "Kaleidoscope Cookery machines",
       "kind": "config",
       "config": { "file": "config/mcbot-server-control/item-handlers.json", "mods": { "kaleidoscope_cookery": "1.6.0-neoforge+mc1.21.1" } },
-      "what": ["油壶、石磨、竹筛、茶壶的放料和取成品（通用物品槽，machine-items）"],
+      "what": ["油壶、石磨、竹筛、茶壶的放入原料和取出成品（通用物品槽，machine-items）"],
       "evidence": "隔离服实测",
       "requires": [ { "ref": "kaleidoscope_cookery" } ]
     },
@@ -61,7 +61,7 @@
       "kind": "addon",
       "project": "mods/mcbot-sophisticated-backpacks",
       "jar": "mcbot-sophisticated-backpacks-0.1.0.jar",
-      "what": ["打开手里的背包", "放在地上的背包当箱子用", "拾取升级收进背包时记账"],
+      "what": ["打开手持的背包", "将放置的背包作为容器使用", "记录拾取升级存入背包的物品"],
       "evidence": "隔离服实测（皮革背包、铁背包）",
       "requires": [
         { "modId": "sophisticatedbackpacks", "version": "3.25.77", "side": "both", "license": "All Rights Reserved",
@@ -79,7 +79,7 @@
       "kind": "addon",
       "project": "mods/mcbot-yes-steve-model",
       "jar": "mcbot-yes-steve-model-0.1.0.jar",
-      "what": ["在 WebUI 里给 Bot 选模型", "AI 播模型动画（表情）"],
+      "what": ["在 WebUI 中为 Bot 选择模型", "AI 播放模型动画（表情）"],
       "evidence": "隔离服实测",
       "requires": [
         { "modId": "yes_steve_model", "version": "2.6.5-neoforge+mc1.21.1", "side": "both", "license": "All Rights Reserved",
@@ -93,7 +93,7 @@
       "nameEn": "Iron Furnaces",
       "kind": "builtin",
       "project": "mods/mcbot-server-control",
-      "what": ["普通铁炉（iron_furnace）烧东西"],
+      "what": ["使用铁炉（iron_furnace）烧炼"],
       "evidence": "隔离服实测",
       "requires": [
         { "modId": "ironfurnaces", "version": "4.3.2", "side": "both", "license": "Apache-2.0",

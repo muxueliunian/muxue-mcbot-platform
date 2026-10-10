@@ -24,7 +24,7 @@ test('找游戏目录：Prism 系实例用 instance.cfg 的名字，.minecraft �
     assert.equal(addGameDir(runtime, `"${server}"`).ok, true, '带引号粘贴也认，不重复记');
     assert.match(addGameDir(runtime, 'relative').error, /完整路径/);
     assert.match(addGameDir(runtime, path.join(root, 'nothing')).error, /不存在/);
-    assert.match(addGameDir(runtime, appdata).error, /看不出/);
+    assert.match(addGameDir(runtime, appdata).error, /无法识别/);
     const games = findGames(runtime, { APPDATA: appdata });
     assert.deepEqual(games.map((g) => [g.name, g.kind]), [['我的整合包', 'ElyPrism'], ['1.21.1-NeoForge', '.minecraft（版本隔离）'], ['server', '服务器']]);
     assert.equal(removeGameDir(runtime, server).ok, true);

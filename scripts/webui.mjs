@@ -10,7 +10,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createModelCatalog } from './agent-models.mjs';
 import { AGENTS, MODES, SESSION_OPTIONS, accountDirs, appearanceChoices, applyToGame, createLauncher, deleteProfile, expandHome, inspectMemory, loadProfiles, normalizeProfile, profileConnection, profileName, saveProfile } from './webui-profiles.mjs';
-import { PERSONA_SAMPLE, addGameDir, connectionFileOf, gameOnline, listGames, localAppearances, modelLabels, readGameConfig, readPersona, removeGameDir, writePersona } from './webui-games.mjs';
+import { PERSONA_SAMPLE, addGameDir, connectionFileOf, findGames, gameOnline, gameType, listGames, localAppearances, modelLabels, readGameConfig, readPersona, removeGameDir, writePersona } from './webui-games.mjs';
+import { createPluginJobs, inspectPlugins, loadCatalog, planPlugin } from './webui-plugins.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
@@ -25,7 +26,7 @@ export function parseWebArgs(argv) {
     if (a === '--port') out.port = Number(argv[++i]);
     else if (a === '--runtime') out.runtime = path.resolve(argv[++i]);
     else if (a === '--open') out.open = true;
-    else throw new Error(`不认识的参数：${a}（可用 --port、--runtime、--open）`);
+    else throw new Error(`不支持的参数：${a}（可用 --port、--runtime、--open）`);
   }
   if (!Number.isInteger(out.port) || out.port < 0 || out.port > 65535) throw new Error('--port 必须是 0～65535 的整数');
   return out;
@@ -91,8 +92,8 @@ export function readActivity(runtime, name, after = -1) {
 /** 叫停（停下动作等新任务）或停止托管（驱动器退出）：只放标记文件，驱动器自己处理。 */
 export function requestControl(runtime, name, action, { waiting = false } = {}) {
   const bot = listBots(runtime).find((b) => b.name === name);
-  if (!bot?.running && !(waiting && action === 'stop')) return { ok: false, error: `${name} 没有在托管` };
-  if (action === 'halt' && bot.body !== 'server') return { ok: false, error: '叫停目前只支持 ServerBody' };
+  if (!bot?.running && !(waiting && action === 'stop')) return { ok: false, error: `${name} 未在托管` };
+  if (action === 'halt' && bot.body !== 'server') return { ok: false, error: '叫停目前仅支持 ServerBody' };
   const suffix = action === 'halt' ? 'halt' : 'stop';
   fs.writeFileSync(path.join(runtime, `companion-${name}.${suffix}`), String(Date.now()));
   return { ok: true };
@@ -102,7 +103,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 const readBody = (req) => new Promise((resolve, reject) => {
   let size = 0; const chunks = [];
   req.on('data', (c) => { size += c.length; if (size > MAX_BODY_BYTES) { reject(new Error('请求太大')); req.destroy(); } else chunks.push(c); });
-  req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('请求不是 JSON')); } });
+  req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('请求内容不是 JSON')); } });
   req.on('error', reject);
 });
 
@@ -122,8 +123,12 @@ function profilesView(runtime, launcher) {
 
 const isAbsPath = (p) => path.isAbsolute(p) && !/[\u0000-\u001f]/.test(p);
 
-export function createWebServer({ runtime, token = crypto.randomBytes(24).toString('hex'), launcher, models, games }) {
+export function createWebServer({ runtime, token = crypto.randomBytes(24).toString('hex'), launcher, models, games, plugins = {} }) {
   let port = 0;
+  // 插件页：catalog、downloads、fetchImpl、online、knownGames 都能换掉（测试用）
+  const pluginOpts = { downloads: path.join(runtime, 'mod-downloads'), online: (dir) => gameOnline(connectionFileOf(dir)), ...plugins };
+  const pluginJobs = createPluginJobs(pluginOpts);
+  const knownGames = plugins.knownGames || (() => findGames(runtime));
   launcher ||= createLauncher({ runtime, isRunning: (name) => !!listBots(runtime).find((b) => b.name === name)?.running });
   models ||= createModelCatalog({ runtime });
   const allowedHost = (host) => host === `127.0.0.1:${port}` || host === `localhost:${port}`;
@@ -139,17 +144,17 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     if (!allowedHost(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
     if (url.pathname === '/' && url.searchParams.has('t')) {
-      if (url.searchParams.get('t') !== token) return send(res, 403, '令牌不对：请用终端里打印的地址打开', 'text/plain; charset=utf-8');
+      if (url.searchParams.get('t') !== token) return send(res, 403, '令牌错误：请使用终端输出的地址打开', 'text/plain; charset=utf-8');
       return send(res, 302, '', 'text/plain', { location: '/', 'set-cookie': `mcbot_webui=${token}; HttpOnly; SameSite=Strict; Path=/` });
     }
     const authed = cookieToken(req) === token;
     if (url.pathname === '/') {
-      if (!authed) return send(res, 403, '请用启动 WebUI 时终端里打印的地址打开（带令牌）', 'text/plain; charset=utf-8');
+      if (!authed) return send(res, 403, '请使用启动 WebUI 时终端输出的地址（含令牌）打开', 'text/plain; charset=utf-8');
       return send(res, 200, PAGE, 'text/html; charset=utf-8', { 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" });
     }
     if (!authed) return send(res, 403, { error: 'unauthorized' });
     if (req.method === 'POST' && !allowedOrigin(req.headers.origin)) return send(res, 403, { error: 'origin not allowed' });
-    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances') {
+    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances' || url.pathname.startsWith('/api/plugins')) {
       handleProfiles(req, res, url).catch((e) => send(res, 400, { ok: false, error: e.message }));
       return;
     }
@@ -174,19 +179,20 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     if (req.method === 'GET' && p === '/api/games') return send(res, 200, { ok: true, games: await (games || listGames)(runtime) });
     if (req.method === 'GET' && p === '/api/models') {
       const agent = url.searchParams.get('agent') || '';
-      if (!AGENTS[agent]) return send(res, 400, { ok: false, error: '不认识的 Agent' });
+      if (!AGENTS[agent]) return send(res, 400, { ok: false, error: '不支持的 Agent' });
       const raw = url.searchParams.get('account') || '';
       const account = raw ? path.normalize(expandHome(raw)) : '';
-      if (account && (!path.isAbsolute(account) || /[\u0000-\u001f]/.test(account))) return send(res, 400, { ok: false, error: '账号目录要是完整路径' });
+      if (account && (!path.isAbsolute(account) || /[\u0000-\u001f]/.test(account))) return send(res, 400, { ok: false, error: '账号目录须为完整路径' });
       return send(res, 200, await models.get(agent, account, url.searchParams.get('refresh') === '1'));
     }
+    if (req.method === 'GET' && p === '/api/plugins/job') return send(res, 200, { ok: true, job: pluginJobs.status() });
     if (req.method !== 'POST') return send(res, 404, { error: 'not found' });
-    if (!/^application\/json\b/.test(req.headers['content-type'] || '')) return send(res, 415, { ok: false, error: '要用 JSON' });
+    if (!/^application\/json\b/.test(req.headers['content-type'] || '')) return send(res, 415, { ok: false, error: '请求须为 JSON' });
     const body = await readBody(req);
     if (p === '/api/appearances') {
       // 按选中的游戏目录问：连接文件在目录里的固定位置
       const dir = path.normalize(expandHome(String(body.dir || '')));
-      if (!isAbsPath(dir)) return send(res, 200, { ok: false, error: '先在「连接配置」选游戏' });
+      if (!isAbsPath(dir)) return send(res, 200, { ok: false, error: '请先在「连接配置」中选择游戏' });
       let r = await appearanceChoices(connectionFileOf(dir));
       // 世界没开时退回游戏目录里的模型文件夹
       if (!r.ok && dir) { const local = localAppearances(dir); if (local.length) r = { ok: true, offline: true, sources: local }; }
@@ -194,12 +200,24 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       if (r.ok) r.labels = modelLabels(dir, r.sources.flatMap((s) => s.choices));
       return send(res, 200, r);
     }
+    if (p.startsWith('/api/plugins')) {
+      // 只改本机找到的游戏目录（列表里的），不接受随便一个路径
+      const dir = path.normalize(expandHome(String(body.dir || '')));
+      if (!isAbsPath(dir)) return send(res, 200, { ok: false, error: '请先在「连接配置」中选择游戏' });
+      const game = knownGames().find((g) => path.normalize(g.dir).toLowerCase() === dir.toLowerCase());
+      if (!game) return send(res, 200, { ok: false, error: '此目录不在游戏列表中，请先在「连接配置」中添加' });
+      const catalog = pluginOpts.catalog || loadCatalog();
+      if (p === '/api/plugins') return send(res, 200, { ok: true, type: gameType(game.dir), online: await pluginOpts.online(game.dir), ...inspectPlugins(game.dir, catalog) });
+      if (p === '/api/plugins/plan') return send(res, 200, planPlugin(game.dir, String(body.id || ''), String(body.action || ''), { catalog, downloads: pluginOpts.downloads }));
+      if (p === '/api/plugins/apply') { const r = pluginJobs.start(game.dir, String(body.id || ''), String(body.action || ''), catalog); return send(res, r.ok ? 200 : 409, r); }
+      return send(res, 404, { error: 'not found' });
+    }
     if (p === '/api/games/add') return send(res, 200, addGameDir(runtime, body.dir));
     if (p === '/api/games/remove') return send(res, 200, removeGameDir(runtime, body.dir));
     if (p === '/api/persona') {
       const opts = { agent: String(body.agent || ''), memoryDir: body.memoryDir ? expandHome(String(body.memoryDir)) : '', username: String(body.username || '') };
-      if (!AGENTS[opts.agent]) return send(res, 400, { ok: false, error: '不认识的 Agent' });
-      if (opts.memoryDir && !isAbsPath(opts.memoryDir)) return send(res, 200, { ok: false, error: '记忆目录要填完整路径' });
+      if (!AGENTS[opts.agent]) return send(res, 400, { ok: false, error: '不支持的 Agent' });
+      if (opts.memoryDir && !isAbsPath(opts.memoryDir)) return send(res, 200, { ok: false, error: '记忆目录须为完整路径' });
       if (body.save) return send(res, 200, writePersona(opts, body.text));
       return send(res, 200, { ...readPersona(opts), sample: PERSONA_SAMPLE });
     }
@@ -219,7 +237,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       return send(res, 200, { ok: true, profile, renamed: applied.renamed, online: applied.renamed ? await gameOnline(connectionFileOf(profile.gameDir)) : false });
     }
     const profile = loadProfiles(runtime).find((x) => x.id === body.id);
-    if (!profile) return send(res, 404, { ok: false, error: '没有这份配置' });
+    if (!profile) return send(res, 404, { ok: false, error: '配置不存在' });
     if (p === '/api/profiles/delete') { deleteProfile(runtime, profile.id); return send(res, 200, { ok: true }); }
     if (p === '/api/profiles/launch') { const r = launcher.launch(profile); return send(res, r.ok ? 200 : 409, r); }
     send(res, 404, { error: 'not found' });
@@ -244,9 +262,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   web.listen(opts.port).then((port) => {
     const url = `http://127.0.0.1:${port}/?t=${web.token}`;
     console.log(`mcbot WebUI：${url}`);
-    console.log(`读取 ${opts.runtime}；Ctrl+C 退出（不影响正在托管的 Bot）`);
+    console.log(`读取 ${opts.runtime}；按 Ctrl+C 退出（正在托管的 Bot 不受影响）`);
     if (opts.open && process.platform === 'win32') {
       import('node:child_process').then(({ spawn }) => spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref());
     }
-  }).catch((e) => { console.error(e.code === 'EADDRINUSE' ? `端口 ${opts.port} 被占用，用 --port 换一个` : e.message); process.exit(1); });
+  }).catch((e) => { console.error(e.code === 'EADDRINUSE' ? `端口 ${opts.port} 已被占用，请使用 --port 指定其他端口` : e.message); process.exit(1); });
 }

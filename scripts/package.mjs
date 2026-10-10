@@ -33,7 +33,7 @@ export function parsePackageArgs(argv) {
     else if (a === '--node') o.node = path.resolve(argv[++i]);
     else if (a === '--skip-build') o.build = false;
     else if (a === '--no-zip') o.zip = false;
-    else throw new Error(`不认识的参数：${a}（可用 --out、--node、--skip-build、--no-zip）`);
+    else throw new Error(`不支持的参数：${a}（可用参数：--out、--node、--skip-build、--no-zip）`);
   }
   return o;
 }
@@ -50,7 +50,7 @@ export function scriptClosure(dir, entries) {
     const text = fs.readFileSync(file, 'utf8');
     for (const m of text.matchAll(/(?:from\s+|import\s*\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g)) {
       const target = path.normalize(path.join(path.dirname(norm), m[1]));
-      if (target.startsWith('..')) throw new Error(`scripts/${norm} 引用了 scripts 以外的 ${m[1]}，绿色版里没有`);
+      if (target.startsWith('..')) throw new Error(`scripts/${norm} 引用了 scripts 以外的 ${m[1]}，绿色版中不包含该文件`);
       visit(target);
     }
   };
@@ -81,23 +81,24 @@ function readme(compat, version, jars) {
   return [
     `mcbot ${version}（Windows 绿色版）`,
     '',
-    '让本机的 AI（Claude Code、Codex、DeepSeek Harness）在 Minecraft 里控制一个游戏伙伴。',
+    '使本机的 AI（Claude Code、Codex、DeepSeek Harness）在 Minecraft 中控制一个游戏伙伴。',
     '',
-    `支持：Minecraft ${p.minecraft}，NeoForge ${p.loaderMin} 及以上（${p.loaderMin.split('.').slice(0, 2).join('.')} 线），独立服务器或开了局域网的单人世界。`,
+    `支持：Minecraft ${p.minecraft}，NeoForge ${p.loaderMin} 及以上（${p.loaderMin.split('.').slice(0, 2).join('.')} 系列），独立服务器或已对局域网开放的单人世界。`,
     '',
-    '怎么用',
-    '1. 把 mods 文件夹里的 jar 放进服务器的 mods（单人世界就放进启动器实例的 mods）。改之前先备份存档。',
-    '   必装：' + jars.core,
-    '   可选的适配（对应的模组装了、版本对上才有用）：' + (jars.addons.join('、') || '无'),
-    '2. 启动服务器（或进单人世界后按 Esc 选「对局域网开放」），确认自己能进。',
-    '3. 本机装好并登录一个 Agent：Claude Code、Codex 或 DeepSeek Harness。登录要自己来，程序不会代你登录。',
-    '4. 双击「启动 mcbot.cmd」，浏览器会打开 WebUI。在「配置」页新建配置，连接文件填',
-    '   <服务器或实例>/config/mcbot-server-control/connection.json，点「保存并启动托管」。',
+    '使用方法',
+    '1. 在本机安装并登录一个 Agent：Claude Code、Codex 或 DeepSeek Harness。程序不会代为登录。',
+    '2. 双击「启动 mcbot.cmd」，浏览器将打开 WebUI。',
+    '3. 在「配置」页新建配置，在「连接配置」中选择游戏目录（服务器目录或启动器实例）。',
+    '4. 在「插件」中安装核心模组和所需插件。修改前请备份存档。',
+    '   也可手动将 mods 文件夹中的 jar 复制到游戏的 mods 中。必装：' + jars.core,
+    '   可选插件（需同时安装对应模组的指定版本）：' + (jars.addons.join('、') || '无'),
+    '5. 启动服务器，或进入单人世界后按 Esc 选择「对局域网开放」。',
+    '6. 点击「保存并启动托管」。',
     '',
-    '连接文件里有控制令牌，只留在本机，不要发给别人。',
-    '支持的模组和确切版本见 compat.json；不在里面的模组，Bot 会拒绝操作，不会去猜。',
+    '连接文件（config/mcbot-server-control/connection.json）中含有控制令牌，仅保存在本机，请勿发送给他人。',
+    '支持的模组及确切版本见 compat.json；对于清单以外的模组，Bot 将拒绝操作。',
     '',
-    '这个包里带了 Node.js（node 文件夹，MIT 许可，见 node/LICENSE）。本项目按 Apache License 2.0 发布，见 LICENSE、NOTICE。',
+    '本安装包附带 Node.js（node 文件夹，MIT 许可，见 node/LICENSE）。本项目以 Apache License 2.0 发布，见 LICENSE、NOTICE。',
     '',
   ].join('\r\n');
 }
@@ -105,21 +106,21 @@ function readme(compat, version, jars) {
 export function buildPackage(opts) {
   const compat = loadCompat();
   const problems = checkCompat(compat);
-  if (problems.length) throw new Error(`compat.json 和代码对不上，先修：\n- ${problems.join('\n- ')}`);
+  if (problems.length) throw new Error(`compat.json 与代码不一致，请先修复：\n- ${problems.join('\n- ')}`);
   const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'client-runtime', 'package.json'), 'utf8')).version;
   const nodeVersion = spawnSync(opts.node, ['--version'], { encoding: 'utf8' }).stdout?.trim() || '';
   const major = Number(/^v(\d+)\./.exec(nodeVersion)?.[1] || 0);
-  if (major < Number(compat.platform.node)) throw new Error(`要打进去的 Node 是 ${nodeVersion || '读不到版本'}，至少要 ${compat.platform.node}（用 --node 指定）`);
+  if (major < Number(compat.platform.node)) throw new Error(`待打包的 Node 版本为 ${nodeVersion || '无法读取'}，最低要求 ${compat.platform.node}（使用 --node 指定）`);
   const nodeLicense = path.join(path.dirname(opts.node), 'LICENSE');
-  if (!fs.existsSync(nodeLicense)) throw new Error(`${path.dirname(opts.node)} 里没有 Node 的 LICENSE，用官方发行包里的 node.exe`);
+  if (!fs.existsSync(nodeLicense)) throw new Error(`${path.dirname(opts.node)} 中缺少 Node 的 LICENSE，请使用官方发行包中的 node.exe`);
 
   const jarFiles = [compat.core, ...compat.adapters.filter((a) => a.kind === 'addon')].map((a) => ({ id: a.id, jar: a.jar, from: path.join(ROOT, a.project, 'build', 'libs', a.jar) }));
   const missing = jarFiles.filter((j) => !fs.existsSync(j.from));
-  if (missing.length) throw new Error(`这些 jar 还没构建（在对应目录运行 gradlew build --no-daemon，附属模组要在核心之后）：\n- ${missing.map((j) => path.relative(ROOT, j.from)).join('\n- ')}`);
+  if (missing.length) throw new Error(`以下 jar 尚未构建（请在对应目录运行 gradlew build --no-daemon，附属模组须在核心之后构建）：\n- ${missing.map((j) => path.relative(ROOT, j.from)).join('\n- ')}`);
 
   if (opts.build) run('npm', ['run', 'build'], path.join(ROOT, 'client-runtime'));
   const dist = path.join(ROOT, 'client-runtime', 'dist', 'main.js');
-  if (!fs.existsSync(dist)) throw new Error('client-runtime 还没构建（npm run build）');
+  if (!fs.existsSync(dist)) throw new Error('client-runtime 尚未构建（npm run build）');
 
   const name = `mcbot-${version}-win-x64`;
   const stage = path.join(opts.out, name);
@@ -134,7 +135,7 @@ export function buildPackage(opts) {
   copy(path.join(ROOT, 'client-runtime', 'dist'), path.join(rt, 'dist'));
   // 复制本机装好的依赖（npm ci 装的、和 lock 一致），再删掉开发依赖；prune 只删不下载
   const modules = path.join(ROOT, 'client-runtime', 'node_modules');
-  if (!fs.existsSync(modules)) throw new Error('client-runtime 还没装依赖（npm ci）');
+  if (!fs.existsSync(modules)) throw new Error('client-runtime 尚未安装依赖（npm ci）');
   copy(modules, path.join(rt, 'node_modules'));
   run('npm', ['prune', '--omit=dev', '--offline', '--no-audit', '--no-fund', '--ignore-scripts'], rt);
 
@@ -153,7 +154,7 @@ export function buildPackage(opts) {
     // 用 System32 里的那个，Git Bash 的 GNU tar 不会打 zip，还会把 G: 当成远程主机
     const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
     const r = spawnSync(tar, ['-a', '-c', '-f', zip, '--options', 'hdrcharset=UTF-8', '-C', opts.out, name], { stdio: 'inherit', windowsHide: true });
-    if (r.status !== 0) throw new Error('打 zip 失败');
+    if (r.status !== 0) throw new Error('生成 zip 失败');
   }
   const size = (p) => { let n = 0; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const q = path.join(d, e.name); if (e.isDirectory()) walk(q); else n += fs.statSync(q).size; } }; walk(p); return n; };
   return { name, stage, zip, version, node: nodeVersion, scripts, jars: jarFiles.map((j) => j.jar), stageBytes: size(stage), zipBytes: zip ? fs.statSync(zip).size : 0 };

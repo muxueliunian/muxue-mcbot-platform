@@ -24,14 +24,14 @@ export const AGENTS = Object.freeze({
   claude: { label: 'Claude Code', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultNickname: '小克',
     // 模型列表从本机 CLI 读（agent-models.mjs）；读不到时只给别名，别名总是指向最新版
     fallbackModels: ['opus', 'sonnet', 'fable', 'haiku'],
-    accountRe: /^\.claude(-[A-Za-z0-9_-]+)?$/, accountHint: 'Claude 的配置目录，比如 ~/.claude-b；留空用默认账号' },
+    accountRe: /^\.claude(-[A-Za-z0-9_-]+)?$/, accountHint: 'Claude 的配置目录，例如 ~/.claude-b；留空则使用默认账号' },
   // Codex 每个模型支持的档位不同（有的到 ultra），配置页按模型目录收窄；这里是允许的全集
   codex: { label: 'Codex', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultNickname: 'Codex',
-    fallbackModels: [], accountRe: /^\.codex(-[A-Za-z0-9_-]+)?$/, accountHint: 'CODEX_HOME 目录；留空用默认账号' },
+    fallbackModels: [], accountRe: /^\.codex(-[A-Za-z0-9_-]+)?$/, accountHint: 'CODEX_HOME 目录；留空则使用默认账号' },
   // dsh 的思考强度只有 low、high、max（medium 会被当成 high）
   dsh: { label: 'dsh（DeepSeek）', efforts: ['low', 'high', 'max'], defaultNickname: 'DeepSeek',
     fallbackModels: [], accountRe: /^\.dsh$/,
-    accountHint: 'DSH_HOME；留空用仓库里的 runtime/dsh/home，填 ~/.dsh 用桌面版配好的凭据' },
+    accountHint: 'DSH_HOME；留空则使用仓库中的 runtime/dsh/home，填写 ~/.dsh 则使用桌面版已配置的凭据' },
 });
 
 /** 会话选项：null 表示用驱动器默认值。 */
@@ -63,9 +63,9 @@ function checkPath(v, label, required = false) {
     if (required) throw new Error(`${label}不能为空`);
     return '';
   }
-  if (!plainText(v) || v.length > 400) throw new Error(`${label}格式不对`);
+  if (!plainText(v) || v.length > 400) throw new Error(`${label}格式错误`);
   const expanded = expandHome(v);
-  if (!path.isAbsolute(expanded)) throw new Error(`${label}要填完整路径（可以用 ~ 开头）`);
+  if (!path.isAbsolute(expanded)) throw new Error(`${label}须为完整路径（可用 ~ 开头）`);
   return path.normalize(expanded);
 }
 
@@ -74,46 +74,46 @@ function gameOf(input) {
   let gameDir = checkPath(input.gameDir, '游戏目录');
   if (!gameDir && input.connectionFile) {
     gameDir = gameDirOf(checkPath(input.connectionFile, '连接文件'));
-    if (!gameDir) throw new Error('旧配置的连接文件不在游戏目录里，请在「连接配置」重新选游戏');
+    if (!gameDir) throw new Error('旧配置的连接文件不在游戏目录中，请在「连接配置」中重新选择游戏');
   }
-  if (!gameDir) throw new Error('先在「连接配置」选一个游戏');
+  if (!gameDir) throw new Error('请先在「连接配置」中选择游戏');
   const mode = input.mode === undefined || input.mode === null || input.mode === '' ? gameType(gameDir) : input.mode;
-  if (!MODES[mode]) throw new Error('模式只能是单人局域网或服务器');
+  if (!MODES[mode]) throw new Error('模式仅可为单人局域网或服务器');
   return { gameDir, mode };
 }
 
 /** Bot 的游戏名：存在档案里，启动托管前写进游戏的 server.json。旧档案没有就留空，启动时用游戏里现在的名字。 */
 function botName(v) {
   const name = String(v ?? '').trim();
-  if (name && !NAME_RE.test(name)) throw new Error('游戏名只能用英文字母、数字和下划线，最多 16 个');
+  if (name && !NAME_RE.test(name)) throw new Error('游戏名仅可使用英文字母、数字和下划线，最多 16 个字符');
   return name;
 }
 /** 控制口端口（只在本机）；null 表示沿用游戏里现在的（默认 8766）。 */
 function portOf(v) {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
-  if (!Number.isInteger(n) || n < 1024 || n > 65535) throw new Error('端口要是 1024～65535 的整数');
+  if (!Number.isInteger(n) || n < 1024 || n > 65535) throw new Error('端口须为 1024～65535 的整数');
   return n;
 }
 
 /** 校验并整理一份档案；不认识的字段（比如 apiKey）直接拒绝，避免明文凭据被存下来。 */
 export function normalizeProfile(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('档案格式不对');
-  for (const k of Object.keys(input)) if (!KEYS.has(k)) throw new Error(`不认识的字段：${k}`);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('档案格式错误');
+  for (const k of Object.keys(input)) if (!KEYS.has(k)) throw new Error(`不支持的字段：${k}`);
   const agent = AGENTS[input.agent] ? input.agent : null;
-  if (!agent) throw new Error('Agent 只能是 claude、codex 或 dsh');
+  if (!agent) throw new Error('Agent 仅可为 claude、codex 或 dsh');
   const label = String(input.label ?? '').trim();
-  if (!plainText(label) || !label || label.length > 40) throw new Error('名称要 1～40 个字');
+  if (!plainText(label) || !label || label.length > 40) throw new Error('名称须为 1～40 个字符');
   const effort = input.effort || 'low';
-  if (!AGENTS[agent].efforts.includes(effort)) throw new Error(`${AGENTS[agent].label} 的思考强度只能是 ${AGENTS[agent].efforts.join('、')}`);
+  if (!AGENTS[agent].efforts.includes(effort)) throw new Error(`${AGENTS[agent].label} 的思考强度仅可为 ${AGENTS[agent].efforts.join('、')}`);
   const model = String(input.model ?? '').trim();
-  if (model && !MODEL_RE.test(model)) throw new Error('模型名只能有字母、数字和 . _ - : / [ ]');
+  if (model && !MODEL_RE.test(model)) throw new Error('模型名仅可包含字母、数字和 . _ - : / [ ]');
   const nickname = String(input.nickname ?? '').trim();
-  if (nickname && (!plainText(nickname) || nickname.length > 16 || nickname.startsWith('-'))) throw new Error('昵称最多 16 个字，不能以 - 开头');
+  if (nickname && (!plainText(nickname) || nickname.length > 16 || nickname.startsWith('-'))) throw new Error('昵称最多 16 个字符，且不可以 - 开头');
   const appearance = String(input.appearance ?? '').trim();
-  if (appearance && !APPEARANCE_RE.test(appearance)) throw new Error('外观要从服务器给的列表里选');
+  if (appearance && !APPEARANCE_RE.test(appearance)) throw new Error('外观须从服务器提供的列表中选择');
   const credential = input.credential ?? { kind: 'login' };
-  if (credential?.kind !== 'login' || Object.keys(credential).length !== 1) throw new Error('凭据目前只支持「用本机已有登录」，API key 以后再做');
+  if (credential?.kind !== 'login' || Object.keys(credential).length !== 1) throw new Error('凭据目前仅支持「使用本机已有登录」，暂不支持 API key');
   const out = {
     id: input.id && ID_RE.test(input.id) ? input.id : crypto.randomBytes(4).toString('hex'),
     label, agent, effort, model, nickname, appearance,
@@ -131,18 +131,18 @@ export function normalizeProfile(input) {
     const v = input[k];
     if (v === undefined || v === null || v === '') { out[k] = null; continue; }
     const n = Number(v);
-    if (!Number.isInteger(n) || n < o.min || n > o.max) throw new Error(`${k} 要是 ${o.min}～${o.max} 的整数`);
+    if (!Number.isInteger(n) || n < o.min || n > o.max) throw new Error(`${k} 须为 ${o.min}～${o.max} 的整数`);
     out[k] = n;
   }
   for (const [k, o] of Object.entries(GUARD_OPTIONS)) {
     const v = input[k];
     if (o.kind === 'switch') {
-      if (v !== undefined && v !== null && typeof v !== 'boolean') throw new Error(`${k} 要是开或关`);
+      if (v !== undefined && v !== null && typeof v !== 'boolean') throw new Error(`${k} 须为开启或关闭`);
       out[k] = v !== false; continue;
     }
     if (v === undefined || v === null || v === '') { out[k] = null; continue; }
     const n = Number(v);
-    if (!Number.isInteger(n) || n < o.min || n > o.max) throw new Error(`${k} 要是 ${o.min}～${o.max} 的整数`);
+    if (!Number.isInteger(n) || n < o.min || n > o.max) throw new Error(`${k} 须为 ${o.min}～${o.max} 的整数`);
     out[k] = n;
   }
   return out;
@@ -184,13 +184,13 @@ export function deleteProfile(runtime, id) {
 export function inspectConnection(file) {
   let c;
   try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
-    return e.code === 'ENOENT' ? { ok: false, code: 'missing', error: '连接文件不存在' } : { ok: false, error: '连接文件读不了或不是 JSON' };
+    return e.code === 'ENOENT' ? { ok: false, code: 'missing', error: '连接文件不存在' } : { ok: false, error: '连接文件无法读取或不是 JSON' };
   }
   if (c?.protocol !== 2 || c?.backend !== 'server') return { ok: false, error: '不是协议 2 的 ServerBody 连接文件' };
   if (!NAME_RE.test(c.username || '') || !c.worldId || !c.token) return { ok: false, error: '连接文件缺少有效的 username、worldId 或令牌' };
   let endpoint;
-  try { endpoint = new URL(c.endpoint); } catch { return { ok: false, error: '连接文件里的地址不对' }; }
-  if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(endpoint.hostname)) return { ok: false, error: '目前只支持本机 http 控制口' };
+  try { endpoint = new URL(c.endpoint); } catch { return { ok: false, error: '连接文件中的地址无效' }; }
+  if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(endpoint.hostname)) return { ok: false, error: '目前仅支持本机 http 控制端口' };
   return { ok: true, username: c.username, worldId: String(c.worldId), endpoint: endpoint.origin };
 }
 
@@ -199,8 +199,8 @@ export function profileGame(profile) {
   const server = profile.mode === 'server';
   let isDir = false;
   try { isDir = fs.statSync(profile.gameDir).isDirectory(); } catch { /* 不存在 */ }
-  if (!isDir) return { ok: false, error: server ? '找不到这个服务器目录，在「连接配置」重新选' : '找不到这个游戏目录，在「连接配置」重新选' };
-  if (server !== (gameType(profile.gameDir) === 'server')) return { ok: false, error: server ? '这个目录不是服务器（没有 server.properties），在「连接配置」重新选' : '这是服务器目录，要用「服务器」模式' };
+  if (!isDir) return { ok: false, error: server ? '未找到此服务器目录，请在「连接配置」中重新选择' : '未找到此游戏目录，请在「连接配置」中重新选择' };
+  if (server !== (gameType(profile.gameDir) === 'server')) return { ok: false, error: server ? '此目录不是服务器目录（缺少 server.properties），请在「连接配置」中重新选择' : '此目录为服务器目录，请使用「服务器」模式' };
   return { ok: true };
 }
 /** Bot 名：档案里填的，没填就用游戏里现在的。 */
@@ -211,7 +211,7 @@ export function applyToGame(profile) {
   const game = profileGame(profile);
   if (!game.ok) return game;
   const now = readGameConfig(profile.gameDir), username = profile.username || now.username;
-  if (!username) return { ok: false, error: '先在「角色」里填 Bot 的游戏名' };
+  if (!username) return { ok: false, error: '请先在「角色」中填写 Bot 的游戏名' };
   const r = writeGameConfig(profile.gameDir, { username, port: profile.port ?? now.port });
   return r.ok ? { ...r, username, renamed: !!now.username && now.username !== username } : r;
 }
@@ -222,7 +222,7 @@ export function profileConnection(profile) {
   if (!game.ok) return game;
   const conn = inspectConnection(connectionFileOf(profile.gameDir));
   if (conn.ok || conn.code !== 'missing') return conn;
-  return { ok: false, error: server ? '服务器还没开过：装好核心模组后先开一次服务器' : '还没开过世界：进游戏开世界，按 Esc 选「对局域网开放」' };
+  return { ok: false, error: server ? '服务器尚未启动过：安装核心模组后，请先启动一次服务器' : '尚未打开过世界：请进入游戏打开世界，按 Esc 选择「对局域网开放」' };
 }
 
 /**
@@ -230,14 +230,14 @@ export function profileConnection(profile) {
  * 留空时和驱动器一样用仓库里的 memory 目录。第七轮试玩就是留空、人设没读到，说话成了客服腔。
  */
 export function inspectMemory(dir, agent = 'claude', root = ROOT) {
-  if (agent !== 'claude') return { ok: true, persona: false, text: '这个 Agent 用自己的身份，人设在「灵魂设置」里写；留空用 runtime 里它自己的记忆目录' };
+  if (agent !== 'claude') return { ok: true, persona: false, text: '此 Agent 使用独立身份，人设在「灵魂设置」中填写；留空则使用 runtime 中该 Agent 的记忆目录' };
   let base = '';
   try { base = dir ? checkPath(dir, '记忆目录') : path.join(root, 'memory'); } catch (e) { return { ok: false, error: e.message }; }
   const persona = fs.existsSync(path.join(base, 'xiaoke', 'persona.md'));
   let players = [];
   try { players = fs.readdirSync(path.join(base, 'shared', 'players')).filter((n) => /^[A-Za-z0-9_]{1,16}\.md$/.test(n)).map((n) => n.slice(0, -3)).sort(); } catch { /* 没有就空着 */ }
-  if (!persona) return { ok: false, persona, players, error: `${dir ? '这个目录' : '留空时用的 ' + base}里没有 xiaoke/persona.md，托管时不带人设，说话会比较像客服；要小克的人设就填有人设的记忆目录` };
-  return { ok: true, persona, players, text: `找到小克的人设${players.length ? '；玩家档案：' + players.join('、') : ''}` };
+  if (!persona) return { ok: false, persona, players, error: `${dir ? '此目录' : '留空时使用的 ' + base}中没有 xiaoke/persona.md，托管时不加载人设，回复会偏向客服语气；如需使用小克的人设，请填写包含人设的记忆目录` };
+  return { ok: true, persona, players, text: `已找到小克的人设${players.length ? '；玩家档案：' + players.join('、') : ''}` };
 }
 
 /**
@@ -248,15 +248,15 @@ export async function appearanceChoices(file, fetchImpl = fetch) {
   const conn = inspectConnection(file);
   if (!conn.ok) return conn;
   let c;
-  try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return { ok: false, error: '连接文件读不了' }; }
+  try { c = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return { ok: false, error: '连接文件无法读取' }; }
   let hello;
   try {
     const r = await fetchImpl(c.endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3000),
       headers: { authorization: `Bearer ${c.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ method: 'hello', params: {} }) });
     const v = await r.json();
-    if (!r.ok || v?.ok !== true) return { ok: false, error: `服务器拒绝了：${v?.error?.code || r.status}` };
+    if (!r.ok || v?.ok !== true) return { ok: false, error: `服务器拒绝请求：${v?.error?.code || r.status}` };
     hello = v.result;
-  } catch { return { ok: false, error: '服务器没开或连不上' }; }
+  } catch { return { ok: false, error: '服务器未运行或无法连接' }; }
   const sources = (Array.isArray(hello?.appearances) ? hello.appearances : [])
     .filter((s) => typeof s?.id === 'string' && Array.isArray(s.choices))
     .map((s) => ({ id: s.id, choices: s.choices.filter((x) => typeof x === 'string' && APPEARANCE_RE.test(`${s.id}=${x}`)) }));
@@ -334,9 +334,9 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
       const applied = applyToGame(profile);
       if (!applied.ok) return applied;
       const name = applied.username;
-      if (isRunning(name)) return { ok: false, error: `${name} 已经在托管了，先停止再启动` };
+      if (isRunning(name)) return { ok: false, error: `${name} 已在托管中，请先停止再启动` };
       const last = launches.get(name);
-      if (last && last.exitCode === null) return { ok: false, error: `${name} 已经启动了（在等世界或者在托管），先停止再启动` };
+      if (last && last.exitCode === null) return { ok: false, error: `${name} 已启动（等待世界或托管中），请先停止再启动` };
       fs.mkdirSync(runtime, { recursive: true });
       const logFile = path.join(runtime, `webui-launch-${name}.log`);
       const fd = fs.openSync(logFile, 'w');
@@ -376,7 +376,7 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
 export function launchCommand(env = process.env) {
   if (env.MCBOT_WEBUI_LAUNCH_CMD) {
     const cmd = JSON.parse(env.MCBOT_WEBUI_LAUNCH_CMD);
-    if (!Array.isArray(cmd) || !cmd.length || !cmd.every((s) => typeof s === 'string')) throw new Error('MCBOT_WEBUI_LAUNCH_CMD 要是字符串数组');
+    if (!Array.isArray(cmd) || !cmd.length || !cmd.every((s) => typeof s === 'string')) throw new Error('MCBOT_WEBUI_LAUNCH_CMD 须为字符串数组');
     return cmd;
   }
   return [process.execPath];

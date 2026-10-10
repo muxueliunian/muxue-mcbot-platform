@@ -209,6 +209,19 @@ final class FollowCompanionTest {
         fake.dead.add("zombie");int resets=terrain.resets;guarded.tick(50);
         check(guarded.operation.status.equals("running")&&!guarded.state().equals("guarding")&&terrain.resets==resets+1,"fight over: the follow resumes with a fresh route");
         guarded.stop();
+        // Through the protocol (act follow-companion with guard): a skeleton drawing its bow at the player makes the guard stand and shield, then go on once it has loosed.
+        NativeTerrain aimed=new NativeTerrain();
+        GuardCombatTest.FakeView shooter=new GuardCombatTest.FakeView();shooter.shield=true;
+        aimed.guard=new GuardCombat(shooter,GuardCombat.Options.parse(com.google.gson.JsonParser.parseString("true")));
+        Fixture archery=new Fixture(aimed);archery.start(obj("guard",true));
+        shooter.foes.add(GuardCombatTest.archer("skeleton",12,true));
+        int walked=aimed.moves;archery.tick(50);
+        check(archery.operation.status.equals("running")&&archery.state().equals("guarding")&&shooter.shieldUp&&shooter.approaches==0&&aimed.moves==walked,"a bow drawn at the player: the guarding follow stands and shields");
+        check("RANGED".equals(archery.operation.result.getAsJsonObject().getAsJsonObject("guard").get("blocking").getAsString()),"the result says what the shield is up against");
+        shooter.foes.set(0,GuardCombatTest.archer("skeleton",12,false));
+        for(int i=0;i<GuardCombat.SHIELD_DELAY&&shooter.shieldUp;i++){shooter.tick();archery.tick(50);}
+        check(!shooter.shieldUp&&shooter.approaches==1&&archery.state().equals("guarding"),"loosed: the shield comes down and the guard walks to the archer");
+        archery.stop();
         Fixture plain=new Fixture(new NativeTerrain());plain.start();plain.terrain.health=14;plain.tick(50);
         plain.failed("BLOCKED");
         // A standing guard duty protects the player: being hit does not end the follow; the duty takes ticks, then hands the body back.

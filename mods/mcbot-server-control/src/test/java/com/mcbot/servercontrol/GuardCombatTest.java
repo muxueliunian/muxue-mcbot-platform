@@ -45,13 +45,21 @@ final class GuardCombatTest {
         public void release(GuardCombat.Foe foe){releases++;drawn=-1;}
         public void cancelDraw(){drawn=-1;}
         public boolean armShield(){return shield;}
-        public void raiseShield(GuardCombat.Foe foe){if(!shieldUp)raised++;shieldUp=true;}
+        /** Where the shield was last turned to, and what the view says is in flight (the real one flies each projectile; here the test writes the answer). */
+        Vec3 facing;final List<GuardCombat.Incoming> flying=new ArrayList<>();int incomingAsked;
+        public void raiseShield(GuardCombat.Foe foe){raiseShieldAt(foe.position());}
+        public void raiseShieldAt(Vec3 point){if(!shieldUp)raised++;shieldUp=true;facing=point;}
         public void lowerShield(){shieldUp=false;}
+        public List<GuardCombat.Incoming> incoming(int ticks){incomingAsked++;return flying.stream().filter(i->i.ticks()<=ticks).sorted(Comparator.comparingInt(GuardCombat.Incoming::ticks)).toList();}
         void tick(){time+=50;if(drawn>=0)drawn++;}
     }
     static GuardCombat.Foe foe(Object id,String type,double distance,double companionDistance){return foe(id,type,distance,companionDistance,false,false,false,false);}
     static GuardCombat.Foe foe(Object id,String type,double distance,double companionDistance,boolean targetingCompanion,boolean ranged,boolean creeper,boolean boom) {
         return new GuardCombat.Foe(id,id.toString(),type,new Vec3(distance,64,0),distance,companionDistance,targetingCompanion,false,ranged,creeper,boom,false,true);
+    }
+    /** A skeleton-like foe at `distance` from the body; `charging`: it has a bow drawn (or a crossbow loaded) at the companion or the body. */
+    static GuardCombat.Foe archer(Object id,double distance,boolean charging) {
+        return new GuardCombat.Foe(id,id.toString(),"minecraft:skeleton",new Vec3(distance,64,0),distance,distance-2,true,false,true,false,false,false,true,-1,0,charging);
     }
     static GuardCombat guard(FakeView view){return new GuardCombat(view,GuardCombat.Options.parse(JsonParser.parseString("true")));}
     static final Vec3 COMPANION=new Vec3(-2,64,0);
@@ -59,6 +67,7 @@ final class GuardCombatTest {
         interruptedExecution();
         options();geometry();melee();preference();bow();retreat();creeper();noPath();friendlyFire();arming();unarmed();
         blastShield();outrun();reposition();spotCandidates();
+        rangedShield();projectileShield();rangedShieldOff();flightGeometry();
         System.out.println("GuardCombatTest: "+checks+" checks passed");
     }
     /** No melee weapon: hold a weapon, keep a bare or armed hand, take an empty hotbar slot, else stow what is held into the main inventory; full everywhere gives up. */
@@ -238,6 +247,131 @@ final class GuardCombatTest {
         FakeView wide=new FakeView();GuardCombat reach=guard(wide);
         wide.foes.add(creeperFoe("c",5.5,true,30,6));
         check(reach.tick(COMPANION)&&reach.state().equals("evading"),"inside the blast radius, not only inside 5 blocks");
+    }
+    /** A bow drawn (or a crossbow loaded) at the player or the body: face it with the shield up; once it has loosed, lower and go after it. */
+    private static void rangedShield() {
+        FakeView view=new FakeView();view.shield=true;GuardCombat guard=guard(view);
+        view.foes.add(archer("skel",12,true));
+        check(guard.tick(COMPANION)&&guard.state().equals("shielding")&&view.shieldUp,"a skeleton drawing its bow at the player: shield up");
+        check(view.facing.equals(new Vec3(12,64,0))&&view.approaches==0&&view.attacks==0&&view.draws==0&&view.stops>=1,"facing it, standing still, not walking or shooting");
+        check("RANGED".equals(guard.json().get("blocking").getAsString())&&guard.json().get("shields").getAsInt()==1&&!guard.json().has("lastShield"),"the reason and one hold are reported");
+        view.tick();guard.tick(COMPANION);
+        check(view.raised==1&&guard.json().get("shields").getAsInt()==1,"holding on the next tick is still one raise");
+        // Loosed: the shield stays for the hold time, then it comes down and the archer is gone after (it is not shooting now).
+        view.foes.set(0,archer("skel",12,false));
+        int held=0;
+        while(held<20) {
+            view.tick();guard.tick(COMPANION);
+            if(!view.shieldUp)break;
+            held++;
+        }
+        check(held==GuardCombat.SHIELD_DELAY-1,"the shield stays up for the shield's own delay after the last threat, then comes down: "+held);
+        check(view.approaches==1&&guard.state().equals("approaching")&&!guard.json().has("blocking"),"and the fight goes on: walking to the archer");
+        // The bow flickers (drawn, lowered, drawn): one raise, never down in between.
+        FakeView flicker=new FakeView();flicker.shield=true;GuardCombat jitter=guard(flicker);
+        for(int i=0;i<12;i++){flicker.foes.clear();flicker.foes.add(archer("skel",12,i%2==0));jitter.tick(COMPANION);flicker.tick();check(flicker.shieldUp,"flicker "+i+": shield stays up");}
+        check(flicker.raised==1,"flicker: raised once");
+        // Not drawing: no shield, the archer is walked to as before.
+        FakeView calm=new FakeView();calm.shield=true;GuardCombat idle=guard(calm);
+        calm.foes.add(archer("skel",12,false));idle.tick(COMPANION);
+        check(calm.raised==0&&!calm.shieldUp&&calm.approaches==1&&idle.state().equals("approaching"),"a skeleton not drawing: no shield");
+        // Not in sight: it cannot hit us, no shield.
+        FakeView hidden=new FakeView();hidden.shield=true;GuardCombat wall=guard(hidden);
+        hidden.foes.add(new GuardCombat.Foe("skel","skel","minecraft:skeleton",new Vec3(12,64,0),12,10,true,false,true,false,false,false,false,-1,0,true));
+        wall.tick(COMPANION);
+        check(hidden.raised==0,"a bow drawn without a line of sight to the body is no reason to shield");
+        // With a bow of our own: the draw is put down for the shield, and drawn again once the archer has loosed.
+        FakeView duel=new FakeView();duel.shield=true;duel.bow=true;GuardCombat both=guard(duel);
+        duel.foes.add(archer("skel",12,false));both.tick(COMPANION);
+        check(duel.drawn>=0&&duel.draws==1,"an archer resting: the bow is drawn at it");
+        duel.tick();duel.foes.set(0,archer("skel",12,true));both.tick(COMPANION);
+        check(duel.drawn<0&&duel.shieldUp&&both.state().equals("shielding")&&"SHIELD".equals(both.json().get("lastDrop").getAsString()),"the archer draws: our draw is lowered and the shield goes up, no shot");
+        duel.tick();duel.foes.set(0,archer("skel",12,false));
+        for(int i=0;i<GuardCombat.SHIELD_DELAY+1&&duel.shieldUp;i++){duel.tick();both.tick(COMPANION);}
+        check(!duel.shieldUp&&duel.draws==2&&both.state().equals("shooting"),"loosed: shield down, our bow drawn again");
+        // Already in reach: swing at it. Between swings the shield goes up (it is drawing at us).
+        FakeView close=new FakeView();close.shield=true;GuardCombat swing=guard(close);
+        close.foes.add(archer("skel",2,true));swing.tick(COMPANION);
+        check(close.attacks==1&&!close.shieldUp&&swing.state().equals("fighting"),"a skeleton drawing in reach is struck, not shielded from");
+        close.cooled=false;close.tick();swing.tick(COMPANION);
+        check(close.attacks==1&&close.shieldUp,"waiting for the swing, the shield covers a skeleton that is drawing");
+        // A melee foe in reach comes before an archer further off.
+        FakeView mixed=new FakeView();mixed.shield=true;GuardCombat both2=guard(mixed);
+        mixed.foes.add(foe("zombie","minecraft:zombie",2,3,true,false,false,false));mixed.foes.add(archer("skel",12,true));both2.tick(COMPANION);
+        check(mixed.attacks==1&&mixed.raised==0,"a zombie in reach is struck first; no standing still for the archer");
+        // A lit creeper that cannot be outrun comes first: the shield faces the creeper.
+        FakeView blast=new FakeView();blast.shield=true;GuardCombat boom=guard(blast);
+        blast.foes.add(creeperFoe("c",3,true,10,6));blast.foes.add(archer("skel",12,true));boom.tick(COMPANION);
+        check(boom.state().equals("shielding")&&blast.facing.equals(new Vec3(3,64,0)),"creeper first: the shield faces the creeper, not the archer");
+        check(GuardCombat.SHIELD_LEAD==10&&GuardCombat.SHIELD_LEAD==2*GuardCombat.SHIELD_DELAY&&GuardCombat.SHIELD_HOLD_MS==GuardCombat.SHIELD_DELAY*GuardCombat.TICK_MS,"the creeper's lead, the hold and the projectile window all come from the shield's delay");
+    }
+    /** Something in flight at the body: shield up if it will arrive in time to be blocked, face where it comes from; down once it has passed. */
+    private static void projectileShield() {
+        FakeView view=new FakeView();view.shield=true;GuardCombat guard=guard(view);
+        view.flying.add(new GuardCombat.Incoming("arrow",new Vec3(20,64.5,0),8));
+        check(guard.tick(COMPANION)&&guard.state().equals("shielding")&&view.shieldUp,"an arrow arriving in 8 ticks, no foe in sight: shield up");
+        check(view.facing.equals(new Vec3(20,64.5,0))&&"PROJECTILE".equals(guard.json().get("blocking").getAsString())&&view.stops>=1,"turned to where it is coming from, standing still");
+        // It flew by (not in the list any more): the hold time, then the shield is down and the follow has the tick again.
+        view.flying.clear();
+        boolean drove=true;int held=0;
+        for(int i=0;i<10&&drove;i++){view.tick();drove=guard.tick(COMPANION);if(drove)held++;}
+        check(!drove&&!view.shieldUp&&held==GuardCombat.SHIELD_DELAY-1&&guard.state().equals("idle"),"missed: the shield comes down after the hold time: "+held);
+        // Farther than the window: not yet (the view only reports what arrives within SHIELD_LEAD ticks).
+        FakeView far=new FakeView();far.shield=true;GuardCombat distant=guard(far);
+        far.flying.add(new GuardCombat.Incoming("arrow",new Vec3(24,64.5,0),GuardCombat.SHIELD_LEAD+1));
+        check(!distant.tick(COMPANION)&&far.raised==0,"an arrow still more than SHIELD_LEAD ticks away: nothing yet");
+        // Too late for a raise to count: not raised; the very edge is.
+        FakeView late=new FakeView();late.shield=true;GuardCombat tooLate=guard(late);
+        late.flying.add(new GuardCombat.Incoming("arrow",new Vec3(5,64.5,0),GuardCombat.SHIELD_DELAY-1));
+        check(!tooLate.tick(COMPANION)&&late.raised==0,"it arrives before a shield could be up: not raised");
+        late.flying.set(0,new GuardCombat.Incoming("arrow",new Vec3(5,64.5,0),GuardCombat.SHIELD_DELAY));
+        check(tooLate.tick(COMPANION)&&late.shieldUp,"arriving exactly when the shield takes effect: raised");
+        // Already up (for an archer): a close arrival is kept covered rather than ignored.
+        FakeView up=new FakeView();up.shield=true;GuardCombat held2=guard(up);
+        up.foes.add(archer("skel",12,true));held2.tick(COMPANION);
+        up.flying.add(new GuardCombat.Incoming("arrow",new Vec3(4,64.5,0),1));up.tick();held2.tick(COMPANION);
+        check(up.shieldUp&&up.raised==1&&up.facing.equals(new Vec3(4,64.5,0))&&"PROJECTILE".equals(held2.json().get("blocking").getAsString()),"a shield already up turns to the arrow that is about to land");
+        // A foe in reach: the swing first, even with an arrow coming.
+        FakeView near=new FakeView();near.shield=true;GuardCombat fight=guard(near);
+        near.foes.add(foe("zombie","minecraft:zombie",2,3));near.flying.add(new GuardCombat.Incoming("arrow",new Vec3(10,64.5,0),6));
+        fight.tick(COMPANION);
+        check(near.attacks==1&&near.raised==0&&near.incomingAsked==0,"a zombie in reach is struck; the flight is not even looked at");
+        // A bow drawn is put down for it.
+        FakeView bowed=new FakeView();bowed.shield=true;bowed.bow=true;bowed.drawn=3;GuardCombat shoot=guard(bowed);
+        bowed.flying.add(new GuardCombat.Incoming("arrow",new Vec3(20,64.5,0),8));shoot.tick(COMPANION);
+        check(bowed.drawn<0&&bowed.shieldUp&&"SHIELD".equals(shoot.json().get("lastDrop").getAsString()),"a drawn bow is lowered for the shield");
+    }
+    /** No shield, or shield:false: the fight is the same as before, and the reason can be read. */
+    private static void rangedShieldOff() {
+        FakeView bare=new FakeView();GuardCombat none=guard(bare);
+        bare.foes.add(archer("skel",12,true));
+        check(none.tick(COMPANION)&&bare.raised==0&&bare.approaches==1&&none.state().equals("approaching")&&"NO_SHIELD".equals(none.json().get("lastShield").getAsString()),"no shield on hand: the archer is walked to as before, and the reason is reported");
+        FakeView armed=new FakeView();armed.bow=true;GuardCombat shooter=guard(armed);
+        armed.foes.add(archer("skel",12,true));shooter.tick(COMPANION);armed.tick();shooter.tick(COMPANION);
+        check(armed.draws==1&&armed.drawn>=0&&shooter.state().equals("shooting"),"no shield, a bow: the draw is not dropped, the duel goes on");
+        FakeView off=new FakeView();off.shield=true;GuardCombat declined=new GuardCombat(off,GuardCombat.Options.parse(JsonParser.parseString("{\"shield\":false}")));
+        off.foes.add(archer("skel",12,true));off.flying.add(new GuardCombat.Incoming("arrow",new Vec3(20,64.5,0),8));
+        check(declined.tick(COMPANION)&&off.raised==0&&!off.shieldUp&&off.approaches==1&&"OFF".equals(declined.json().get("lastShield").getAsString()),"shield:false is respected");
+        check(off.incomingAsked==0,"and nothing is scanned for in-flight projectiles");
+        // The old creeper reason still wins its own entry in lastShield.
+        FakeView clean=new FakeView();clean.shield=true;GuardCombat fine=guard(clean);
+        clean.foes.add(archer("skel",12,false));fine.tick(COMPANION);
+        check(!fine.json().has("lastShield"),"nothing to report when nothing was aimed at us");
+    }
+    /** Where a projectile goes: straight, or as an arrow drops; misses, and what is already inside. */
+    private static void flightGeometry() {
+        net.minecraft.world.phys.AABB body=new net.minecraft.world.phys.AABB(-0.3,64,-0.3,0.3,65.8,0.3);
+        Vec3 from=new Vec3(20,64.9,0),inwards=new Vec3(-2,0,0);
+        check(GuardCombat.ticksToHit(from,inwards,1,0,body,20)==10,"straight at the body, 2 blocks a tick from 20: the 10th move reaches the widened box");
+        check(GuardCombat.ticksToHit(from,inwards,1,0,body,9)==-1,"beyond the window it is not reported");
+        check(GuardCombat.ticksToHit(new Vec3(20,65.5,0),inwards,1,0,body,20)>0&&GuardCombat.ticksToHit(new Vec3(20,65.5,0),inwards,GuardCombat.ARROW_DRAG,GuardCombat.ARROW_GRAVITY,body,20)==-1,"an arrow aimed level drops under the body, a straight flight would hit");
+        int high=GuardCombat.ticksToHit(new Vec3(20,67,0),inwards,GuardCombat.ARROW_DRAG,GuardCombat.ARROW_GRAVITY,body,20);
+        check(high>=10&&high<=12,"an arrow loosed high comes down into the body: "+high);
+        check(GuardCombat.ticksToHit(new Vec3(20,64.9,4),inwards,1,0,body,20)==-1,"passing four blocks to the side: no");
+        check(GuardCombat.ticksToHit(new Vec3(5,64.9,0),new Vec3(2,0,0),1,0,body,20)==-1,"flying away: no");
+        check(GuardCombat.ticksToHit(new Vec3(0.1,64.9,0),inwards,1,0,body,20)==-1,"already inside the box (stuck in it, or just past): nothing to block");
+        check(GuardCombat.ticksToHit(new Vec3(3,64.9,0),new Vec3(-3,0,0),1,0,body,20)==1,"fast enough to arrive on the next move");
+        check(GuardCombat.ticksToHit(new Vec3(3,64.9,0),Vec3.ZERO,1,0,body,20)==-1,"not moving: no");
     }
     private static void outrun() {
         Vec3 feet=new Vec3(0,64,0),creeper=new Vec3(3,64,0),player=new Vec3(-2,64,0);

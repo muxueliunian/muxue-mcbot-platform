@@ -25,6 +25,8 @@ final class ControlSession {
         default JsonObject machineStatus(JsonObject params) {throw error("UNSUPPORTED","Machine status is not available");}
         JsonObject watch();
         long chatCursor();
+        /** A momentary action may run beside a running follow-companion without stopping it (capability beside-follow). */
+        default boolean besideFollow(String name) {return false;}
         void begin(Operation operation);
         void abort(Operation operation);
         void stop();
@@ -269,7 +271,8 @@ final class ControlSession {
         if(seenIds.contains(id)) throw error("UNKNOWN_OPERATION","Result evicted; never replay this ID");
         if(seenIds.size()>=ID_LIMIT) throw error("OPERATION_LIMIT","All "+ID_LIMIT+" lease operation IDs are used; stop and observation remain available; release and explicitly claim again for a new budget");
         if(!name.equals("send-chat")&&game.nativeWriteInProgress())throw error("BUSY","A synchronous native write must return before another action may start");
-        if(!name.equals("send-chat")&&history.values().stream().anyMatch(o->o.status.equals("running")&&!o.name.equals("send-chat"))) throw error("BUSY","Stop the current operation first");
+        boolean beside=game.besideFollow(name);
+        if(!name.equals("send-chat")&&history.values().stream().anyMatch(o->o.status.equals("running")&&!o.name.equals("send-chat")&&!(beside&&o.name.equals("follow-companion")))) throw error("BUSY","Stop the current operation first");
         Operation operation=new Operation(id,sessionId,generation,name,args);
         history.put(id,operation); seenIds.add(id);
         while(history.size()>HISTORY_LIMIT) {
@@ -277,7 +280,7 @@ final class ControlSession {
             if(removable==null) break;
             history.remove(removable);
         }
-        try { game.begin(operation); }
+        try { game.begin(operation); if(beside&&operation.status.equals("running")) operation.finish("failed","INTERNAL: beside-follow action did not finish at once",obj("code","INTERNAL")); }
         catch(Protocol.Error e) { operation.finish("failed",e.code+": "+e.getMessage(),obj("code",e.code)); }
         catch(RuntimeException e) {
             operation.finish("failed","Action failed: "+e.getClass().getSimpleName(),obj("code","INTERNAL"));

@@ -11,7 +11,7 @@ public final class ControlSessionTest {
     private static final class FakeGame implements ControlSession.Game {
         boolean exists,dead,savedDead;
         int creations,starts,stops,respawns;
-        boolean immediate=true;
+        boolean immediate=true,beside;
         boolean crashChat,crashStop,nearby,guardDuty;
         JsonObject guarding;int dutyClears;
         int discoveries;
@@ -37,12 +37,14 @@ public final class ControlSessionTest {
         }
         @Override public void abort(ControlSession.Operation o) {if(active==o)stop();}
         @Override public void stop() {stops++;if(crashStop)throw new IllegalStateException("Injected native cleanup failure");active=null;}
+        @Override public boolean besideFollow(String name) {return beside&&(name.equals("select-slot")||name.equals("equip-item"));}
     }
     private static final class Fixture {
         final FakeGame game=new FakeGame();
         final AtomicLong time=new AtomicLong();
         final ControlSession session=new ControlSession(game,time::get,"world","ServerBot");
         JsonObject claim(String controller) { return session.call("claim",obj("instanceId",session.instanceId,"worldId","world","username","ServerBot","controllerId",controller)); }
+        JsonObject act(JsonObject claim,String id,String name) {JsonObject p=act(claim,id);p.addProperty("name",name);return p;}
         JsonObject auth(JsonObject claim) {return obj("instanceId",session.instanceId,"sessionId",claim.get("sessionId").getAsString(),"leaseId",claim.get("leaseId").getAsString());}
         JsonObject host(JsonObject claim) {JsonObject p=auth(claim);p.add("stopToken",claim.get("stopToken"));return p;}
         JsonObject act(JsonObject claim,String id) {
@@ -57,6 +59,29 @@ public final class ControlSessionTest {
     }
     private static void budget(JsonObject response,int used,String message) {
         check(response.getAsJsonObject("operationBudget").equals(obj("used",used,"remaining",ControlSession.ID_LIMIT-used,"limit",ControlSession.ID_LIMIT,"exhausted",used==ControlSession.ID_LIMIT)),message);
+    }
+    /** beside-follow: select-slot and equip-item run beside a running follow-companion; any other action stays BUSY. */
+    private static void besideFollow() {
+        Fixture f=new Fixture();JsonObject claim=f.claim("a");
+        int stops=f.game.stops;f.game.beside=true;f.game.immediate=false;
+        check(f.session.call("act",f.act(claim,UUID.randomUUID().toString(),"follow-companion")).get("status").getAsString().equals("running"),"follow-companion keeps running");
+        f.game.immediate=true;
+        check(f.session.call("act",f.act(claim,UUID.randomUUID().toString(),"select-slot")).get("status").getAsString().equals("succeeded"),"select-slot runs beside a running follow");
+        check(f.session.call("act",f.act(claim,UUID.randomUUID().toString(),"equip-item")).get("status").getAsString().equals("succeeded"),"equip-item runs beside a running follow");
+        check(f.game.stops==stops&&f.game.active!=null,"beside actions never stop the follow");
+        errorCode("BUSY",()->f.session.call("act",f.act(claim,UUID.randomUUID().toString(),"dig-block")));
+        f.game.beside=false;
+        errorCode("BUSY",()->f.session.call("act",f.act(claim,UUID.randomUUID().toString(),"select-slot")));
+        Fixture g=new Fixture();JsonObject gClaim=g.claim("a");
+        g.game.beside=true;g.game.immediate=false;
+        g.session.call("act",g.act(gClaim,UUID.randomUUID().toString(),"build"));
+        g.game.immediate=true;
+        errorCode("BUSY",()->g.session.call("act",g.act(gClaim,UUID.randomUUID().toString(),"select-slot")));
+        Fixture h=new Fixture();JsonObject hClaim=h.claim("a");
+        h.game.beside=true;h.game.immediate=false;
+        h.session.call("act",h.act(hClaim,UUID.randomUUID().toString(),"follow-companion"));
+        JsonObject stuck=h.session.call("act",h.act(hClaim,UUID.randomUUID().toString(),"equip-item"));
+        check(stuck.get("status").getAsString().equals("failed")&&stuck.get("summary").getAsString().startsWith("INTERNAL"),"a beside-follow action left running is failed defensively");
     }
     public static void main(String[] ignored) throws Exception {
         Fixture f=new Fixture();
@@ -259,6 +284,7 @@ public final class ControlSessionTest {
         TargetTokens.Target container=new TargetTokens.Target("s",4,"minecraft:overworld",net.minecraft.core.BlockPos.ZERO,List.of(),100);
         check(TargetTokens.validContext(container,"s",chain,"minecraft:overworld",1)&&!TargetTokens.validContext(container,"s",g->g==6,"minecraft:overworld",1),"container tokens follow the carried chain");
         check(!TargetTokens.validContext(container,"other",chain,"minecraft:overworld",1)&&!TargetTokens.validContext(container,"s",chain,"minecraft:the_nether",1)&&!TargetTokens.validContext(container,"s",chain,"minecraft:overworld",100),"session, dimension and expiry still invalidate carried container tokens");
+        besideFollow();
         System.out.println("ControlSessionTest: "+checks+" checks passed");
         LocalHttpBridgeTest.run();
         ExactNbtTest.run();

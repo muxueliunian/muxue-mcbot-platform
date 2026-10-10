@@ -83,6 +83,8 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     if (!companion || !bodyTools.has(name)) return run();
     const now = companion.snapshot();
     if (!(['following', 'waiting'].includes(now.state) || (now.state === 'paused' && now.suspendedFor))) return run();
+    // Momentary survival actions do not stop a following/waiting companion when the server declares beside-follow.
+    if (body.hello.capabilities.includes('beside-follow') && ['select-slot', 'equip-item'].includes(name) && ['following', 'waiting'].includes(now.state)) return run();
     // A refused call must not move the follow.
     tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
     const lease = await companion.yieldTo(name);

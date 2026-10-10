@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","beside-follow");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -398,7 +398,7 @@ final class ServerController implements ControlSession.Game {
         if(!session.mayDrive(operation)) throw error("LEASE_LOST","Body lease expired before action");
         gazeHold=now()+IdleGaze.HOLD_AFTER_ACTION_MS;
         // Started while the duty fights (between two steps of a gathering, say): it waits for the fight like a paused one and gets that time back.
-        if(dutyDrove){dutyPaused=operation;dutyFrom=now();}
+        if(dutyDrove&&!besideFollow(operation.name)){dutyPaused=operation;dutyFrom=now();}
         JsonObject args=operation.args;
         if(player.isSleeping()&&!Set.of("send-chat","wake-up").contains(operation.name)) throw error("SLEEPING","Body is asleep in a bed; call wake-up first");
         // A looping add-on animation ends when the body does anything else; talking and looking keep it going.
@@ -501,8 +501,10 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;actionGrace=new GuardDuty.Grace(timeout);
     }
-    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment").contains(name);}
+    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","beside-follow").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
+    /** A momentary survival action may run beside a running follow-companion without stopping it (capability beside-follow). */
+    @Override public boolean besideFollow(String name){return companion!=null&&Set.of("select-slot","equip-item").contains(name);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }
         reconcile();

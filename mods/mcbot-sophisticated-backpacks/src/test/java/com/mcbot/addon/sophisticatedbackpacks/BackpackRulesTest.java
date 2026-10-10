@@ -70,6 +70,7 @@ final class BackpackRulesTest {
         check(!BackpackRules.openKeepsStorageIds(snapshot(fresh, dirt), snapshot(opened)), "a vanished stack is not a storage id change");
         check(!BackpackRules.openKeepsStorageIds(snapshot(dirt), snapshot("{\"slot\":5,\"id\":\"minecraft:dirt\",\"count\":4,\"components\":{\"sophisticatedcore:storage_uuid\":{\"type\":\"uuid\",\"value\":\"a\"}}}")), "only backpacks may gain a storage id");
 
+        check(McbotSophisticatedBackpacks.HINT.length()<=com.mcbot.servercontrol.api.McbotApi.HINT_MAX&&McbotSophisticatedBackpacks.HINT.chars().noneMatch(Character::isISOControl),"usage hint fits the core limit as plain text");
         System.out.println("BackpackRulesTest: " + checks + " checks passed (layout, upgrades, storage ids; no Minecraft launch)");
     }
 }

@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { applyPlugin, inspectPlugins, loadCatalog, modsInToml, planPlugin, readZipEntries, scanMods } from '../../scripts/webui-plugins.mjs';
+import { applyPlugin, disabledPlugins, inspectPlugins, loadCatalog, modsInToml, planPlugin, readZipEntries, scanMods, setPluginAi } from '../../scripts/webui-plugins.mjs';
+import { createLauncher, launchArgs, normalizeProfile } from '../../scripts/webui-profiles.mjs';
 import { createWebServer } from '../../scripts/webui.mjs';
 import { gameSupport, gameVersion } from '../../scripts/webui-games.mjs';
 
@@ -235,4 +236,59 @@ test('WebUI 插件接口：只改游戏列表里的目录，安装在后台跑�
     assert.equal(job.result.ok, true, job.result.error);
     assert.ok(fs.existsSync(path.join(game, 'mods', 'ironfurnaces-4.3.2.jar')) && fs.existsSync(path.join(game, 'mods', 'mcbot-iron-furnaces-0.1.0.jar')));
   } finally { await web.close(); fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('「给 AI 用」开关：默认开启，按游戏目录存在 WebUI 的数据文件里，不写进游戏目录；清单删掉的插件自动失效', () => {
+  const f = fixture(), runtime = path.join(f.root, 'runtime'), a = path.join(f.root, 'A'), b = path.join(f.root, 'B');
+  try {
+    assert.deepEqual(disabledPlugins(runtime, a, f.catalog), [], '默认全部开启');
+    assert.deepEqual(setPluginAi(runtime, a, 'iron_furnaces', false, f.catalog), { ok: true, disabled: ['iron_furnaces'] });
+    assert.deepEqual(setPluginAi(runtime, a, 'kaleidoscope_cookery_slots', false, f.catalog).disabled, ['iron_furnaces', 'kaleidoscope_cookery_slots']);
+    assert.deepEqual(disabledPlugins(runtime, a, f.catalog), ['iron_furnaces', 'kaleidoscope_cookery_slots']);
+    assert.deepEqual(disabledPlugins(runtime, path.join(a, '.'), f.catalog), ['iron_furnaces', 'kaleidoscope_cookery_slots'], '同一目录的不同写法');
+    assert.deepEqual(disabledPlugins(runtime, b, f.catalog), [], '其他游戏不受影响');
+    assert.deepEqual(setPluginAi(runtime, a, 'iron_furnaces', true, f.catalog).disabled, ['kaleidoscope_cookery_slots']);
+    assert.match(setPluginAi(runtime, a, 'mcbot_server_control', false, f.catalog).error, /插件不存在/, '核心没有开关');
+    assert.match(setPluginAi(runtime, a, 'nope', false, f.catalog).error, /插件不存在/);
+    assert.match(setPluginAi(runtime, a, 'iron_furnaces', 'off', f.catalog).error, /布尔值/);
+    const saved = JSON.parse(fs.readFileSync(path.join(runtime, 'webui-plugins.json'), 'utf8'));
+    assert.deepEqual(saved.games, [{ dir: path.normalize(a), disabled: ['kaleidoscope_cookery_slots'] }]);
+    assert.ok(!fs.existsSync(a), '游戏目录没有被写入');
+    // 清单里没有了的插件不再传下去
+    saved.games[0].disabled.push('removed_plugin');
+    fs.writeFileSync(path.join(runtime, 'webui-plugins.json'), JSON.stringify(saved));
+    assert.deepEqual(disabledPlugins(runtime, a, f.catalog), ['kaleidoscope_cookery_slots']);
+    assert.deepEqual(setPluginAi(runtime, a, 'kaleidoscope_cookery_slots', true, f.catalog).disabled, []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runtime, 'webui-plugins.json'), 'utf8')).games, [], '全部开启时不留记录');
+    fs.writeFileSync(path.join(runtime, 'webui-plugins.json'), '{broken');
+    assert.deepEqual(disabledPlugins(runtime, a, f.catalog), [], '文件损坏时按全部开启');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('「给 AI 用」开关的接口和启动：网页读写开关，启动托管时作为 --disabled-plugins 传给启动脚本', async () => {
+  const f = fixture(), game = path.join(f.root, 'inst'), runtime = path.join(f.root, 'runtime');
+  put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
+  const web = createWebServer({ runtime, token: 'fa02', launcher: { launch: () => ({ ok: true }), status: () => null },
+    plugins: { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, knownGames: () => [{ dir: game }] } });
+  const port = await web.listen(0), base = `http://127.0.0.1:${port}`;
+  try {
+    const cookie = (await fetch(`${base}/?t=fa02`, { redirect: 'manual' })).headers.get('set-cookie').split(';')[0];
+    const post = async (p, body) => (await fetch(base + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+    assert.deepEqual((await post('/api/plugins', { dir: game })).aiOff, []);
+    assert.match((await post('/api/plugins/ai', { dir: path.join(f.root, 'elsewhere'), id: 'iron_furnaces', enabled: false })).error, /不在游戏列表/);
+    assert.deepEqual(await post('/api/plugins/ai', { dir: game, id: 'iron_furnaces', enabled: false }), { ok: true, disabled: ['iron_furnaces'] });
+    assert.deepEqual((await post('/api/plugins', { dir: game })).aiOff, ['iron_furnaces']);
+  } finally { await web.close(); }
+  try {
+    const profile = normalizeProfile({ label: 'P', gameDir: game, mode: 'lan', username: 'Claude', agent: 'claude', effort: 'low' });
+    const after = (a, flag) => a[a.indexOf(flag) + 1];
+    assert.ok(!launchArgs(profile, 'S.mjs').includes('--disabled-plugins'), '全部开启时不传');
+    assert.equal(after(launchArgs(profile, 'S.mjs', ['iron_furnaces', 'yes_steve_model']), '--disabled-plugins'), 'iron_furnaces,yes_steve_model');
+    const script = path.join(f.root, 'fake.mjs');
+    fs.writeFileSync(script, "console.log('ARGS ' + process.argv.slice(2).join('|'));");
+    const launcher = createLauncher({ runtime, isRunning: () => false, command: [process.execPath, script], catalog: f.catalog });
+    assert.equal(launcher.launch(profile).ok, true);
+    for (let i = 0; i < 100 && launcher.status('Claude').exitCode === null; i++) await new Promise((r) => setTimeout(r, 50));
+    assert.match(launcher.status('Claude').log, /\|--disabled-plugins\|iron_furnaces(\||\n)/, '启动时读当前开关');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });

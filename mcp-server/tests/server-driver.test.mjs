@@ -332,6 +332,30 @@ test('start-server-play.mjs只要Node：参数和ps1一样转进mcp.json和驱�
   }finally{cleanup(dir);}
 });
 
+test('插件开关：start-server-play 把对 AI 关闭的插件写进 mcp.json 的运行端参数，驱动器生成托管配置时原样保留；不在清单里的拒绝',async()=>{
+  const {prepareServerPlay,parseArgs}=await import('../../scripts/start-server-play.mjs');
+  const {hostedMcpConfig}=await import('../../scripts/companion.mjs');
+  const dir=temp();const connectionFile=path.join(dir,'connection.json');
+  fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:'http://127.0.0.1:8766/v2',token:'plugin-secret',worldId:'pw',username:'PlugBot'}));
+  fs.writeFileSync(path.join(dir,'compat.json'),JSON.stringify({adapters:[{id:'yes_steve_model',kind:'addon'},{id:'iron_furnaces',kind:'addon'},{id:'kaleidoscope_cookery_slots',kind:'config'}]}));
+  try{
+    const prep=(extra)=>prepareServerPlay(parseArgs(['--connection-file',connectionFile,'--prepare-only',...extra]),{root:dir,execPath:process.execPath});
+    const mcpArgs=(p)=>JSON.parse(fs.readFileSync(p.configFile,'utf8')).mcpServers.minecraft.args;
+    assert.ok(!mcpArgs(prep([])).includes('--disabled-plugins'),'全部开启时不传');
+    const p=prep(['--disabled-plugins','yes_steve_model,kaleidoscope_cookery_slots,yes_steve_model']);
+    const args=mcpArgs(p);
+    assert.equal(args[args.indexOf('--disabled-plugins')+1],'yes_steve_model,kaleidoscope_cookery_slots','去重后转给运行端');
+    assert.ok(!p.driverArgs.includes('--disabled-plugins'),'驱动器只转交 MCP 配置，不自己判断插件');
+    assert.ok(p.lines.some(l=>/对 AI 关闭的插件：yes_steve_model、kaleidoscope_cookery_slots/.test(l)));
+    const hosted=hostedMcpConfig(JSON.parse(fs.readFileSync(p.configFile,'utf8')),'minecraft',null,{name:'PlugBot',nickname:'PlugBot',runtimeDir:dir,body:'server'}).mcpServers.minecraft.args;
+    assert.equal(hosted[hosted.indexOf('--disabled-plugins')+1],'yes_steve_model,kaleidoscope_cookery_slots','托管配置保留参数，运行端拿到同一份列表');
+    assert.throws(()=>prep(['--disabled-plugins','not_in_compat']),/不在 compat\.json/);
+    assert.throws(()=>prep(['--disabled-plugins','Bad Id']),/不在 compat\.json/);
+    fs.rmSync(path.join(dir,'compat.json'));
+    assert.throws(()=>prep(['--disabled-plugins','iron_furnaces']),/compat\.json 无法读取/);
+  }finally{cleanup(dir);}
+});
+
 test('start-server-play --wait：等到能接管才启动托管，断开（75）回去等，别的退出码直接结束；等待时也能停',async()=>{
   const {supervise,readiness}=await import('../../scripts/start-server-play.mjs');
   const {RECONNECT_EXIT}=await import('../../scripts/companion.mjs');

@@ -19,6 +19,12 @@ final class ModAdaptersTest {
         try { JsonInteractions.parse(JsonParser.parseString(json).getAsJsonObject());throw new AssertionError("Expected rejection: "+fragment); }
         catch(IllegalArgumentException expected){ if(!expected.getMessage().contains(fragment)) throw new AssertionError("Wrong rejection for "+fragment+": "+expected.getMessage()); }
     }
+    private static boolean hintRefused(String id,String text){
+        try { McbotApi.registerHint(id,text);return false; } catch(IllegalArgumentException refused) { return true; }
+    }
+    private static boolean hintRefusedFrozen(String id,String text){
+        try { McbotApi.registerHint(id,text);return false; } catch(IllegalStateException frozen) { return true; }
+    }
     private record FakeContainer(String id,boolean installed) implements ContainerAdapter {
         public boolean block(BlockState state){return false;}
         public boolean menu(AbstractContainerMenu menu){return false;}
@@ -146,8 +152,33 @@ final class ModAdaptersTest {
         refused=false;
         try { McbotApi.registerContainer(new FakeContainer("No Namespace",true)); } catch(IllegalArgumentException bad) { refused=true; }
         check(refused,"id without namespace refused");
+        // Usage hints: same id rules, one per namespace, plain bounded text, frozen with the rest
+        McbotApi.registerHint("testmod:hint","Open the crate with open-container.\n\tThen\u0007 take items.\u202e");
+        McbotApi.registerHint("ghost:hint","describes a mod that is not installed");
+        check(hintRefused("testmod:hint","again"),"a hint id cannot be registered twice");
+        check(hintRefused("testmod:other","second note for the same namespace"),"one hint per namespace");
+        check(hintRefused("testmod:crate","x"),"a hint cannot reuse an adapter id");
+        check(hintRefused("No Namespace","x")&&hintRefused(null,"x"),"a hint id needs namespace:path");
+        check(hintRefused("long:hint","a".repeat(McbotApi.HINT_MAX+1)),"text over the limit refused");
+        McbotApi.registerHint("edge:hint","b".repeat(McbotApi.HINT_MAX)+"\n\n");
+        check(hintRefused("blank:hint"," \n\t\u0000 "),"text that is only control characters and spaces is refused");
+        boolean nullText=false;
+        try { McbotApi.registerHint("null:hint",null); } catch(NullPointerException missing) { nullText=true; }
+        check(nullText,"null text refused");
         McbotApi.Registered registered=McbotApi.freeze();
         check(registered.containers().size()==1&&registered.interactions().size()==1,"freeze returns what add-ons registered");
+        check(registered.hints().equals(List.of(new McbotApi.Hint("testmod:hint","Open the crate with open-container. Then take items."),
+            new McbotApi.Hint("ghost:hint","describes a mod that is not installed"),new McbotApi.Hint("edge:hint","b".repeat(McbotApi.HINT_MAX)))),
+            "hints are kept in order with control and format characters turned into single spaces");
+        check(new McbotApi.Registered(List.of(),List.of(),List.of(),List.of(),List.of(),List.of()).hints().isEmpty(),"the old Registered shape still builds, without hints");
+        check(hintRefusedFrozen("late:hint","x"),"hint registration after server start is refused");
+        check(ModAdapters.liveHints(registered.hints(),Set.of("testmod","edge")).stream().map(McbotApi.Hint::id).toList().equals(List.of("testmod:hint","edge:hint")),
+            "only hints whose namespace has something installed are kept");
+        JsonArray hello=ModAdapters.hintsJson(registered.hints(),Set.of("testmod"));
+        check(hello.size()==1&&hello.get(0).getAsJsonObject().get("id").getAsString().equals("testmod:hint")
+            &&hello.get(0).getAsJsonObject().get("text").getAsString().equals("Open the crate with open-container. Then take items.")
+            &&hello.get(0).getAsJsonObject().size()==2,"hello hints are [{id, text}] for live namespaces; ghost and edge have nothing installed");
+        check(ModAdapters.hintsJson(List.of(),Set.of("testmod")).isEmpty(),"no hints registered gives an empty hello list");
         refused=false;
         try { McbotApi.registerContainer(new FakeContainer("testmod:late",true)); } catch(IllegalStateException frozen) { refused=true; }
         check(refused,"registration after server start is refused");

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
+import { applyPluginPolicy, pluginRefusal, type PluginPolicy } from './plugins.js';
 import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus, type GuardDutyRequest, type GuardDutyState, type StopOptions } from './body.js';
 
 const identifier = z.string().min(1);
@@ -35,6 +36,8 @@ const helloSchema = z.object({
   itemHandlerMods: z.array(z.string().regex(/^[a-z0-9_.-]{1,64}$/)).max(256).optional(),
   emotes: z.object({ builtin: z.array(z.string().max(64)).max(32), sources: z.array(z.object({ id: z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/), hint: z.string().max(512) })).max(32) }).optional(),
   appearances: z.array(z.object({ id: z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/), choices: z.array(z.string().max(128)).max(256) })).max(32).optional(),
+  // Third-party text: entries are checked and cleaned by applyPluginPolicy, a bad one only drops that hint.
+  hints: z.array(z.unknown()).max(1024).optional(),
 });
 const observationSchema = z.object({
   instanceId: identifier, controlGeneration: generation,
@@ -91,6 +94,8 @@ interface ServerOptions {
   controllerId?: string;
   fetch?: typeof fetch; now?: () => number; onLost?: (error: BodyError) => void;
   onLease?: (lease: ServerLease) => void | Promise<void>;
+  /** Plugins turned off for the agent (--disabled-plugins) and the compat.json they are matched against. */
+  plugins?: PluginPolicy;
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
 const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'equip-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up', 'sleep-in-bed', 'wake-up', 'craft-item', 'smelt-item', 'travel-to', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals', 'use-bucket', 'machine-items', 'emote', 'set-appearance', 'build'];
@@ -146,7 +151,8 @@ export class ServerBody implements Body {
     return hello;
   }
   private async connect(): Promise<void> {
-    const hello = await this.readHello();
+    // The single plugin filter: everything below (and every tool registered from this.hello) sees the filtered hello.
+    const hello = applyPluginPolicy(await this.readHello(), this.options.plugins);
     const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
@@ -354,6 +360,8 @@ export class ServerBody implements Body {
     this.assertActive();
     if (name !== 'send-chat' && this.taskOwner && taskToken !== this.taskOwner) throw new BodyError('BUSY', '任务正在运行，原子动作不能绕过任务锁');
     if (!this.hello.capabilities.includes(name)) throw new BodyError('UNSUPPORTED', `ServerBody 当前未实现 ${name}`);
+    const refusal = pluginRefusal(name, args, this.options.plugins);
+    if (refusal) throw new BodyError('UNSUPPORTED', refusal);
     if (this.stopping) throw new BodyError('BUSY', '正在停止，请等待确认后发送明确新动作');
     if (name === 'send-chat' && args && 'message' in args && (args.message.startsWith('/') || /[\r\n]/.test(args.message))) throw new BodyError('INVALID_ARGUMENT', 'send-chat 只允许普通单行聊天');
     this.validateSurvivalArguments(name, args);

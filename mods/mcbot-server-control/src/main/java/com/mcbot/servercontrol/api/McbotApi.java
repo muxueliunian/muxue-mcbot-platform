@@ -24,6 +24,8 @@ public final class McbotApi {
     private static final List<WorkstationAdapter> WORKSTATIONS = new ArrayList<>();
     private static final List<EmoteSource> EMOTES = new ArrayList<>();
     private static final List<AppearanceSource> APPEARANCES = new ArrayList<>();
+    private static final List<Hint> HINTS = new ArrayList<>();
+    private static final Set<String> HINT_NAMESPACES = new HashSet<>();
     private static final Set<String> IDS = new HashSet<>();
     private static boolean frozen;
 
@@ -70,6 +72,38 @@ public final class McbotApi {
         APPEARANCES.add(source);
         IDS.add(id);
     }
+
+    /** Longest hint text, after control characters are removed. */
+    public static final int HINT_MAX = 600;
+
+    /**
+     * A short usage note for the agent about this add-on's tools, sent in {@code hello.hints} while something the add-on
+     * registered under the same namespace is installed. One per namespace. Plain text: control characters become spaces;
+     * at most {@link #HINT_MAX} characters. The runtime only passes it on for official plugins the hosting person left
+     * enabled, as extra description of tools that already exist; it can never add tools or permissions.
+     */
+    public static synchronized void registerHint(String id, String text) {
+        checkId(id);
+        if (HINT_NAMESPACES.contains(namespace(id))) throw new IllegalArgumentException("A hint is already registered for namespace " + namespace(id));
+        String clean = hintText(Objects.requireNonNull(text, "text"));
+        if (clean.isEmpty()) throw new IllegalArgumentException("Hint text is empty");
+        if (clean.length() > HINT_MAX) throw new IllegalArgumentException("Hint text longer than " + HINT_MAX + " characters: " + clean.length());
+        HINTS.add(new Hint(id, clean));
+        HINT_NAMESPACES.add(namespace(id));
+        IDS.add(id);
+    }
+
+    /** Control characters (line breaks included) become single spaces; leading and trailing space is dropped. */
+    static String hintText(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        text.codePoints().forEach(c -> out.appendCodePoint(Character.isISOControl(c) || Character.getType(c) == Character.FORMAT ? ' ' : c));
+        return out.toString().replaceAll(" {2,}", " ").strip();
+    }
+
+    static String namespace(String id) { return id.substring(0, id.indexOf(':')); }
+
+    /** A registered usage note; see {@link #registerHint}. */
+    public record Hint(String id, String text) {}
 
     private static String checkId(String id) {
         if (frozen) throw new IllegalStateException("MCBOT adapter registry is frozen; register from the mod constructor or common setup");
@@ -123,8 +157,13 @@ public final class McbotApi {
     /** Snapshot of what add-ons registered. Internal: called by MCBOT when a server starts. */
     public static synchronized Registered freeze() {
         frozen = true;
-        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS), List.copyOf(EMOTES), List.copyOf(APPEARANCES));
+        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS), List.copyOf(EMOTES), List.copyOf(APPEARANCES), List.copyOf(HINTS));
     }
 
-    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances) {}
+    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances, List<Hint> hints) {
+        /** The shape before hints existed. */
+        public Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances) {
+            this(containers, interactions, pickupSinks, workstations, emotes, appearances, List.of());
+        }
+    }
 }

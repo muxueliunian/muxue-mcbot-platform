@@ -23,6 +23,7 @@ public final class YsmCommandsTest {
         } finally {
             try (var files = Files.walk(dir)) { files.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete()); }
         }
+        check(McbotYesSteveModel.HINT.length()<=com.mcbot.servercontrol.api.McbotApi.HINT_MAX&&McbotYesSteveModel.HINT.chars().noneMatch(Character::isISOControl),"usage hint fits the core limit as plain text");
         System.out.println("YsmCommandsTest passed");
     }
     private static void refused(Runnable action, String name) {

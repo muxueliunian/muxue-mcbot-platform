@@ -56,6 +56,7 @@ final class PotRulesTest {
         check(PotRules.takeOutConsistent(done, pot(0, NONE, 0, 0, "", "", true, false)), "pot resets after take-out");
         check(!PotRules.takeOutConsistent(done, done), "pot still full is not a success");
         check(PotRules.STIR.heldDamageAllowed() && !PotRules.ADD_OIL.heldDamageAllowed() && PotRules.ADD_OIL.properties().contains("has_oil"), "fixed envelopes");
+        check(McbotKaleidoscopeCookery.HINT.length()<=com.mcbot.servercontrol.api.McbotApi.HINT_MAX&&McbotKaleidoscopeCookery.HINT.chars().noneMatch(Character::isISOControl),"usage hint fits the core limit as plain text");
         System.out.println("PotRulesTest: " + checks + " checks passed (pot rules on summaries; no Minecraft launch)");
     }
 }

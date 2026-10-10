@@ -39,6 +39,7 @@ public final class IronFurnaceAdapterTest {
         check(IronFurnaceAdapter.verifiedContract(slots,inventory,41)==null,"wrong native player hotbar index rejected");
         slots=slots(machine,inventory);slots.set(46,new IronFurnaceAdapter.NativeSlot(other,0,0,SlotItemHandler.class.getName(),other));
         check(IronFurnaceAdapter.verifiedContract(slots,inventory,41)==null,"foreign handler rejected even with correct index");
+        check(McbotIronFurnaces.HINT.length()<=com.mcbot.servercontrol.api.McbotApi.HINT_MAX&&McbotIronFurnaces.HINT.chars().noneMatch(Character::isISOControl),"usage hint fits the core limit as plain text");
         System.out.println("IronFurnaceAdapterTest: "+checks+" checks passed");
     }
 }

@@ -190,6 +190,7 @@ final class ServerController implements ControlSession.Game {
         hello.add("itemInteractions",ItemInteractions.itemIds(interactions));
         hello.add("adapters",ModAdapters.containerIds());
         hello.add("itemHandlerMods",ModAdapters.itemHandlerModIds());
+        hello.add("hints",ModAdapters.hintsJson());
         BodyEmotes.describe(hello,server);
         if(validationProtection.enabled()) hello.add("validationFixture",validationProtection.json());
         return hello;

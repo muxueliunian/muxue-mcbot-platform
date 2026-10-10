@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { connectionFileOf, gameDirOf, gameType, readGameConfig, writeGameConfig } from './webui-games.mjs';
+import { disabledPlugins } from './webui-plugins.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FILE = 'webui-profiles.json';
@@ -267,8 +268,11 @@ export function accountDirs(home = os.homedir()) {
   return Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [k, names.filter((n) => a.accountRe.test(n)).sort().map((n) => `~/${n}`)]));
 }
 
-/** 拼 scripts/start-server-play.mjs 的参数。每个值都是单独一项，不经过 shell；值不会以 - 开头（路径是绝对路径，其余已校验）。 */
-export function launchArgs(profile, script = path.join(ROOT, 'scripts', 'start-server-play.mjs')) {
+/**
+ * 拼 scripts/start-server-play.mjs 的参数。每个值都是单独一项，不经过 shell；值不会以 - 开头（路径是绝对路径，其余已校验）。
+ * disabled：此游戏对 AI 关闭的插件（插件页的「给 AI 用」开关），启动时读一次，所以改了开关要下次启动托管才生效。
+ */
+export function launchArgs(profile, script = path.join(ROOT, 'scripts', 'start-server-play.mjs'), disabled = []) {
   // --wait：世界没开、没开局域网时一直等，断开了自动重连，死了先复活（见 start-server-play.mjs）
   const a = [script, '--connection-file', connectionFileOf(profile.gameDir), '--agent', profile.agent, '--effort', profile.effort, '--headless', '--wait'];
   const name = profileName(profile);
@@ -280,6 +284,7 @@ export function launchArgs(profile, script = path.join(ROOT, 'scripts', 'start-s
   if (profile.model) a.push('--model', profile.model);
   if (profile.nodePath) a.push('--node-path', profile.nodePath);
   if (profile.appearance) a.push('--appearance', profile.appearance);
+  if (disabled.length) a.push('--disabled-plugins', disabled.join(','));
   for (const [k, o] of Object.entries(SESSION_OPTIONS)) if (profile[k] !== null && profile[k] !== undefined) a.push(o.flag, String(profile[k]));
   for (const [k, o] of Object.entries(GUARD_OPTIONS)) {
     if (o.kind === 'switch') a.push(o.flag, profile[k] === false ? 'off' : 'on');
@@ -323,7 +328,7 @@ export function waitingText(log = '') {
 }
 
 /** 启动记录：同一个 WebUI 进程里启动过的，记下进程和退出码；脚本的输出写进 runtime/webui-launch-<角色>.log。 */
-export function createLauncher({ runtime, isRunning, command = launchCommand(), spawnImpl = spawn }) {
+export function createLauncher({ runtime, isRunning, command = launchCommand(), spawnImpl = spawn, catalog }) {
   const launches = new Map();
   return {
     launch(profile) {
@@ -341,7 +346,7 @@ export function createLauncher({ runtime, isRunning, command = launchCommand(), 
       try {
         // 用 Node 直接跑启动脚本，不需要 PowerShell。Windows 上不 detached（以前 detached 的 pwsh 没有控制台会直接退出），
         // 输出写进日志文件、不占控制台；关掉 WebUI 后托管是否继续见 docs/dev.md 的本地 WebUI。
-        child = spawnImpl(command[0], [...command.slice(1), ...launchArgs(profile)], {
+        child = spawnImpl(command[0], [...command.slice(1), ...launchArgs(profile, undefined, disabledPlugins(runtime, profile.gameDir, catalog))], {
           cwd: ROOT, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', fd, fd],
           env: { ...process.env, COMPANION_RUNTIME_DIR: runtime },
         });

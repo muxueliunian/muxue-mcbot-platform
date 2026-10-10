@@ -87,6 +87,8 @@ export interface BodyHello {
   emotes?: { builtin: string[]; sources: Array<{ id: string; hint: string }> };
   /** ServerBody: looks the hosting person can pick (set-appearance), with the choices the server offers. */
   appearances?: Array<{ id: string; choices: string[] }>;
+  /** ServerBody: add-on usage notes; after plugin filtering only official plugins that are on (see plugins.ts). */
+  hints?: Array<{ id: string; text: string }>;
 }
 /** What modify-item does to the referenced item; see the MCP tool for the fields each kind takes. */
 export type ModifyAction = { kind: 'enchant' | 'anvil' | 'grind' | 'smith' | 'loom' | 'cartography'; option?: number; with?: string; rename?: string; template?: string; addition?: string; dye?: string; pattern?: string; patternItem?: string };

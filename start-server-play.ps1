@@ -25,6 +25,8 @@ param(
     [string]$Appearance = '',
     # 建筑蓝图目录（build 用的 <名字>.json，格式见 docs/server_body_protocol.md 的 build）；留空用运行目录 runtime 下的 blueprints
     [string]$BlueprintDir = '',
+    # 对 AI 关闭的插件：compat.json 的插件 id，逗号分隔（WebUI 插件页的「给 AI 用」开关）；留空表示全部开启
+    [string]$DisabledPlugins = '',
     [switch]$Headless,
     [switch]$PrepareOnly
 )
@@ -42,6 +44,7 @@ if ($MemoryDir) { $a += @('--memory-dir', (& $full $MemoryDir)) }
 if ($Model) { $a += @('--model', $Model) }
 if ($Appearance) { $a += @('--appearance', $Appearance) }
 if ($BlueprintDir) { $a += @('--blueprint-dir', (& $full $BlueprintDir)) }
+if ($DisabledPlugins) { $a += @('--disabled-plugins', $DisabledPlugins) }
 if ($Headless) { $a += '--headless' }
 if ($PrepareOnly) { $a += '--prepare-only' }
 & $NodePath @a

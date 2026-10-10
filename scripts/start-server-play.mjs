@@ -19,7 +19,7 @@ const ON_OFF = ['on', 'off'];
 // 会话选项，-1（或不填）表示用驱动器的默认值（见 scripts/companion.mjs 开头的说明）
 const SESSION = { 'idle-minutes': 1440, 'resume-window-min': 1440, 'rotate-tokens': 2000000, 'max-restarts': 100 };
 const VALUE_FLAGS = ['connection-file', 'agent', 'nickname', 'config-dir', 'memory-dir', 'model', 'node-path', 'effort',
-  'guard', 'guard-radius', 'guard-low-health', 'guard-bow', 'guard-shield', 'appearance', 'blueprint-dir', 'username', ...Object.keys(SESSION)];
+  'guard', 'guard-radius', 'guard-low-health', 'guard-bow', 'guard-shield', 'appearance', 'blueprint-dir', 'username', 'disabled-plugins', ...Object.keys(SESSION)];
 const SWITCHES = ['headless', 'prepare-only', 'wait'];
 
 export function parseArgs(argv) {
@@ -86,6 +86,15 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   const appearance = options.appearance || '';
   // 外观：<来源>=<选项>（WebUI 从服务器的列表里选，比如 yes_steve_model:model=ds_whale.ysm），每次接管时套用
   if (appearance && !/^[a-z0-9_.-]+:[a-z0-9_/.-]+=[^"\\\x00-\x1f\x7f]{1,128}$/.test(appearance)) throw new Error('appearance 应为 <来源>=<选项>');
+  // 对 AI 关闭的插件（WebUI 插件页的「给 AI 用」开关）：compat.json 的插件 id，逗号分隔；转给运行端，由它过滤工具
+  const disabledPlugins = [...new Set(String(options['disabled-plugins'] || '').split(',').map((s) => s.trim()).filter(Boolean))];
+  if (disabledPlugins.length) {
+    let known;
+    try { known = new Set(JSON.parse(fs.readFileSync(path.join(root, 'compat.json'), 'utf8')).adapters.map((a) => a.id)); }
+    catch { throw new Error('compat.json 无法读取，无法关闭插件'); }
+    const bad = disabledPlugins.find((id) => !/^[a-z0-9_]{1,64}$/.test(id) || !known.has(id));
+    if (bad) throw new Error(`disabled-plugins 中的插件不在 compat.json 中：${bad}`);
+  }
   const name = String(connection.username);
   const worldId = String(connection.worldId);
   // 昵称留空时用游戏名
@@ -110,6 +119,7 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   if (guardLowHealth > 0) mcpArgs.push('--guard-low-health', String(guardLowHealth));
   if (options['blueprint-dir']) mcpArgs.push('--blueprint-dir', full(options['blueprint-dir']));
   if (appearance) mcpArgs.push('--appearance', appearance);
+  if (disabledPlugins.length) mcpArgs.push('--disabled-plugins', disabledPlugins.join(','));
   fs.writeFileSync(configFile, JSON.stringify({ mcpServers: { minecraft: { command: nodePath, args: mcpArgs } } }, null, 2));
   const driverArgs = [path.join(root, 'scripts', 'companion.mjs'), '--agent', agent, '--body', 'server', '--name', name,
     '--nickname', nickname, '--mcp-config', configFile, '--effort', effort];
@@ -122,6 +132,7 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   if (options.headless) driverArgs.push('--headless');
   if (options.wait) driverArgs.push('--reconnect');
   const lines = [`ServerBody 配置：${configFile}`, `角色：${name}；世界：${worldId}；Agent：${agent}；思考：${effort}`,
+    ...(disabledPlugins.length ? [`对 AI 关闭的插件：${disabledPlugins.join('、')}（游戏中照常可用）`] : []),
     `默认使用本机现有的 Agent 登录。停止托管：在 WebUI 中点击「停止托管」（从仓库运行时也可使用 stop-companion.ps1 ${name}），角色将保留`,
     `叫停后，请使用角色名或昵称明确提出新任务，例如：${nickname}，查询状态。`];
   return { name, worldId, configFile, nodePath, driverArgs, lines, prepareOnly };

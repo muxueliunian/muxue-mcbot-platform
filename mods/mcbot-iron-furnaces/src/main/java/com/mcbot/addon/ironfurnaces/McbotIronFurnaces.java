@@ -9,7 +9,14 @@ import net.neoforged.fml.common.Mod;
  */
 @Mod("mcbot_iron_furnaces")
 public final class McbotIronFurnaces {
+    /** Usage note for the agent, sent in hello.hints while the adapter is installed (only what IronFurnaceAdapterTest and the server smoke cover). */
+    static final String HINT = "Iron Furnaces: only the plain iron furnace (ironfurnaces:iron_furnace) is supported; gold, diamond and other tiers are refused. "
+        + "Use it like a vanilla furnace through discover-containers and the container tools, or open-container then click-slot: input, fuel and output slots. "
+        + "Only an unlit furnace in plain furnace mode opens; while it is burning, or set to another type, factory, generator or augment view, it is refused, so come back when it has stopped. "
+        + "smelt-item does not use it.";
+
     public McbotIronFurnaces() {
         McbotApi.registerContainer(IronFurnaceAdapter.INSTANCE);
+        McbotApi.registerHint("ironfurnaces:hint", HINT);
     }
 }

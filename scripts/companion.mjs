@@ -905,7 +905,7 @@ function main() {
     proc.on('exit', (code, signal) => onGone(`code ${code}${signal ? `，${signal}` : ''}`));
     if (agentProtocol.createConnection) {
       proc.connection = agentProtocol.createConnection({
-        root: ROOT, conversationId, model: args.model, effort: args.effort, mcpServer: hostedServer, body: args.body,
+        root: ROOT, conversationId, model: args.model, effort: args.effort, mcpServer: hostedServer, body: args.body, gameInstructions,
         write: (msg) => { if (!proc.stdin.destroyed) proc.stdin.write(JSON.stringify(msg) + '\n'); },
         emit: (event) => { if (child === proc && !proc.intentional && !shuttingDown) handleAgentEvent(event); },
         fail: (e) => {

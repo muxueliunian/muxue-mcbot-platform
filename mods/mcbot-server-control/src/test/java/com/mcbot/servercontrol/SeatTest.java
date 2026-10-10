@@ -7,6 +7,7 @@ import net.minecraft.world.phys.Vec3;
 final class SeatTest {
     private static int checks;
     private static void check(boolean ok,String message){checks++;if(!ok)throw new AssertionError(message);}
+    private static boolean near(float a,float b){return Math.abs(net.minecraft.util.Mth.wrapDegrees(a-b))<0.001f;}
     private static boolean[] hotbar(int... empty){boolean[] slots=new boolean[9];for(int slot:empty)slots[slot]=true;return slots;}
     static void run(){
         // The click must go out with an empty hand: a carpet (or anything) in the selected slot makes the body switch away from it.
@@ -36,6 +37,15 @@ final class SeatTest {
         BlockPos seat=new BlockPos(10,64,10);
         check(NativeSeat.inReach(new Vec3(11.5,64,10.5),seat)&&NativeSeat.inReach(new Vec3(10.5,64,12.4),seat),"beside the seat is in reach");
         check(!NativeSeat.inReach(new Vec3(14.5,64,10.5),seat)&&!NativeSeat.inReach(new Vec3(10.5,67,10.5),seat)&&!NativeSeat.inReach(new Vec3(10.5,60,10.5),seat),"far away or on another level is not");
+
+        // Sitting head: it turns toward the view, held to SIT_HEAD_YAW either side of the seat, the short way round (across ±180 too).
+        check(near(NativeSeat.seatedHeadYaw(0,30),30),"inside the limit the head goes where it looks");
+        check(near(NativeSeat.seatedHeadYaw(0,200),-NativeSeat.SIT_HEAD_YAW),"200 is 160 the short way: held to -105");
+        check(near(NativeSeat.seatedHeadYaw(0,-NativeSeat.SIT_HEAD_YAW),-NativeSeat.SIT_HEAD_YAW),"exactly the limit stays");
+        check(near(Math.abs(net.minecraft.util.Mth.wrapDegrees(NativeSeat.seatedHeadYaw(-90,90)+90)),NativeSeat.SIT_HEAD_YAW),"a view directly behind is held to exactly 105 off the seat");
+        check(near(NativeSeat.seatedHeadYaw(170,-170),190)&&Math.abs(net.minecraft.util.Mth.wrapDegrees(NativeSeat.seatedHeadYaw(170,-170)-170))<=NativeSeat.SIT_HEAD_YAW,"across the 180 seam the short way is 20 degrees, not 340");
+        // Standing bodies turn with their view, sitting bodies keep the seat (the aim entry itself needs a live player: not tested here).
+        check(NativeSeat.bodyFollowsView(false)&&!NativeSeat.bodyFollowsView(true),"only a standing body turns its body with the view");
 
         // Real capabilities: both are actions that can be called, unlike declaration-only capabilities.
         check(ServerController.CAPABILITIES.contains("sit")&&ServerController.CAPABILITIES.contains("stand-up"),"sit and stand-up advertised");

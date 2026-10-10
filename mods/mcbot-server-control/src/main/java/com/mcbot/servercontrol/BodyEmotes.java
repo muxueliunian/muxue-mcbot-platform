@@ -82,7 +82,8 @@ final class BodyEmotes {
         if(body!=null) { body.setShiftKeyDown(false);body.jumpInput(false);turn(body,yaw);body.setXRot(pitch); }
         gesture=null;
     }
-    private static void turn(BodyPlayer body,float yaw) {body.setYRot(yaw);body.setYHeadRot(yaw);}
+    /** Gesture turns go through the one aim entry: a sitting body only turns its head. Pitch is left as it is. */
+    private static void turn(BodyPlayer body,float yaw) {NativeSeat.aim(body,yaw,body.getXRot());}
 
     /** Stops an add-on animation whose time is up. */
     void tick(long now) {if(playing!=null&&now>=playingUntil) stopAnimation();}

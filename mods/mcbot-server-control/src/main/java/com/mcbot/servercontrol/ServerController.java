@@ -795,7 +795,7 @@ final class ServerController implements ControlSession.Game {
         Vec3 delta=target.subtract(player.getEyePosition());
         float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));
         float pitch=(float)-Math.toDegrees(Math.atan2(delta.y,delta.horizontalDistance()));
-        player.setYRot(yaw); player.setYHeadRot(yaw); player.setXRot(pitch);
+        NativeSeat.aim(player,yaw,pitch); // sitting: only the head turns
     }
     private static long now() { return System.nanoTime()/1_000_000; }
     private static Vec3 point(JsonObject args) {

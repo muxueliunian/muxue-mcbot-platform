@@ -135,8 +135,10 @@ const codex = Object.freeze({
   provider: 'codex', label: 'Codex', tracksContextTokens: true,
   bodies: Object.freeze(['mineflayer', 'client', 'server']), defaultName: 'CodexBot', defaultNickname: 'Codex',
   configEnv: 'CODEX_HOME', defaultConfigDir: home => path.join(home, '.codex'),
-  // 游戏规则在 Codex 自己的 developerInstructions 里。
-  identity: 'independent', systemInstructions: false, hostedMcpConfig: true,
+  // ServerBody 的游戏规则加上 WebUI 人设资料，都经 developerInstructions 送入（同 Claude 系统提示、dsh personaPrefix）；mineflayer 仍只用固定游戏规则。
+  identity: 'independent', systemInstructions: true, hostedMcpConfig: true,
+  // 人设资料进了会话指令，策略标识变了旧的 Codex 会话不再接着用（没带人设的旧会话作废）。
+  serverPolicy: 'codex-persona-v1',
   environment: env => env,
   defaultEffort: 'low',
   command: () => codexCommand(),

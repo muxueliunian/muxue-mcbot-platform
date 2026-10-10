@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { codexThreadConfig, CODEX_GAME_TOOLS, createCodexConnection } from '../../scripts/agents/codex-app-server.mjs';
+import { SERVER_GAME_INSTRUCTIONS, LEGACY_GAME_INSTRUCTIONS } from '../../scripts/agents/game-instructions.mjs';
 import { hostedMcpConfig, parseArgs, resolveMemory, isAddressedStop } from '../../scripts/companion.mjs';
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -21,6 +22,31 @@ function harness(options = {}) {
   const notify = (method, params) => connection.handleMessage({ method, params: { threadId: 'thread-1', ...params } });
   return { connection, wire, events, failures, sent, reply, initialize, notify };
 }
+
+test('Codex 托管 server 时 developerInstructions 同时带游戏规则和人设资料；不传人设只有游戏规则', async () => {
+  const persona = '人设测试资料：说话简短，叫玩家“测试玩家”。';
+  const withPersona = harness({ body: 'server', gameInstructions: persona });
+  try {
+    await withPersona.initialize();
+    const instructions = withPersona.sent('thread/start').params.developerInstructions;
+    assert.ok(instructions.includes(SERVER_GAME_INSTRUCTIONS));
+    assert.ok(instructions.includes(persona));
+    assert.equal(instructions, [SERVER_GAME_INSTRUCTIONS, persona].join('\n\n'));
+  } finally { withPersona.connection.dispose(); }
+  const plain = harness({ body: 'server' });
+  try {
+    await plain.initialize();
+    assert.equal(plain.sent('thread/start').params.developerInstructions, SERVER_GAME_INSTRUCTIONS);
+  } finally { plain.connection.dispose(); }
+});
+
+test('Codex mineflayer 托管仍只用固定游戏规则，即使传入人设资料也不并入', async () => {
+  const h = harness({ body: 'mineflayer', gameInstructions: '人设测试资料：不应进入 mineflayer。' });
+  try {
+    await h.initialize();
+    assert.equal(h.sent('thread/start').params.developerInstructions, LEGACY_GAME_INSTRUCTIONS);
+  } finally { h.connection.dispose(); }
+});
 
 test('Codex 配置不回写 null 字段；只开放真实注册的 V0 游戏工具', () => {
   const existing = { mcp_servers: { private: { command: 'private-command', tool_timeout_sec: null } } };

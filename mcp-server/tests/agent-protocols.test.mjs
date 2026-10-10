@@ -1,11 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getAgentProtocol } from '../../scripts/agents/process-protocols.mjs';
+import * as host from '../../scripts/companion.mjs';
 
 test('未知 Agent 不会静默使用 Claude 协议，既有会话 provider 标识保留', () => {
   assert.throws(() => getAgentProtocol('unknown-agent'), /尚未实现/);
   assert.equal(getAgentProtocol('claude').provider, 'claude-code');
   assert.equal(getAgentProtocol('gemini').provider, 'agy');
+});
+
+test('Codex ServerBody 带人设且有独立策略标识，旧的无策略会话不再接着用', () => {
+  assert.equal(getAgentProtocol('codex').systemInstructions, true);
+  assert.equal(getAgentProtocol('codex').serverPolicy, 'codex-persona-v1');
+  assert.equal(getAgentProtocol('gemini').systemInstructions, false);
+  const scope = host.bodySessionScope({ body: 'server', agent: 'codex', name: 'CodexBot' }, ['--world-id', 'world', '--connection-file', 'connection.json']);
+  assert.equal(scope.agentPolicy, 'codex-persona-v1');
+  const state = { conversationId: 'old', provider: 'codex', configDir: '', model: '', lastRequestAt: 10, bodyScope: { ...scope } };
+  delete state.bodyScope.agentPolicy;
+  const opts = { provider: 'codex', configDir: '', model: '', resumeWindowMs: 0, bodyScope: scope };
+  assert.equal(host.resumableConversation(state, 20, opts), '');
+  state.bodyScope = scope;
+  assert.equal(host.resumableConversation(state, 20, opts), 'old');
 });
 
 test('恢复会话和带空格配置作为独立参数传递，Claude 可变参数保持最后', () => {

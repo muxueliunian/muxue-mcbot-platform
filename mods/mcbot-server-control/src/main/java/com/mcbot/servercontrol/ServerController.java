@@ -30,7 +30,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","host-notice","beside-follow","last-death");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","host-notice","beside-follow","last-death","sit","stand-up");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -68,6 +68,7 @@ final class ServerController implements ControlSession.Game {
     private BreedTask breed;
     private HuntTask hunt;
     private BlockPos sleepBed;
+    private BlockPos sitSeat;
     private ServerPlayer followedPlayer;
     private net.minecraft.world.entity.LivingEntity retreatTarget;
     private Vec3 retreatOrigin;
@@ -207,6 +208,7 @@ final class ServerController implements ControlSession.Game {
         if(lastDeath!=null)hello.add("lastDeath",lastDeath.deepCopy());
         hello.add("itemInteractions",ItemInteractions.itemIds(interactions));
         hello.add("adapters",ModAdapters.containerIds());
+        hello.add("seatAdapters",ModAdapters.seatIds());
         hello.add("itemHandlerMods",ModAdapters.itemHandlerModIds());
         hello.add("hints",ModAdapters.hintsJson());
         BodyEmotes.describe(hello,server);
@@ -229,6 +231,7 @@ final class ServerController implements ControlSession.Game {
         EquipmentView.attach(equipped);
         JsonObject result=obj("connected",true,"username",config.username(),"dimension",player.serverLevel().dimension().location().toString(),"health",player.getHealth(),"food",player.getFoodData().getFoodLevel(),"position",position(player.position()),"yaw",player.getYRot(),"pitch",player.getXRot(),"inventory",inventory,"selectedSlot",player.getInventory().selected,"entities",entities,"chat",chat,"chatCursor",chatSequence,"container",survival.container(),"source","server-observed");
         result.addProperty("sleeping",player.isSleeping());
+        result.addProperty("sitting",NativeSeat.seated(player));
         result.add("time",obj("dayTime",player.serverLevel().getDayTime()%24000,"canSleep",player.level().dimensionType().natural()&&!player.level().isDay()));
         // What the body would notice: the sky overhead (not underground or indoors), rain and thunder, for scene hints.
         result.add("weather",obj("natural",player.level().dimensionType().natural(),"sky",player.level().canSeeSky(BlockPos.containing(player.getEyePosition())),"raining",player.level().isRaining(),"thundering",player.level().isThundering()));
@@ -291,7 +294,7 @@ final class ServerController implements ControlSession.Game {
         GuardDuty.Pausable task=pausable();
         if(task!=null) return task.interruptible();
         // approach-player is not here: it fails once the player moves, and a fight moves everyone.
-        return navigation!=null&&player.onGround()&&Set.of("follow-player","move-to-position","approach-container","approach-resource","sleep-in-bed").contains(active.name);
+        return navigation!=null&&player.onGround()&&Set.of("follow-player","move-to-position","approach-container","approach-resource","sleep-in-bed","sit").contains(active.name);
     }
     private GuardDuty.Pausable pausable() {
         return pickup!=null?pickup:travel!=null?travel:build!=null?build:farm!=null?farm:breed!=null?breed:hunt!=null?hunt:station!=null?station:job;
@@ -305,6 +308,8 @@ final class ServerController implements ControlSession.Game {
     }
     /** True when the duty drove the body this tick. */
     private boolean tickDuty(BodyPlayer body) {
+        // Sitting keeps the protection: a hostile creature close by gets the body up (nothing sits it back down afterwards).
+        if(player.isPassenger()&&NativeSeat.standForFight(NativeSeat.seated(player),true,hostileNear())) player.stopRiding();
         GuardDuty current=duty;
         boolean drove;
         try { drove=current.tick(dutyMayInterrupt(),active==null); }
@@ -415,6 +420,7 @@ final class ServerController implements ControlSession.Game {
         if(dutyDrove&&!besideFollow(operation.name)){dutyPaused=operation;dutyFrom=now();}
         JsonObject args=operation.args;
         if(player.isSleeping()&&!Set.of("send-chat","wake-up").contains(operation.name)) throw error("SLEEPING","Body is asleep in a bed; call wake-up first");
+        if(NativeSeat.seated(player)&&!NativeSeat.allowedWhileSeated(operation.name)) throw error("SEATED","Body is sitting; call stand-up first");
         // A looping add-on animation ends when the body does anything else; talking and looking keep it going.
         if(!Set.of("send-chat","look-at","emote","set-appearance").contains(operation.name)) emotes.stopAnimation();
         if(operation.name.equals("emote")) {
@@ -429,6 +435,8 @@ final class ServerController implements ControlSession.Game {
         if(operation.name.equals("set-appearance")) { operation.finish("succeeded","Appearance applied",BodyEmotes.setAppearance(operation.args,player,server)); return; }
         if(operation.name.equals("wake-up")) { operation.finish("succeeded","Body is awake",NativeSleep.wake(player)); return; }
         if(operation.name.equals("sleep-in-bed")) { beginSleep(operation); return; }
+        if(operation.name.equals("stand-up")) { operation.finish("succeeded","Body is standing",NativeSeat.standUp(player)); return; }
+        if(operation.name.equals("sit")) { beginSit(operation); return; }
         if(survival.handles(operation.name)) { survival.begin(operation);return; }
         if(operation.name.equals("send-chat")) {
             String message=string(args,"message");
@@ -593,6 +601,7 @@ final class ServerController implements ControlSession.Game {
             if(active.name.equals("approach-container")||active.name.equals("approach-player")||active.name.equals("approach-resource")) {tickApproach();return;}
             if(active.name.equals("retreat-from-entity")){tickRetreat();return;}
             if(active.name.equals("sleep-in-bed")){tickSleep();return;}
+            if(active.name.equals("sit")){tickSit();return;}
             if(now()>=actionDeadline) { finish(active.name.equals("follow-player")?"succeeded":"failed","Movement time limit reached"); return; }
             Vec3 target;double tolerance;
             if(active.name.equals("follow-player")) {
@@ -693,6 +702,43 @@ final class ServerController implements ControlSession.Game {
         player.stopInput();
         finish("succeeded","Asleep in bed",NativeSleep.lieDown(player,bed));
     }
+    /**
+     * Walk to a free seat (the given block, or the nearest within 8 blocks) and sit like a player right-clicking it.
+     * A seat is whatever an installed seat adapter names; with none installed there is nothing to sit on.
+     */
+    private void beginSit(ControlSession.Operation operation) {
+        NativeSeat.requireCanSit(player);
+        boolean has=operation.args.has("x")||operation.args.has("y")||operation.args.has("z");
+        if(has&&!(operation.args.has("x")&&operation.args.has("y")&&operation.args.has("z"))) throw error("INVALID_ARGUMENT","x, y and z go together");
+        if(NativeSeat.seated(player)) {
+            if(has) throw error("ALREADY_SITTING","Body is already sitting; call stand-up before sitting somewhere else");
+            operation.finish("succeeded","Body is already sitting",obj("sitting",true,"alreadySitting",true));return;
+        }
+        BlockPos seat;
+        if(has) {
+            seat=BlockPos.containing(point(operation.args));
+            NativeSeat.requireFreeSeat(player,seat);
+        } else {
+            seat=NativeSeat.nearestFreeSeat(player,player.position());
+            if(seat==null) throw error("NO_SEAT",ModAdapters.seatAdapters().isEmpty()?"No seat adapter is installed, so no block nearby is known to be a seat":"No free seat within "+NativeSeat.SEARCH_RADIUS+" blocks in loaded chunks");
+        }
+        if(Vec3.atCenterOf(seat).distanceTo(player.position())>32) throw error("OUT_OF_REACH","The seat is more than 32 blocks away");
+        requireWalkable();
+        sitSeat=seat;active=operation;navigation=new NativeNavigation(player,session,operation);
+        long timeout=(long)bounded(operation.args,"timeoutMs",30_000,500,120_000);
+        actionDeadline=now()+timeout;actionGrace=new GuardDuty.Grace(timeout);
+    }
+    private void tickSit() {
+        if(now()>=actionDeadline) throw error("TIMEOUT","Did not reach the seat in time");
+        BlockPos seat=sitSeat;NativeSeat.requireFreeSeat(player,seat);
+        if(!NativeSeat.inReach(player.position(),seat)&&!navigation.tick(Vec3.atCenterOf(seat),feet->NativeSeat.inReach(feet,seat)))return;
+        player.stopInput();
+        JsonObject result=NativeSeat.sitDown(player,seat,this::look,()->{});
+        finish("succeeded","Sitting on the seat",result);
+    }
+    private boolean hostileNear() {
+        return !player.serverLevel().getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class,player.getBoundingBox().inflate(8),e->e!=player&&e.isAlive()&&ThreatSense.vanillaHostile(e)).isEmpty();
+    }
     private void beginRetreat(ControlSession.Operation operation) {
         requireWalkable();bounded(operation.args,"distance",4,1.5,6);
         retreatTarget=ThreatSense.lookup(player,string(operation.args,"entityId"),string(operation.args,"expectedDimension"));
@@ -727,7 +773,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { if(duty!=null)duty.interrupt();dutyDrove=false;dutyPaused=null;actionGrace=null;active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(build!=null)build.stop();build=null;if(breed!=null)breed.stop();breed=null;if(hunt!=null)hunt.stop();hunt=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { if(duty!=null)duty.interrupt();dutyDrove=false;dutyPaused=null;actionGrace=null;active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(build!=null)build.stop();build=null;if(breed!=null)breed.stop();breed=null;if(hunt!=null)hunt.stop();hunt=null;sleepBed=null;sitSeat=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     @Override public boolean leave() {
         if(player==null)return false;

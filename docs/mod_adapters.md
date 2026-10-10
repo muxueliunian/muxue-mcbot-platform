@@ -124,6 +124,7 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
 - `EmoteSource`（10-08 新增，第 8j 步）：别的 Mod 提供的身体动画，比如玩家模型 Mod 的动作。AI 用 `emote` 工具，`source` 填来源 id、`name` 填动画名。核心先检查名字只含 `[A-Za-z0-9_.:-]`、最长 64，再问 `accepts`；开始时调 `play`，到 `seconds`（默认 6 秒，1～30）、Bot 开始做别的事（说话和转头除外）或下线时调 `stop`，因为模型动画一般会一直循环。`hint()` 是给 AI 看的一句说明，会写进 `emote` 工具的说明里。用 `McbotApi.registerEmotes` 登记。没有来源时，`emote` 只有内置的原版手势：wave、nod、shake、crouch、jump、spin。
 - `AppearanceSource`（10-08 新增）：Bot 的样子，比如玩家模型 Mod 的模型。`choices` 列出服务器上可选的（只读）；托管的人在 WebUI 里选一个，运行端每次接管后用 `set-appearance` 动作套用一次（`apply`）。AI 不能改，MCP 也不发布这个动作。用 `McbotApi.registerAppearance` 登记。
+- `SeatAdapter`（10-11 新增）：别的 Mod 的椅子、凳子，右键后玩家骑上一个座位实体。AI 用 `sit`／`stand-up`。适配者只回答：这个方块是不是座位（`seat`）、座位上是不是已经有人（`occupied`，拿不准就答 true）、这个实体是不是该 Mod 的座位实体（`seatEntity`）。核心负责走过去、保证主手是空手（手里拿着地毯这类东西时，右键会改椅子而不是坐下）、发右键，并且只认观察到的结果：Bot 真的骑着一个 `seatEntity` 认定的实体才算坐下。原版楼梯、台阶不是座位，没有适配器就是 `NO_SEAT`。范例见森罗厨房附属模组的 `SeatAccess`（按类名认方块和实体，不用反射）。
 
 在附属模组的构造函数里登记：
 

@@ -24,6 +24,7 @@ public final class McbotApi {
     private static final List<WorkstationAdapter> WORKSTATIONS = new ArrayList<>();
     private static final List<EmoteSource> EMOTES = new ArrayList<>();
     private static final List<AppearanceSource> APPEARANCES = new ArrayList<>();
+    private static final List<SeatAdapter> SEATS = new ArrayList<>();
     private static final List<Hint> HINTS = new ArrayList<>();
     private static final Set<String> HINT_NAMESPACES = new HashSet<>();
     private static final Set<String> IDS = new HashSet<>();
@@ -70,6 +71,13 @@ public final class McbotApi {
     public static synchronized void registerAppearance(AppearanceSource source) {
         String id = checkId(Objects.requireNonNull(source, "source").id());
         APPEARANCES.add(source);
+        IDS.add(id);
+    }
+
+    /** Seats (chairs, stools) the body can sit on with the sit action; see {@link SeatAdapter}. */
+    public static synchronized void registerSeat(SeatAdapter adapter) {
+        String id = checkId(Objects.requireNonNull(adapter, "adapter").id());
+        SEATS.add(adapter);
         IDS.add(id);
     }
 
@@ -157,13 +165,17 @@ public final class McbotApi {
     /** Snapshot of what add-ons registered. Internal: called by MCBOT when a server starts. */
     public static synchronized Registered freeze() {
         frozen = true;
-        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS), List.copyOf(EMOTES), List.copyOf(APPEARANCES), List.copyOf(HINTS));
+        return new Registered(List.copyOf(CONTAINERS), List.copyOf(INTERACTIONS), List.copyOf(PICKUP_SINKS), List.copyOf(WORKSTATIONS), List.copyOf(EMOTES), List.copyOf(APPEARANCES), List.copyOf(HINTS), List.copyOf(SEATS));
     }
 
-    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances, List<Hint> hints) {
+    public record Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances, List<Hint> hints, List<SeatAdapter> seats) {
         /** The shape before hints existed. */
         public Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances) {
-            this(containers, interactions, pickupSinks, workstations, emotes, appearances, List.of());
+            this(containers, interactions, pickupSinks, workstations, emotes, appearances, List.of(), List.of());
+        }
+        /** The shape before seats existed. */
+        public Registered(List<ContainerAdapter> containers, List<ItemInteraction> interactions, List<PickupSink> pickupSinks, List<WorkstationAdapter> workstations, List<EmoteSource> emotes, List<AppearanceSource> appearances, List<Hint> hints) {
+            this(containers, interactions, pickupSinks, workstations, emotes, appearances, hints, List.of());
         }
     }
 }

@@ -7,6 +7,7 @@ import com.mcbot.servercontrol.api.EmoteSource;
 import com.mcbot.servercontrol.api.ItemInteraction;
 import com.mcbot.servercontrol.api.McbotApi;
 import com.mcbot.servercontrol.api.PickupSink;
+import com.mcbot.servercontrol.api.SeatAdapter;
 import com.mcbot.servercontrol.api.workstation.Template;
 import com.mcbot.servercontrol.api.workstation.WorkstationAdapter;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -15,6 +16,7 @@ import java.util.*;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -39,6 +41,7 @@ final class ModAdapters {
     private static volatile List<WorkstationAdapter> addonWorkstations=List.of();
     private static volatile List<EmoteSource> emoteSources=List.of();
     private static volatile List<AppearanceSource> appearances=List.of();
+    private static volatile List<SeatAdapter> seats=List.of();
     private static volatile Set<String> itemHandlerMods=Set.of();
     private static volatile List<McbotApi.Hint> hints=List.of();
 
@@ -53,6 +56,7 @@ final class ModAdapters {
         for(var w:addonWorkstations)ids.add(safeId(w::id));
         emoteSources=installedUnique(registered.emotes(),EmoteSource::id,EmoteSource::installed,ids,problems,"emote source");
         appearances=installedUnique(registered.appearances(),AppearanceSource::id,AppearanceSource::installed,ids,problems,"appearance source");
+        seats=installedUnique(registered.seats(),SeatAdapter::id,SeatAdapter::installed,ids,problems,"seat adapter");
         hints=registered.hints();
         itemHandlerMods=GenericItemSlots.enabled(GenericItemSlots.load(configDirectory.resolve(GenericItemSlots.FILE),problems),McbotApi::versionsMatch,problems);
         loaded=new Loaded(combined.containers(),combined.interactions(),List.copyOf(problems),installedSinks(registered.pickupSinks()));
@@ -135,6 +139,25 @@ final class ModAdapters {
     }
     static List<EmoteSource> emoteSources() {return emoteSources;}
     static List<AppearanceSource> appearances() {return appearances;}
+    static List<SeatAdapter> seatAdapters() {return seats;}
+    static JsonArray seatIds() {JsonArray ids=new JsonArray();for(SeatAdapter adapter:seats){String id=safeId(adapter::id);if(id!=null)ids.add(id);}return ids;}
+    /** The installed adapter that calls this block state a seat, or null. An adapter that throws does not match. */
+    static SeatAdapter seat(BlockState state) {return seat(seats,state);}
+    static SeatAdapter seat(List<SeatAdapter> adapters,BlockState state) {
+        for(SeatAdapter adapter:adapters) {
+            try { if(adapter.seat(state)) return adapter; } catch(RuntimeException | LinkageError broken) { /* not a match */ }
+        }
+        return null;
+    }
+    /** Whether this entity is the seat entity of an installed seat adapter. */
+    static boolean seatEntity(Entity entity) {return seatEntity(seats,entity);}
+    static boolean seatEntity(List<SeatAdapter> adapters,Entity entity) {
+        if(entity==null) return false;
+        for(SeatAdapter adapter:adapters) {
+            try { if(adapter.seatEntity(entity)) return true; } catch(RuntimeException | LinkageError broken) { /* not a match */ }
+        }
+        return false;
+    }
 
     static List<PickupSink> installedSinks(List<PickupSink> sinks) {
         List<PickupSink> result=new ArrayList<>();
@@ -211,6 +234,7 @@ final class ModAdapters {
         for(WorkstationAdapter w:addonWorkstations) if(installed(w::installed)) live.add(namespaceOf(safeId(w::id)));
         for(EmoteSource e:emoteSources) live.add(namespaceOf(safeId(e::id)));
         for(AppearanceSource a:appearances) live.add(namespaceOf(safeId(a::id)));
+        for(SeatAdapter s:seats) live.add(namespaceOf(safeId(s::id)));
         for(PickupSink p:pickupSinks()) live.add(namespaceOf(safeId(p::id)));
         return hintsJson(hints,live);
     }

@@ -72,7 +72,9 @@ export interface Observation {
   operationBudget?: OperationBudget;
   groundItems?: GroundItem[]; groundItemsTruncated?: boolean; pickupCursor?: number; pickupOldestCursor?: number; pickupReceipts?: PickupReceipt[];
   /** ServerBody: the body is lying in a bed; time of day (0..23999) and whether beds work now. */
-  sleeping?: boolean; time?: { dayTime: number; canSleep: boolean };
+  sleeping?: boolean;
+  /** Riding a seat entity of a chair or stool mod (the sit action); false while standing. */
+  sitting?: boolean; time?: { dayTime: number; canSleep: boolean };
   /** ServerBody: whether the sky is overhead (not underground or indoors), and the weather, for scene hints. */
   weather?: { natural: boolean; sky: boolean; raining: boolean; thundering: boolean };
   /** ServerBody: the guard duty, present while it is on. */
@@ -141,6 +143,8 @@ export interface ActionArguments {
   'equip-item': { slot: number; expectedItem: string; expectedCount: number; expectedComponents: Components };
   'sleep-in-bed': { player?: string; timeoutMs?: number };
   'wake-up': Record<string, never>;
+  'sit': { x?: number; y?: number; z?: number; timeoutMs?: number };
+  'stand-up': Record<string, never>;
   'craft-item': { item: string; count?: number; timeoutMs?: number };
   'smelt-item': { input?: string; count?: number; fuel?: string; wait?: boolean; furnace?: Position; timeoutMs?: number };
   'travel-to': { x: number; y?: number; z: number; tolerance?: number; timeoutMs?: number };

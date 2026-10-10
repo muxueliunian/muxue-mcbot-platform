@@ -13,6 +13,17 @@ export interface GiftItem { id: string; count: number }
 /** Extra sentences for a gift event, e.g. what the body did with the gift; failures must not lose the event. */
 export type GiftHandler = (from: string, items: GiftItem[]) => Promise<string[]>;
 /** Companion-compatible journal; each runtime process has its own cursor generation. */
+/**
+ * Whether a thrown stack is worth pointing out: enchanted (or an enchanted book) or renamed. The server lists every
+ * stack's default components too (empty lore, stack size, attribute modifiers), so "has components" says nothing.
+ * Values come typed ({type, value}) from the server; plain objects are accepted as well.
+ */
+function notableComponents(components: Record<string, unknown> | undefined): boolean {
+  if (!components) return false;
+  const plain = (v: unknown): unknown => v && typeof v === 'object' && 'type' in v && 'value' in v ? (v as { value: unknown }).value : v;
+  const levels = (key: string) => { const l = plain((plain(components[key]) as { levels?: unknown } | undefined)?.levels); return !!l && typeof l === 'object' && Object.keys(l).length > 0; };
+  return levels('minecraft:enchantments') || levels('minecraft:stored_enchantments') || components['minecraft:custom_name'] !== undefined;
+}
 export class EventJournal {
   readonly session = randomUUID();
   private seq = 0;
@@ -186,7 +197,7 @@ export class EventJournal {
       pending = { items: new Map(), timer };
       gifts.pending.set(from, pending);
     }
-    const extra = Object.keys(receipt.stack.components ?? {}).length > 0;
+    const extra = notableComponents(receipt.stack.components);
     // Same item and same components add up; a different variant (an enchanted sword next to a plain one) stays apart.
     const key = `${receipt.stack.id}\u0000${JSON.stringify(receipt.stack.components ?? {})}\u0000${receipt.storedIn ?? ''}`;
     const item = pending.items.get(key);

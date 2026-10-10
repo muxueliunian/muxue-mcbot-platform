@@ -159,7 +159,7 @@ export class SurvivalTasks {
       // An eat task explicitly owns replacing the selected slot when all hotbar slots are occupied.
       const target = request.targetSlot ?? (slot <= 8 ? slot : state.inventory!.find(item => validSlot(item.slot, 8) && empty(item))?.slot ?? state.selectedSlot);
       if (request.timeoutMs === undefined) task.deadline = Math.min(task.deadline, this.now() + Math.min(120000, Math.max(10000, food.eatDurationTicks * 50 + 5000)));
-      const hotbar = await this.prepare(task, state, slot, target);
+      const hotbar = await this.prepare(task, state, slot, target, false);
       state = await this.state(task); const currentFood = this.food(state, hotbar), stack = this.stack(state, hotbar);
       if (!isDeepStrictEqual(this.value(stack), selectedValue)) throw new BodyError('ITEM_CHANGED', '准备后的实际食物栈改变，未消费同槽新变体');
       if (currentFood.id !== food.id || currentFood.nutrition !== food.nutrition || currentFood.saturationModifier !== food.saturationModifier || currentFood.eatDurationTicks !== food.eatDurationTicks) throw new BodyError('ITEM_CHANGED', '准备后实际食物资格发生变化，未使用');
@@ -302,7 +302,11 @@ export class SurvivalTasks {
     } catch (error) { throw new BodyError('UNKNOWN', (error as Error).message); }
     return hotbar.slot;
   }
-  private async prepare(task: Active, initial: SurvivalState, sourceSlot: number, targetSlot?: number): Promise<number> {
+  /**
+   * Bring the stack to a hotbar slot and select it. select:false stops after the hotbar: eat-item selects the slot itself on
+   * the server in the same tick it starts eating, so nothing (the guard re-arming its bow) can take the hand in between.
+   */
+  private async prepare(task: Active, initial: SurvivalState, sourceSlot: number, targetSlot?: number, select = true): Promise<number> {
     let state = initial, source = this.stack(state, sourceSlot);
     if (empty(source)) throw new BodyError('EMPTY_SOURCE', '指定槽没有物品');
     const target = targetSlot ?? (sourceSlot <= 8 ? sourceSlot : state.inventory!.find(item => validSlot(item.slot, 8) && empty(item))?.slot);
@@ -321,7 +325,7 @@ export class SurvivalTasks {
         if (!isDeepStrictEqual(this.value(source), beforeSource) || !isDeepStrictEqual(this.value(this.stack(state, sourceSlot)), beforeTarget)) throw new BodyError('UNKNOWN', '原生交换后源／目标映射未完整确认，未恢复旧背包快照');
       } catch (error) { throw new BodyError('UNKNOWN', (error as Error).message); }
     }
-    if (state.selectedSlot !== target) {
+    if (select && state.selectedSlot !== target) {
       if (!this.body.hello.capabilities.includes('select-slot')) throw new BodyError('UNSUPPORTED', '身体没有热栏选择能力');
       task.progress.stage = 'selecting';
       await this.step(task, 'select-slot', { slot: target, expectedItem: source.id, expectedCount: source.count, expectedComponents: source.components!,

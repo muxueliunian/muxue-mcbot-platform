@@ -160,3 +160,17 @@ test('survival danger event names what the hostile threats hold and wear', async
   await reflexes.tick();
   assert.equal(events.since(0).filter(event => event.type === 'survival').length, 1);
 });
+
+test('only enchanted or renamed gifts are pointed out; the default components every stack carries are not', async () => {
+  const events = journal();
+  events.ingest(seen([]));
+  // As the server sends them (typed values): a plain stack still lists empty lore, empty enchantments, stack size and so on.
+  const typed = levels => ({ 'minecraft:lore': { type: 'list', elementType: 'end', value: [] }, 'minecraft:max_stack_size': { type: 'int', value: 64 },
+    'minecraft:enchantments': { type: 'compound', value: { levels: { type: 'compound', value: levels } } } });
+  const receipts = [receipt(1, 'minecraft:rotten_flesh', 64, { thrownBy: 'muxue', components: typed({}) }),
+    receipt(2, 'minecraft:bow', 1, { thrownBy: 'muxue', components: typed({ 'minecraft:power': { type: 'int', value: 5 } }) }),
+    receipt(3, 'minecraft:torch', 1, { thrownBy: 'muxue', components: { ...typed({}), 'minecraft:custom_name': { type: 'string', value: '"灯"' } } })];
+  events.ingest(seen(receipts));
+  await delay(WINDOW * 3);
+  assert.deepEqual(gifts(events), ['muxue 丢给你：minecraft:rotten_flesh ×64、minecraft:bow ×1（带附魔、名字等属性）、minecraft:torch ×1（带附魔、名字等属性）（已进背包）']);
+});

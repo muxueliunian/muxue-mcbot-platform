@@ -314,3 +314,13 @@ test('automatic eat() with only precious food and low health eats it; explicit r
   assert.equal((await g.tasks.eat({ policy: { lowHealth: 8 } })).result.code, 'ONLY_PRECIOUS_FOOD');
   assert.equal((await g.tasks.eat({ slot: 1 })).status, 'succeeded');
 });
+
+test('eating leaves the selection to eat-item: a guard re-selecting its bow in between does not fail the meal', async () => {
+  const f = fixture(); f.set(2, item('bow', 1, 1)); f.set(18, item('cooked_beef', 5));
+  // The guard takes the hand back (selects its bow) right after the food reaches the hotbar.
+  f.body.afterAct = name => { if (name === 'swap-inventory') f.state.selectedSlot = 2; };
+  const operation = await f.tasks.eat({ slot: 18 });
+  assert.equal(operation.status, 'succeeded'); assert.equal(operation.result.consumedCount, 1);
+  assert.ok(!f.calls.some(call => call.name === 'select-slot'), 'no separate select-slot step for eating');
+  const eat = f.calls.find(call => call.name === 'eat-item'); assert.equal(eat.args.slot, 1); assert.equal(eat.args.expectedItem, 'minecraft:cooked_beef');
+});

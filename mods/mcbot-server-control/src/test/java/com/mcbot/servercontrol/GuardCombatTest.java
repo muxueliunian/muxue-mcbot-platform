@@ -23,7 +23,8 @@ final class GuardCombatTest {
         public boolean dead(GuardCombat.Foe foe){return dead.contains(foe.identity());}
         public boolean inReach(GuardCombat.Foe foe){return foe.distance()<=3&&!blocked.contains(foe.identity());}
         public boolean approach(GuardCombat.Foe foe,Vec3 companion,double leash){if(noPath)throw error("NO_PATH","no way");approaches++;return false;}
-        public boolean retreat(Vec3 destination,Vec3 companion,double leash){retreats++;retreatTo=destination;return false;}
+        boolean retreatRefused;
+        public boolean retreat(Vec3 destination,Vec3 companion,double leash){retreats++;retreatTo=destination;if(retreatRefused)throw error("NO_PATH","walled in");return false;}
         public void stopMoving(){stops++;}
         public boolean armMelee(){if(duringArm!=null)duringArm.run();return weapon;}
         public boolean cooledDown(){return cooled;}
@@ -213,6 +214,19 @@ final class GuardCombatTest {
         check(archer.drawn>=0,"the creeper far off is being shot at");
         archer.tick();archer.foes.set(0,creeperFoe("c",4,true,5,6));shoot.tick(COMPANION);
         check(archer.drawn<0&&archer.shieldUp&&shoot.state().equals("shielding")&&"SHIELD".equals(shoot.json().get("lastDrop").getAsString()),"drawn bow lowered before the shield goes up");
+        // Walled in (a pit, a fence): open ground says run, but the retreat is refused; the next tick shields instead.
+        FakeView pit=new FakeView();pit.shield=true;pit.retreatRefused=true;GuardCombat trapped=guard(pit);
+        pit.foes.add(creeperFoe("c",3,true,30,6));
+        check(trapped.tick(COMPANION)&&trapped.state().equals("evading")&&!pit.shieldUp,"first it tries to run");
+        pit.tick();trapped.tick(COMPANION);
+        check(trapped.state().equals("shielding")&&pit.shieldUp&&pit.retreats==1,"the retreat was refused: it stands and shields");
+        // Running but still inside the blast when the fuse is nearly out: stop and shield in time.
+        FakeView late=new FakeView();late.shield=true;GuardCombat runner=guard(late);
+        late.foes.add(creeperFoe("c",4,true,30,6));runner.tick(COMPANION);
+        check(runner.state().equals("evading"),"plenty of fuse: running");
+        late.tick();late.foes.set(0,creeperFoe("c",4.5,true,GuardCombat.SHIELD_LEAD,6));runner.tick(COMPANION);
+        check(runner.state().equals("shielding")&&late.shieldUp,"fuse nearly out and still within the blast: shield up");
+        check(!GuardCombat.lastMoment(new Vec3(0,64,0),new Vec3(7,64,0),6,5)&&!GuardCombat.lastMoment(new Vec3(0,64,0),new Vec3(3,64,0),6,-1)&&GuardCombat.lastMoment(new Vec3(0,64,0),new Vec3(3,64,0),6,GuardCombat.SHIELD_LEAD),"last moment: only inside the blast with a known, nearly spent fuse");
         // No shield to hold: run as best it can, and say why.
         FakeView bare=new FakeView();GuardCombat nothing=guard(bare);
         bare.foes.add(creeperFoe("c",3,true,10,6));

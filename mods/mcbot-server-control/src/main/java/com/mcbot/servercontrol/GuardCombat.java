@@ -44,6 +44,8 @@ final class GuardCombat {
     static final double MELEE_RANGE=3.2,BOW_MIN=4,BOW_CHASE=8,BOW_MAX=24,BOOM_SAFE=5,RETREAT_SPAN=5;
     /** Running away from a lit creeper: blocks per tick the body can count on (sprinting is about 0.28, minus start-up and turns) and the blocks to spare beyond the blast. */
     static final double RUN_SPEED=0.2,RUN_MARGIN=1;
+    /** Ticks before a creeper goes off when the body, still inside its blast, stops running and shields: a raised shield blocks only after 5 ticks. */
+    static final int SHIELD_LEAD=10;
     /** Moving to where an arrow can reach: the ring of spots tried, the walk and search timings, and how often one fight may do it. */
     static final double SPOT_ARRIVE=1.2,SPOT_EDGE=1.5;
     static final long SPOT_COOLDOWN_MS=1000,SPOT_WALK_MS=6000;
@@ -137,6 +139,8 @@ final class GuardCombat {
     private int shields;
     private boolean shielded;
     private String lastShield;
+    /** The lit creeper the body found no way to run from (its retreat was refused): shield instead of trying again. */
+    private Object cornered;
     /** Where the body is walking to for a shot, since when, the earliest next search, tries this fight, spots that had no way, and how the last try ended; the count is diagnosis. */
     private Vec3 spot;
     private long spotSince,spotAfter;
@@ -184,7 +188,9 @@ final class GuardCombat {
             if(from==null||from.distance()>12){settle("FOE_FAR");return false;}
             spot=null;
             // A lit creeper the body cannot outrun: stand still, face it and let the shield take the blast. Otherwise run, as before.
-            if(boom!=null&&!canOutrun(view.position(),boom.position(),companion,options.leash(),boom.blast(),boom.fuse())&&holdShield(boom,permission)){state="shielding";return true;}
+            // canOutrun only measures open ground; walls and pits are found by trying, so a refused retreat or a fuse about to run out inside the blast also means shield.
+            boolean stuck=boom!=null&&(boom.identity()==cornered||lastMoment(view.position(),boom.position(),boom.blast(),boom.fuse()));
+            if(boom!=null&&(stuck||!canOutrun(view.position(),boom.position(),companion,options.leash(),boom.blast(),boom.fuse()))&&holdShield(boom,permission)){state="shielding";return true;}
             backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",boom==null||retreating,permission);
             return true;
         }
@@ -252,7 +258,7 @@ final class GuardCombat {
         else lower();
         requireDrive(permission);
         try {view.retreat(retreatPoint(view.position(),from.position(),companion,options.leash()),companion,options.leash());}
-        catch(Protocol.Error blocked){view.stopMoving();}
+        catch(Protocol.Error blocked){view.stopMoving();if(next.equals("evading"))cornered=from.identity();}
         requireDrive(permission);state=next;
     }
     /** Toward the player when that is away from the foe; otherwise straight away from it, kept inside the leash. */
@@ -281,6 +287,10 @@ final class GuardCombat {
         view.stopMoving();raise(from);
         lastShield=null;
         return true;
+    }
+    /** Still inside the blast with the fuse nearly out: running on will not get clear in time, a shield raised now still will. Unknown fuse: no. */
+    static boolean lastMoment(Vec3 feet,Vec3 foe,double blast,int fuse) {
+        return fuse>=0&&fuse<=SHIELD_LEAD&&Math.hypot(feet.x-foe.x,feet.z-foe.z)<Math.max(blast,BOOM_SAFE);
     }
     /** Whether running from a lit creeper gets the body out of its blast before it goes off: `fuse` ticks of running, within the leash around the player; unknown fuse counts as yes. */
     static boolean canOutrun(Vec3 feet,Vec3 foe,Vec3 companion,double leash,double blast,int fuse) {

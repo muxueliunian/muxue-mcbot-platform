@@ -110,7 +110,7 @@ test('插件状态和计划：旧核心、版本不对的本体、没装的适�
 
 test('安装：先下载再动文件，旧文件进备份；再装是空计划；卸载只移走适配，配置条目增删时保留别的', async () => {
   const f = fixture(), game = path.join(f.root, 'inst');
-  const opts = { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, now: new Date('2026-10-10T12:00:00Z') };
+  const opts = { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses: async () => [], now: new Date('2026-10-10T12:00:00Z') };
   try {
     put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), modJar('mcbot_server_control', '0.1.0'));
     put(path.join(game, 'mods', 'kc-old.jar'), modJar('kaleidoscope_cookery', '1.5.0'));
@@ -145,7 +145,7 @@ test('安装：先下载再动文件，旧文件进备份；再装是空计划�
 
 test('安装出问题：游戏开着不改、下载大小不对不用、放文件中途失败改回原样', async () => {
   const f = fixture(), game = path.join(f.root, 'inst');
-  const opts = { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false };
+  const opts = { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses: async () => [] };
   try {
     const old = modJar('mcbot_server_control', '0.1.0');
     put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), old);
@@ -176,7 +176,7 @@ test('核心是所有插件的依赖：干净目录里内置适配和配置类�
       const plan = planPlugin(game, id, 'install', { catalog: f.catalog, downloads: f.downloads });
       assert.ok(plan.steps.some((x) => x.op === 'add' && x.file === 'mcbot-server-control-0.1.0.jar'), id);
     }
-    const r = await applyPlugin(game, 'kaleidoscope_cookery_slots', 'install', { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false });
+    const r = await applyPlugin(game, 'kaleidoscope_cookery_slots', 'install', { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses: async () => [] });
     assert.equal(r.ok, true, r.error);
     assert.equal(inspectPlugins(game, f.catalog).plugins.find((p) => p.id === 'kaleidoscope_cookery_slots').overall, 'ok');
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
@@ -188,7 +188,7 @@ test('下载写盘失败：返回安装失败，不让进程崩溃', async () =>
     put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
     // 半截文件的路径被目录占了：打开写入流时异步报错
     fs.mkdirSync(path.join(f.downloads, `ironfurnaces-4.3.2.jar.${process.pid}.part`), { recursive: true });
-    const r = await applyPlugin(game, 'iron_furnaces', 'install', { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false });
+    const r = await applyPlugin(game, 'iron_furnaces', 'install', { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses: async () => [] });
     assert.equal(r.ok, false);
     assert.match(r.error, /无法写入下载缓存/);
     assert.deepEqual(fs.readdirSync(path.join(game, 'mods')), ['mcbot-server-control-0.1.0.jar']);
@@ -222,7 +222,7 @@ test('WebUI 插件接口：只改游戏列表里的目录，安装在后台跑�
   const f = fixture(), game = path.join(f.root, 'inst'), runtime = path.join(f.root, 'runtime');
   put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
   const web = createWebServer({ runtime, token: 'fa01', launcher: { launch: () => ({ ok: true }), status: () => null },
-    plugins: { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, knownGames: () => [{ dir: game }] } });
+    plugins: { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses: async () => [], knownGames: () => [{ dir: game }] } });
   const port = await web.listen(0), base = `http://127.0.0.1:${port}`;
   try {
     const cookie = (await fetch(`${base}/?t=fa01`, { redirect: 'manual' })).headers.get('set-cookie').split(';')[0];
@@ -271,7 +271,7 @@ test('「给 AI 用」开关的接口和启动：网页读写开关，启动托�
   const f = fixture(), game = path.join(f.root, 'inst'), runtime = path.join(f.root, 'runtime');
   put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
   const web = createWebServer({ runtime, token: 'fa02', launcher: { launch: () => ({ ok: true }), status: () => null },
-    plugins: { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, knownGames: () => [{ dir: game }] } });
+    plugins: { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses: async () => [], knownGames: () => [{ dir: game }] } });
   const port = await web.listen(0), base = `http://127.0.0.1:${port}`;
   try {
     const cookie = (await fetch(`${base}/?t=fa02`, { redirect: 'manual' })).headers.get('set-cookie').split(';')[0];
@@ -293,4 +293,66 @@ test('「给 AI 用」开关的接口和启动：网页读写开关，启动托�
     for (let i = 0; i < 100 && launcher.status('Claude').exitCode === null; i++) await new Promise((r) => setTimeout(r, 50));
     assert.match(launcher.status('Claude').log, /\|--disabled-plugins\|iron_furnaces(\||\n)/, '启动时读当前开关');
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// 游戏还在启动、加载模组或停在主菜单时，连接文件还没有，只能靠进程判断是否在运行
+test('安装：下载前查一次，放文件前再查一次；中途游戏启动了就拒绝，文件不动', async () => {
+  const f = fixture(), game = path.join(f.root, 'inst');
+  try {
+    put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
+    const before = fs.readdirSync(path.join(game, 'mods')).sort();
+    let calls = 0;
+    const listProcesses = async () => (++calls === 1 ? [] : [{ pid: 9, commandLine: `javaw.exe -Xmx4G --gameDir "${game}" --version 1.21.1` }]);
+    const r = await applyPlugin(game, 'iron_furnaces', 'install', { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false, listProcesses });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /游戏运行中：请先关闭游戏再操作/);
+    assert.equal(calls, 2, '下载前后各查一次');
+    assert.deepEqual(fs.readdirSync(path.join(game, 'mods')).sort(), before, '文件没动');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('WebUI 插件接口：加载中（进程在跑、世界未开）时显示运行中并拒绝操作，不下载；关掉后可以操作；查不了进程时不改', async () => {
+  const f = fixture(), game = path.join(f.root, 'inst'), runtime = path.join(f.root, 'runtime');
+  put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
+  let procs = [{ pid: 9, commandLine: `javaw.exe -Xmx4G --gameDir "${game}" --version 1.21.1` }];
+  const web = createWebServer({ runtime, token: 'fa02', launcher: { launch: () => ({ ok: true }), status: () => null },
+    plugins: { catalog: f.catalog, downloads: f.downloads, fetchImpl: f.fetchImpl, online: async () => false,
+      listProcesses: async () => { if (procs instanceof Error) throw procs; return procs; }, knownGames: () => [{ dir: game }] } });
+  const port = await web.listen(0), base = `http://127.0.0.1:${port}`;
+  try {
+    const cookie = (await fetch(`${base}/?t=fa02`, { redirect: 'manual' })).headers.get('set-cookie').split(';')[0];
+    const post = async (p, body) => (await fetch(base + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+    const waitJob = async () => { let job; for (let i = 0; i < 200 && !job?.done; i++) { await new Promise((r) => setTimeout(r, 20)); job = (await (await fetch(`${base}/api/plugins/job`, { headers: { cookie } })).json()).job; } return job; };
+    const apply = (action = 'install') => post('/api/plugins/apply', { dir: game, id: 'iron_furnaces', action });
+
+    // 1. 游戏在加载：状态运行中，安装任务失败，没有下载，mods 不变
+    const s = await post('/api/plugins', { dir: game });
+    assert.deepEqual([s.online, s.running], [false, 'process']);
+    assert.match(s.runMessage, /游戏运行中/);
+    const fetchedBefore = f.fetched.length;
+    assert.equal((await apply()).ok, true);
+    const job = await waitJob();
+    assert.equal(job.result.ok, false);
+    assert.match(job.result.error, /游戏运行中/);
+    assert.equal(f.fetched.length, fetchedBefore, '没有下载');
+    assert.deepEqual(fs.readdirSync(path.join(game, 'mods')), ['mcbot-server-control-0.1.0.jar']);
+
+    // 2. 游戏关掉后，同一个接口照常安装
+    procs = [];
+    assert.equal((await post('/api/plugins', { dir: game })).running, 'off');
+    assert.equal((await apply()).ok, true);
+    assert.equal((await waitJob()).result.ok, true);
+    assert.ok(fs.existsSync(path.join(game, 'mods', 'mcbot-iron-furnaces-0.1.0.jar')));
+
+    // 3. 查不了进程（世界也未开）：状态为无法确认，卸载任务拒绝，文件不动
+    procs = new Error('pwsh 不可用');
+    const u = await post('/api/plugins', { dir: game });
+    assert.equal(u.running, 'unknown');
+    assert.match(u.runMessage, /无法确认游戏是否已关闭/);
+    assert.equal((await apply('uninstall')).ok, true);
+    const failed = await waitJob();
+    assert.equal(failed.result.ok, false);
+    assert.match(failed.result.error, /无法确认游戏是否已关闭/);
+    assert.ok(fs.existsSync(path.join(game, 'mods', 'mcbot-iron-furnaces-0.1.0.jar')), '文件没动');
+  } finally { await web.close(); fs.rmSync(f.root, { recursive: true, force: true }); }
 });

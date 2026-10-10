@@ -12,6 +12,7 @@ import { createModelCatalog } from './agent-models.mjs';
 import { AGENTS, MODES, SESSION_OPTIONS, accountDirs, appearanceChoices, applyToGame, createLauncher, deleteProfile, expandHome, inspectMemory, loadProfiles, normalizeProfile, profileConnection, profileName, saveProfile } from './webui-profiles.mjs';
 import { addGameDir, connectionFileOf, findGames, gameOnline, gameSupport, gameType, importYsmModel, listGames, localAppearances, MODEL_IMPORT_MAX, modelLabels, readGameConfig, readPersona, removeGameDir, writePersona } from './webui-games.mjs';
 import { createPluginJobs, disabledPlugins, inspectPlugins, loadCatalog, planPlugin, setPluginAi } from './webui-plugins.mjs';
+import { gameRunState, javaProcesses, runMessage } from './game-processes.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
@@ -126,7 +127,7 @@ const isAbsPath = (p) => path.isAbsolute(p) && !/[\u0000-\u001f]/.test(p);
 export function createWebServer({ runtime, token = crypto.randomBytes(24).toString('hex'), launcher, models, games, plugins = {} }) {
   let port = 0;
   // 插件页：catalog、downloads、fetchImpl、online、knownGames 都能换掉（测试用）
-  const pluginOpts = { downloads: path.join(runtime, 'mod-downloads'), online: (dir) => gameOnline(connectionFileOf(dir)), ...plugins };
+  const pluginOpts = { downloads: path.join(runtime, 'mod-downloads'), online: (dir) => gameOnline(connectionFileOf(dir)), listProcesses: javaProcesses, ...plugins };
   const pluginJobs = createPluginJobs(pluginOpts);
   const knownGames = plugins.knownGames || (() => findGames(runtime));
   launcher ||= createLauncher({ runtime, isRunning: (name) => !!listBots(runtime).find((b) => b.name === name)?.running });
@@ -216,7 +217,11 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       if (!game) return send(res, 200, { ok: false, error: '此目录不在游戏列表中，请先在「连接配置」中添加' });
       const catalog = pluginOpts.catalog || loadCatalog();
       // aiOff：此游戏对 AI 关闭的插件（WebUI 自己的数据，下次启动托管时生效）
-      if (p === '/api/plugins') return send(res, 200, { ok: true, type: gameType(game.dir), online: await pluginOpts.online(game.dir), unsupported: gameSupport(game.dir, catalog.platform).reason || '', ...inspectPlugins(game.dir, catalog), aiOff: disabledPlugins(runtime, game.dir, catalog) });
+      // running：world（世界开着）、process（进程在跑，含加载中和主菜单）、unknown（查不了进程）、off；online 只表示世界开着
+      if (p === '/api/plugins') {
+        const run = await gameRunState(game.dir, pluginOpts), type = gameType(game.dir);
+        return send(res, 200, { ok: true, type, online: run.state === 'world', running: run.state, runMessage: runMessage(run.state, type), unsupported: gameSupport(game.dir, catalog.platform).reason || '', ...inspectPlugins(game.dir, catalog), aiOff: disabledPlugins(runtime, game.dir, catalog) });
+      }
       if (p === '/api/plugins/ai') return send(res, 200, setPluginAi(runtime, game.dir, String(body.id || ''), body.enabled, catalog));
       if (p === '/api/plugins/plan') return send(res, 200, planPlugin(game.dir, String(body.id || ''), String(body.action || ''), { catalog, downloads: pluginOpts.downloads }));
       if (p === '/api/plugins/apply') { const r = pluginJobs.start(game.dir, String(body.id || ''), String(body.action || ''), catalog); return send(res, r.ok ? 200 : 409, r); }

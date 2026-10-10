@@ -8,6 +8,10 @@ import type { Place } from './places.js';
 export interface GameEvent { session: string; seq: number; timestamp: number; type: string; text: string; operationId?: string }
 /** Items a player threw to the body, collected for a short window and told as one gift event. */
 interface PendingGift { items: Map<string, { id: string; count: number; extra: boolean; storedIn?: string }>; timer: ReturnType<typeof setTimeout> }
+/** One kind of item a player threw that went into the inventory (not a carried storage), as told to the gift handler. */
+export interface GiftItem { id: string; count: number }
+/** Extra sentences for a gift event, e.g. what the body did with the gift; failures must not lose the event. */
+export type GiftHandler = (from: string, items: GiftItem[]) => Promise<string[]>;
 /** Companion-compatible journal; each runtime process has its own cursor generation. */
 export class EventJournal {
   readonly session = randomUUID();
@@ -33,6 +37,8 @@ export class EventJournal {
   private weatherSeen?: { raining: boolean; thundering: boolean };
   private sceneDayTime?: number;
   /** gift-receipts: the merge window, the last pickup receipt seen (per server instance) and gifts still being collected. */
+  private giftHandler?: GiftHandler;
+  private giftHandlerTimeoutMs = 8000;
   private gifts?: { windowMs: number; instance?: string; cursor?: number; pending: Map<string, PendingGift> };
   constructor(runtimeDir?: string, private readonly username?: string, private readonly botPlayers: string[] = [], private readonly attachmentChatCursor?: number) {
     if (!runtimeDir || !username) return;
@@ -154,6 +160,8 @@ export class EventJournal {
    * "muxue 丢给你：…". What the body mined, mob loot and its own drops carry no thrower and are never told.
    */
   useGifts(windowMs = 2000): void { this.gifts ??= { windowMs, pending: new Map() }; }
+  /** Called once per gift event, before it is told, with the items that went into the inventory; what it returns is appended to the event (gift-gear.ts). */
+  useGiftHandler(handler: GiftHandler, timeoutMs = 8000): void { this.giftHandler = handler; this.giftHandlerTimeoutMs = timeoutMs; }
   /**
    * Each receipt is told once: the first observation of a server instance is a baseline (pickups before attaching are
    * not news), then only receipts with a higher seq. Items from one player within the window become one event.
@@ -195,7 +203,20 @@ export class EventJournal {
     const kept = items.filter(item => !item.storedIn);
     if (kept.length) parts.push(`${kept.map(label).join('、')}（已进背包）`);
     for (const storage of new Set(items.flatMap(item => item.storedIn ? [item.storedIn] : []))) parts.push(`${items.filter(item => item.storedIn === storage).map(label).join('、')}（已放进 ${storage}）`);
-    this.add('gift', `${from} 丢给你：${parts.join('；')}`);
+    const text = `${from} 丢给你：${parts.join('；')}`;
+    if (!this.giftHandler) { this.add('gift', text); return; }
+    void this.tellGift(from, text, kept.map(item => ({ id: item.id, count: item.count })));
+  }
+  private async tellGift(from: string, text: string, kept: GiftItem[]): Promise<void> {
+    let notes: string[] = [];
+    if (kept.length) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        notes = await Promise.race([this.giftHandler!(from, kept), new Promise<string[]>(resolve => { timer = setTimeout(() => resolve([]), this.giftHandlerTimeoutMs); timer.unref?.(); })]);
+      } catch { notes = []; }
+      finally { clearTimeout(timer); }
+    }
+    this.add('gift', notes.length ? `${text}。${notes.join('；')}` : text);
   }
   /** Where home is (a remembered place named home or 家), for the bedtime nudge. */
   useHome(home: () => Place | undefined): void { this.home = home; }

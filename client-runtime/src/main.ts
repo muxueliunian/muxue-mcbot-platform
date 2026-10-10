@@ -19,6 +19,7 @@ import { PlaceBook } from './places.js';
 import { MachineBook, MachineWatch } from './machines.js';
 import { BlueprintShelf } from './blueprints.js';
 import { writePosture } from './posture.js';
+import { useGiftGear } from './gift-gear.js';
 import { loadPluginPolicy } from './plugins.js';
 import { fileURLToPath } from 'node:url';
 
@@ -123,6 +124,15 @@ async function main(): Promise<void> {
     const tasks = new ContainerTasks(body, Date.now, operation => events!.deliverOperation(operation));
     const survival = ['survival-state', 'swap-inventory', 'eat-item'].every(cap => body!.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events!.recordOperation(operation)) : undefined;
     const stopCurrent = createActionStop(body, tasks, gather, companion, survival);
+    // Better armour a player throws is put on by itself unless the body is working (gift-gear.ts); following or waiting is not working.
+    useGiftGear(events, body, () => {
+      try { tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle(); } catch { return true; }
+      if (body!.pendingOperations().some(operation => operation.name !== 'follow-companion')) return true;
+      const state = companion?.snapshot();
+      if (!state) return false;
+      if (state.mining || companion!.guardFighting() || state.state === 'paused') return true;
+      return ['following', 'waiting'].includes(state.state) && !body!.hello.capabilities.includes('beside-follow');
+    });
     const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, stopWork: stopCurrent.keepCompanion, ...companionReflexHooks(tasks, gather, companion, stopCurrent.keepCompanion, survival, () => body!.isBusy?.() === true || body!.pendingOperations().length > 0), ordinaryBusy: () => {
       try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); }
       catch { return true; }

@@ -348,6 +348,10 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - 同一个人的物品从第一件起收集 2 秒，合成一条唤醒模型的 `gift` 事件；相同物品且组件相同的数量相加，进了背包类存储的单列：`muxue 丢给你：minecraft:netherite_sword ×1（已进背包）`、`muxue 丢给你：minecraft:bread ×5、minecraft:iron_sword ×1（带附魔、名字等属性）（已进背包）；minecraft:coal ×9（已放进 sophisticatedbackpacks:backpack）`。
 - 驱动器把 `gift` 加进唤醒类型；启动提示：收到 gift 时在游戏里简短回应、道谢或确认收到，需要时再用 `list-inventory` 查背包。
 
+**`assess-armour`：收到的护甲自己穿上（10-11 试玩：玩家丢钻石胸甲，Bot 不会自己换）。** 只读能力（不是动作，`atomicAction` 排除）。请求 `{instanceId,sessionId,leaseId,items:[物品ID,1..8个]}`；服务端在主背包 0..35 格里找这些 ID 的、能穿的东西，对照身上现在穿的，返回 `candidates:[{slot,item,count,part,verdict,reason,wearing?}]`。能穿的只有原版人形护甲（`ArmorItem` 的头、胸、腿、脚，不含鞘翅、南瓜、头颅、马铠、狼铠）和**副手空着时**的盾牌（`part:"offhand"`）。**“更好”只在服务端判断一处（`ArmourChoice.java`，原生读取在 `ArmourAssessment.java`）**：先比护甲值，再韧性（都是该部位属性修饰符的加法值），再附魔总等级，最后剩余耐久（不会坏的算最大）；四项全相同不换。`verdict`：`better`（`reason` 为 `slot-empty` 或 `better-stats`）、`not-better`（`same`／`worse`／`better-candidate`＝同部位另有更好的候选／`offhand-occupied`）、`blocked`（`new-binding`＝新的带绑定诅咒穿上脱不掉、`worn-binding`＝身上的带绑定诅咒脱不下、`no-room`＝被替下的那件没地方放）。同部位多个候选时只有最好的一个是 `better`。被替下的旧件放回新件原来的格子（`equip-item` 的原有行为），所以单件永远放得下；`no-room` 只在新件是一叠多件、背包又没有空格时出现。
+
+运行端（`gift-gear.ts`，hello 同时带 `assess-armour`、`equip-item` 时由 `main.ts` 接到 `EventJournal.useGiftHandler`）：`gift` 事件发出前，把进了背包的礼物物品 ID 交给服务端评估；`better` 且身体不忙时用 `equip-item`（带评估的 `slot`，跟随／等待中靠 `beside-follow` 不停跟随）穿上，事件在原文后接 `已换上 X（替下 Y）`；其余结果也写进事件（不比身上的好、带绑定诅咒、放不下、副手有东西）。**忙**＝任务、采集、动作在跑，保护正在打，陪挖，或跟随被工具暂停：不打断，事件写 `可以换上 X，比身上的 Y好，但正在忙，没有换（空下来可以用 equip-item）`。评估或穿戴失败、8 秒内没结果时，事件照常发出（失败写“没成功”）。只处理玩家丢来的礼物，不是任何拾取。
+
 **`entity-equipment`：附近实体的装备。** 观察 `entities` 里每个 `LivingEntity`（玩家、僵尸、骷髅、猪灵、凋灵骷髅、村民、盔甲架、马、狼……），只要有一个装备位不空，就带 `equipment`：
 
 ```json

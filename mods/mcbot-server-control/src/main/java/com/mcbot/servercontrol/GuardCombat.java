@@ -336,7 +336,8 @@ final class GuardCombat {
             if(there||view.position().distanceTo(spot)<=SPOT_ARRIVE){spot=null;view.stopMoving();lastReposition="ARRIVED";}
             else if(now-spotSince>SPOT_WALK_MS){badSpots.add(spot);spot=null;view.stopMoving();lastReposition="TIMEOUT";}
         } catch(Protocol.Error blocked) {
-            noPath.put(foe.identity(),now);badSpots.add(spot);spot=null;view.stopMoving();lastReposition="NO_PATH";
+            badSpots.add(spot); // only that spot is out of reach, not the foe: it can still be shot from elsewhere or fought
+            spot=null;view.stopMoving();lastReposition="NO_PATH";
         }
     }
     /** Lower a drawn bow, remembering why. */
@@ -621,13 +622,13 @@ final class GuardCombat {
             net.minecraft.world.entity.monster.Zombie walker;
             /** Where a walker could stand in the block column of `point`: at most a block above or below the body's feet, a floor vanilla's path types call walkable (no water, fire, cactus, or a drop). */
             Vec3 standAt(Vec3 point) {
-                if(walker==null)walker=new net.minecraft.world.entity.monster.Zombie(EntityType.ZOMBIE,body.level());
+                if(walker==null||walker.level()!=body.level())walker=new net.minecraft.world.entity.monster.Zombie(EntityType.ZOMBIE,body.level());
                 int x=Mth.floor(point.x),z=Mth.floor(point.z),top=Mth.floor(body.getY())+1;
                 for(int y=top;y>=top-2;y--) {
                     BlockPos pos=new BlockPos(x,y,z);
                     if(!body.serverLevel().isLoaded(pos))return null;
                     PathType type=WalkNodeEvaluator.getPathTypeStatic(walker,pos);
-                    if(type==PathType.WALKABLE)return new Vec3(x+0.5,y,z+0.5);
+                    if(type==PathType.WALKABLE)return WalkNodeEvaluator.getPathTypeStatic(walker,pos.above())==PathType.OPEN?new Vec3(x+0.5,y,z+0.5):null; // and room for the head
                     if(type!=PathType.OPEN)return null; // the first non-air from above decides
                 }
                 return null;

@@ -24,7 +24,10 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.*;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.pathfinder.PathType;
+import net.minecraft.world.level.pathfinder.WalkNodeEvaluator;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -39,6 +42,12 @@ import static com.mcbot.servercontrol.Protocol.*;
  */
 final class GuardCombat {
     static final double MELEE_RANGE=3.2,BOW_MIN=4,BOW_CHASE=8,BOW_MAX=24,BOOM_SAFE=5,RETREAT_SPAN=5;
+    /** Running away from a lit creeper: blocks per tick the body can count on (sprinting is about 0.28, minus start-up and turns) and the blocks to spare beyond the blast. */
+    static final double RUN_SPEED=0.2,RUN_MARGIN=1;
+    /** Moving to where an arrow can reach: the ring of spots tried, the walk and search timings, and how often one fight may do it. */
+    static final double SPOT_ARRIVE=1.2,SPOT_EDGE=1.5;
+    static final long SPOT_COOLDOWN_MS=1000,SPOT_WALK_MS=6000;
+    static final int SPOT_RINGS=4,SPOT_MAX_CHECKED=24,SPOT_MAX_PER_FIGHT=6;
     static final int FULL_DRAW=20,MAX_DRAW=80;
     static final long NO_PATH_MS=5000,STALE_FIGHT_MS=15000,KILL_WINDOW_MS=3000;
     record Options(double radius,double leash,float lowHealth,boolean bow,boolean shield) {
@@ -56,7 +65,14 @@ final class GuardCombat {
     }
     /** One living thing worth fighting, with the native facts the decisions need. */
     record Foe(Object identity,String id,String type,Vec3 position,double distance,double companionDistance,
-               boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible) {}
+               boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible,
+               int fuse,double blast) {
+        /** fuse: ticks until a swelling creeper explodes (-1 unknown); blast: how far its explosion hurts, in blocks (0 unknown). */
+        Foe(Object identity,String id,String type,Vec3 position,double distance,double companionDistance,
+            boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible) {
+            this(identity,id,type,position,distance,companionDistance,targetingCompanion,targetingSelf,ranged,creeper,explosionPreparing,flying,visible,-1,0);
+        }
+    }
     interface View {
         long now();
         Vec3 position();
@@ -83,6 +99,13 @@ final class GuardCombat {
          * edge may show only its head), and aims at the first that works.
          */
         boolean clearShot(Foe foe);
+        /**
+         * The first of `candidates` (nearest first) a walker can stand on, without a fall of more than a block, from which
+         * an arrow reaches the foe the same way clearShot checks it; null when none. Costly: the caller rations it.
+         */
+        Vec3 shootingSpot(Foe foe,List<Vec3> candidates);
+        /** One walking tick to `spot`, staying within `limit` of the companion; true once there; throws when there is no way. */
+        boolean reposition(Vec3 spot,Vec3 companion,double limit);
         /** Ticks the bow has been drawn, or -1. */
         int drawing();
         void draw(Foe foe);
@@ -110,13 +133,25 @@ final class GuardCombat {
      */
     private int draws,fightDraws,fightShots;
     private String lastEnd,lastDrop;
+    /** Shield holds begun (any reason) and why the last one was not possible (OFF, NO_SHIELD); diagnosis only. */
+    private int shields;
+    private boolean shielded;
+    private String lastShield;
+    /** Where the body is walking to for a shot, since when, the earliest next search, tries this fight, spots that had no way, and how the last try ended; the count is diagnosis. */
+    private Vec3 spot;
+    private long spotSince,spotAfter;
+    private int fightSpots,repositions;
+    private final List<Vec3> badSpots=new ArrayList<>();
+    private String lastReposition;
     private long loggedAt=Long.MIN_VALUE/2;
     private static final org.slf4j.Logger LOGGER=com.mojang.logging.LogUtils.getLogger();
     GuardCombat(View view,Options options){this(view,options,new GuardExecution(()->true));}
     private GuardCombat(View view,Options options,GuardExecution execution){this.view=view;this.options=options;this.execution=execution;}
     String state(){return state;}
     JsonObject json() {
-        JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"draws",draws,"options",options.json());
+        JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"draws",draws,"shields",shields,"repositions",repositions,"options",options.json());
+        if(lastShield!=null)result.addProperty("lastShield",lastShield);
+        if(lastReposition!=null)result.addProperty("lastReposition",lastReposition);
         if(lastEnd!=null)result.addProperty("lastEnd",lastEnd);
         if(lastDrop!=null)result.addProperty("lastDrop",lastDrop);
         if(target!=null){result.addProperty("target",target.type());result.addProperty("targetId",target.id());}
@@ -143,33 +178,40 @@ final class GuardCombat {
         float health=view.health();
         if(!retreating&&health<=options.lowHealth()&&nearest!=null&&nearest.distance()<=8){retreating=true;retreats++;}
         else if(retreating&&health>=options.lowHealth()+4)retreating=false;
-        Foe boom=foes.stream().filter(f->f.explosionPreparing()&&f.distance()<BOOM_SAFE).min(Comparator.comparingDouble(Foe::distance)).orElse(null);
+        Foe boom=foes.stream().filter(f->f.explosionPreparing()&&f.distance()<Math.max(BOOM_SAFE,f.blast())).min(Comparator.comparingDouble(Foe::distance)).orElse(null);
         if(boom!=null||retreating) {
             Foe from=boom!=null?boom:nearest;
             if(from==null||from.distance()>12){settle("FOE_FAR");return false;}
-            backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",permission);
+            spot=null;
+            // A lit creeper the body cannot outrun: stand still, face it and let the shield take the blast. Otherwise run, as before.
+            if(boom!=null&&!canOutrun(view.position(),boom.position(),companion,options.leash(),boom.blast(),boom.fuse())&&holdShield(boom,permission)){state="shielding";return true;}
+            backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",boom==null||retreating,permission);
             return true;
         }
         Foe chosen=choose(foes);
         if(chosen==null){settle("NO_FOE");return false;}
-        if(target==null||target.identity()!=chosen.identity())engagedAt=now;
+        if(target==null||target.identity()!=chosen.identity()){engagedAt=now;spot=null;badSpots.clear();fightSpots=0;}
         target=chosen;
         // A fight that lands nothing for a long time (the foe hides behind a wall, keeps out of reach) is let go.
         if(now-engagedAt>STALE_FIGHT_MS&&now-Math.max(lastHitAt,engagedAt)>STALE_FIGHT_MS){noPath.put(chosen.identity(),now);settle("STALE");return false;}
         boolean melee=chosen.distance()<=MELEE_RANGE&&view.inReach(chosen);
         int drawn=view.drawing();
         if(!melee&&shouldShoot(chosen,drawn>=0)&&view.armBow()) {
-            requireDrive(permission);view.stopMoving();view.lowerShield();
+            requireDrive(permission);if(spot==null)view.stopMoving();lower();
             if(!view.clearShot(chosen)) {
+                // Not reachable from here (a ledge underfoot, a wall corner): walk to a spot where an arrow does reach.
+                if(spot!=null||findSpot(chosen,companion,now)){walkToSpot(chosen,companion,now);requireDrive(permission);state="repositioning";return true;}
                 // Hold the draw while someone stands in the way; give up only after a long wait.
                 if(drawn>=0&&drawn<MAX_DRAW)view.draw(chosen);else drop("NO_CLEAR_SHOT");
                 requireDrive(permission);state="aiming";return true;
             }
+            if(spot!=null){spot=null;view.stopMoving();lastReposition="CLEAR";}
             if(drawn<0){view.draw(chosen);draws++;}
             else if(drawn>=FULL_DRAW){view.release(chosen);shots++;lastHitFoe=chosen;lastHitAt=now;}
             else view.draw(chosen);
             requireDrive(permission);state="shooting";return true;
         }
+        spot=null;
         requireDrive(permission);drop(melee?"MELEE":!chosen.visible()?"NOT_VISIBLE":chosen.distance()<=MELEE_RANGE?"CLOSE":"NOT_BOW_TARGET");
         if(melee) {
             view.stopMoving();
@@ -177,14 +219,15 @@ final class GuardCombat {
             unarmed=null;
             requireDrive(permission);
             if(view.cooledDown()) {
-                view.lowerShield();
+                lower();
                 float dealt=view.attack(chosen);
                 if(dealt>0){hits++;damage+=dealt;lastHitFoe=chosen;lastHitAt=now;}
-            } else if(options.shield()&&chosen.targetingSelf()&&view.armShield()){requireDrive(permission);view.raiseShield(chosen);}
+            } else if(options.shield()&&chosen.targetingSelf()&&view.armShield()){requireDrive(permission);raise(chosen);}
+            else lower();
             requireDrive(permission);state="fighting";return true;
         }
         if(chosen.flying()){settle("FLYING");return false;} // nothing to walk to; wait for it to swoop into reach
-        view.lowerShield();
+        lower();
         try {view.approach(chosen,companion,options.leash());}
         catch(Protocol.Error blocked){noPath.put(chosen.identity(),now);view.stopMoving();settle("NO_PATH");return false;}
         requireDrive(permission);state="approaching";return true;
@@ -202,9 +245,11 @@ final class GuardCombat {
         if(target!=null)for(Foe foe:able)if(foe.identity()==target.identity())return foe;
         return able.stream().min(Comparator.comparing((Foe f)->!f.targetingCompanion()).thenComparing(f->!f.targetingSelf()).thenComparingDouble(Foe::companionDistance)).orElse(null);
     }
-    private void backOff(Foe from,Vec3 companion,String next,java.util.function.BooleanSupplier permission) {
-        drop(next.toUpperCase(java.util.Locale.ROOT));target=null;
-        if(options.shield()&&view.armShield()){requireDrive(permission);view.raiseShield(from);}
+    /** shield: raise it while backing off (low health); running from a creeper that can be outrun goes without, since a body using an item does not sprint. */
+    private void backOff(Foe from,Vec3 companion,String next,boolean shield,java.util.function.BooleanSupplier permission) {
+        drop(next.toUpperCase(java.util.Locale.ROOT));target=null;spot=null;
+        if(shield&&options.shield()&&view.armShield()){requireDrive(permission);raise(from);}
+        else lower();
         requireDrive(permission);
         try {view.retreat(retreatPoint(view.position(),from.position(),companion,options.leash()),companion,options.leash());}
         catch(Protocol.Error blocked){view.stopMoving();}
@@ -220,8 +265,80 @@ final class GuardCombat {
         Vec3 leashed=point.subtract(flatCompanion);
         return leashed.horizontalDistance()<=leash-1?point:flatCompanion.add(new Vec3(leashed.x,0,leashed.z).normalize().scale(leash-1));
     }
-    private void settle(String why){drop(why);view.lowerShield();target=null;state="idle";ended(why);}
-    void stop(){execution.interrupt();try{drop("INTERRUPTED");view.lowerShield();}finally{view.stopMoving();target=null;state="idle";ended("INTERRUPTED");}}
+    private void settle(String why){drop(why);lower();target=null;spot=null;state="idle";ended(why);}
+    void stop(){execution.interrupt();try{drop("INTERRUPTED");lower();}finally{view.stopMoving();target=null;spot=null;state="idle";ended("INTERRUPTED");}}
+    private void raise(Foe from){view.raiseShield(from);if(!shielded){shielded=true;shields++;}}
+    private void lower(){view.lowerShield();shielded=false;}
+    /**
+     * Face the foe with the shield up and stay put (an explosion hurts less from behind a shield, and only when the blast
+     * comes from the front). The bow is put down first: a drawn bow and a raised shield are the same use of a hand.
+     */
+    private boolean holdShield(Foe from,java.util.function.BooleanSupplier permission) {
+        if(!options.shield()){lastShield="OFF";return false;}
+        drop("SHIELD");target=null;
+        if(!view.armShield()){lastShield="NO_SHIELD";return false;}
+        requireDrive(permission);
+        view.stopMoving();raise(from);
+        lastShield=null;
+        return true;
+    }
+    /** Whether running from a lit creeper gets the body out of its blast before it goes off: `fuse` ticks of running, within the leash around the player; unknown fuse counts as yes. */
+    static boolean canOutrun(Vec3 feet,Vec3 foe,Vec3 companion,double leash,double blast,int fuse) {
+        if(fuse<0)return true;
+        double range=Math.max(blast,BOOM_SAFE)+RUN_MARGIN;
+        Vec3 flatFoe=new Vec3(foe.x,feet.y,foe.z);
+        if(feet.distanceTo(flatFoe)>=range)return true;
+        Vec3 goal=retreatPoint(feet,foe,companion,leash);
+        double dx=goal.x-feet.x,dz=goal.z-feet.z,length=Math.sqrt(dx*dx+dz*dz);
+        if(length<0.001)return false;
+        dx/=length;dz/=length;
+        // How far along that line the player's leash lets the body go (one block in from its edge, like retreatPoint).
+        double rx=feet.x-companion.x,rz=feet.z-companion.z,edge=leash-1,b=rx*dx+rz*dz,c=rx*rx+rz*rz-edge*edge;
+        double room=c>0?0:-b+Math.sqrt(b*b-c);
+        double run=Math.min(RUN_SPEED*fuse,Math.max(0,room));
+        return Math.hypot(feet.x+dx*run-foe.x,feet.z+dz*run-foe.z)>=range;
+    }
+    /** The rim of where the body may stand for a shot: inside the leash and inside the range at which the guard still takes the body from the player (GuardDuty.ENGAGE_RANGE is measured from the body to the player), with room to spare. */
+    static double spotLimit(Options options){return Math.min(options.leash(),GuardDuty.ENGAGE_RANGE)-SPOT_EDGE;}
+    /**
+     * Spots a body could step to for a better shot, nearest first: rings of 1 to 4 blocks around its feet, eight ways, that
+     * keep inside `limit` of the player, stay between BOW_MIN and BOW_MAX from the foe (closer would switch to melee) and are
+     * not near a spot that already had no way. Where a block can be stood on is the view's business.
+     */
+    static List<Vec3> repositionCandidates(Vec3 feet,Vec3 foe,Vec3 companion,double limit,List<Vec3> avoid) {
+        List<Vec3> result=new ArrayList<>();
+        for(int ring=1;ring<=SPOT_RINGS;ring++)for(int way=0;way<8;way++) {
+            double angle=way*Math.PI/4;
+            Vec3 point=new Vec3(feet.x+Math.cos(angle)*ring,feet.y,feet.z+Math.sin(angle)*ring);
+            double toFoe=Math.hypot(point.x-foe.x,point.z-foe.z);
+            if(point.distanceTo(companion)>limit||toFoe<BOW_MIN||toFoe>BOW_MAX)continue;
+            if(avoid.stream().anyMatch(bad->Math.hypot(bad.x-point.x,bad.z-point.z)<1.0))continue;
+            result.add(point);
+        }
+        return result;
+    }
+    /** Look for a spot to shoot from, at most once per cooldown and a few times per fight; records why not. */
+    private boolean findSpot(Foe foe,Vec3 companion,long now) {
+        if(now<spotAfter)return false;
+        spotAfter=now+SPOT_COOLDOWN_MS;
+        if(fightSpots>=SPOT_MAX_PER_FIGHT){lastReposition="LIMIT";return false;}
+        List<Vec3> candidates=repositionCandidates(view.position(),foe.position(),companion,spotLimit(options),badSpots);
+        Vec3 found=candidates.isEmpty()?null:view.shootingSpot(foe,candidates);
+        if(found==null){lastReposition=candidates.isEmpty()?"NO_CANDIDATE":"NO_SPOT";return false;}
+        spot=found;spotSince=now;fightSpots++;repositions++;lastReposition="WALKING";
+        return true;
+    }
+    /** One step toward the chosen spot; gives it up when there is no way or it takes too long. */
+    private void walkToSpot(Foe foe,Vec3 companion,long now) {
+        drop("REPOSITION");
+        try {
+            boolean there=view.reposition(spot,companion,spotLimit(options));
+            if(there||view.position().distanceTo(spot)<=SPOT_ARRIVE){spot=null;view.stopMoving();lastReposition="ARRIVED";}
+            else if(now-spotSince>SPOT_WALK_MS){badSpots.add(spot);spot=null;view.stopMoving();lastReposition="TIMEOUT";}
+        } catch(Protocol.Error blocked) {
+            noPath.put(foe.identity(),now);badSpots.add(spot);spot=null;view.stopMoving();lastReposition="NO_PATH";
+        }
+    }
     /** Lower a drawn bow, remembering why. */
     private void drop(String why){if(view.drawing()>=0)lastDrop=why;view.cancelDraw();}
     /** A fight is over: one log line (at most every 10 s) when the bow was drawn and no arrow left. */
@@ -285,6 +402,12 @@ final class GuardCombat {
     private static final class Known {
         static final Set<DataComponentType<?>> WEAPON=Set.of(DataComponents.DAMAGE,DataComponents.CUSTOM_NAME,DataComponents.LORE,DataComponents.REPAIR_COST,DataComponents.ENCHANTMENTS);
         static final Set<DataComponentType<?>> SHIELD=Set.of(DataComponents.DAMAGE,DataComponents.CUSTOM_NAME,DataComponents.LORE,DataComponents.REPAIR_COST,DataComponents.ENCHANTMENTS,DataComponents.BANNER_PATTERNS,DataComponents.BASE_COLOR);
+    }
+    /** A creeper's private explosion radius and fuse length, read once; the vanilla values (3 and 30) when a version hides them. */
+    private static final class CreeperFacts {
+        static final java.lang.reflect.Field RADIUS=field("explosionRadius"),MAX_SWELL=field("maxSwell");
+        static java.lang.reflect.Field field(String name){try{java.lang.reflect.Field f=Creeper.class.getDeclaredField(name);f.setAccessible(true);return f;}catch(ReflectiveOperationException|RuntimeException missing){return null;}}
+        static int read(java.lang.reflect.Field field,Creeper creeper,int vanilla){try{return field==null?vanilla:Math.max(1,field.getInt(creeper));}catch(ReflectiveOperationException|RuntimeException hidden){return vanilla;}}
     }
     private static final List<String> TIERS=List.of("netherite","diamond","iron","stone","golden","wooden");
     /** Vanilla item and class, only known data components, only vanilla enchantments, some durability left. */
@@ -352,8 +475,15 @@ final class GuardCombat {
                     String type=BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
                     boolean ranged=entity instanceof RangedAttackMob||entity instanceof Blaze||entity instanceof Ghast||entity instanceof Shulker;
                     boolean flying=entity instanceof FlyingMob||entity instanceof Blaze||entity instanceof Vex;
+                    int fuse=-1;double blast=0;
+                    if(entity instanceof Creeper creeper) {
+                        // Vanilla Creeper: explodes when `swell` reaches maxSwell (30); getSwelling(1) is swell/(maxSwell-2). The blast hurts out to twice its radius (3, doubled when charged).
+                        int max=CreeperFacts.read(CreeperFacts.MAX_SWELL,creeper,30);
+                        fuse=Math.max(0,max-(int)Math.round(creeper.getSwelling(1f)*(max-2)));
+                        blast=2.0*CreeperFacts.read(CreeperFacts.RADIUS,creeper,3)*(creeper.isPowered()?2:1);
+                    }
                     result.add(new Foe(entity,entity.getUUID().toString(),type,entity.position(),distance,companionDistance,targetingCompanion,targetingSelf,
-                        ranged,entity instanceof Creeper,ThreatSense.explosionPreparing(entity),flying,body.hasLineOfSight(entity)));
+                        ranged,entity instanceof Creeper,ThreatSense.explosionPreparing(entity),flying,body.hasLineOfSight(entity),fuse,blast));
                 }
                 return result;
             }
@@ -445,29 +575,30 @@ final class GuardCombat {
             double aimHeight=0.5;
             public boolean clearShot(Foe foe) {
                 LivingEntity e=living(foe);
-                for(double height:AIM_HEIGHTS)if(arrowReaches(e,height)){aimHeight=height;return true;}
+                for(double height:AIM_HEIGHTS)if(arrowReaches(launch(),e,height)){aimHeight=height;return true;}
                 return false;
             }
-            /** Where vanilla looses the arrow from. */
-            Vec3 launch(){return body.getEyePosition().subtract(0,0.1,0);}
+            /** Where vanilla looses the arrow from, for a body standing with its feet at `feet`. */
+            Vec3 launch(Vec3 feet){return feet.add(0,body.getEyeHeight()-0.1,0);}
+            Vec3 launch(){return launch(body.position());}
             /** A point at `height` of the foe, led by its horizontal motion over the flight. */
-            Vec3 aimPoint(LivingEntity e,double height) {
-                Vec3 from=launch();AABB box=e.getBoundingBox();
+            Vec3 aimPoint(Vec3 from,LivingEntity e,double height) {
+                AABB box=e.getBoundingBox();
                 Vec3 point=new Vec3((box.minX+box.maxX)/2,box.minY+box.getYsize()*height,(box.minZ+box.maxZ)/2);
                 double ticks=Math.sqrt(Math.pow(point.x-from.x,2)+Math.pow(point.z-from.z,2))/2.8;
                 return point.add(e.getDeltaMovement().x*ticks,0,e.getDeltaMovement().z*ticks);
             }
             /** Yaw and pitch that bring a full-power arrow to `point`, or null when it is out of range. */
-            float[] solution(Vec3 point) {
-                Vec3 from=launch();double dx=point.x-from.x,dz=point.z-from.z;
+            float[] solution(Vec3 from,Vec3 point) {
+                double dx=point.x-from.x,dz=point.z-from.z;
                 double pitch=arrowPitch(Math.sqrt(dx*dx+dz*dz),point.y-from.y);
                 return Double.isNaN(pitch)?null:new float[]{(float)Math.toDegrees(Math.atan2(-dx,dz)),(float)pitch};
             }
             /** Fly the arrow aimed at `height`: it must meet the foe before a block, and pass no protected entity, nor a little beyond in case it misses. */
-            boolean arrowReaches(LivingEntity e,double height) {
-                float[] aim=solution(aimPoint(e,height));
+            boolean arrowReaches(Vec3 from,LivingEntity e,double height) {
+                float[] aim=solution(from,aimPoint(from,e,height));
                 if(aim==null)return false;
-                List<Vec3> path=arrowPath(launch(),aim[0],aim[1],100);
+                List<Vec3> path=arrowPath(from,aim[0],aim[1],100);
                 AABB foe=e.getBoundingBox().inflate(0.3);
                 int reached=-1;
                 for(int i=1;i<path.size();i++) {
@@ -487,9 +618,39 @@ final class GuardCombat {
                 }
                 return reached>=0;
             }
+            net.minecraft.world.entity.monster.Zombie walker;
+            /** Where a walker could stand in the block column of `point`: at most a block above or below the body's feet, a floor vanilla's path types call walkable (no water, fire, cactus, or a drop). */
+            Vec3 standAt(Vec3 point) {
+                if(walker==null)walker=new net.minecraft.world.entity.monster.Zombie(EntityType.ZOMBIE,body.level());
+                int x=Mth.floor(point.x),z=Mth.floor(point.z),top=Mth.floor(body.getY())+1;
+                for(int y=top;y>=top-2;y--) {
+                    BlockPos pos=new BlockPos(x,y,z);
+                    if(!body.serverLevel().isLoaded(pos))return null;
+                    PathType type=WalkNodeEvaluator.getPathTypeStatic(walker,pos);
+                    if(type==PathType.WALKABLE)return new Vec3(x+0.5,y,z+0.5);
+                    if(type!=PathType.OPEN)return null; // the first non-air from above decides
+                }
+                return null;
+            }
+            public Vec3 shootingSpot(Foe foe,List<Vec3> candidates) {
+                LivingEntity e=living(foe);Set<BlockPos> seen=new HashSet<>();int checked=0;
+                seen.add(body.blockPosition());
+                for(Vec3 candidate:candidates) {
+                    Vec3 stand=standAt(candidate);
+                    if(stand==null||!seen.add(BlockPos.containing(stand)))continue;
+                    if(++checked>SPOT_MAX_CHECKED)break;
+                    for(double height:AIM_HEIGHTS)if(arrowReaches(launch(stand),e,height))return stand;
+                }
+                return null;
+            }
+            public boolean reposition(Vec3 destination,Vec3 centre,double limit) {
+                if(approach!=null){approach.stop();approach=null;approaching=null;}
+                if(retreat==null)retreat=new NativeNavigation(body,execution.capture()).tolerateDamage().sprint();
+                return retreat.tick(destination,feet->feet.distanceTo(destination)<=SPOT_ARRIVE,feet->feet.distanceTo(centre)<=limit);
+            }
             public int drawing(){return body.isUsingItem()&&body.getUseItem().getItem() instanceof BowItem?body.getTicksUsingItem():-1;}
             void aim(LivingEntity e) {
-                float[] solved=solution(aimPoint(e,aimHeight));
+                float[] solved=solution(launch(),aimPoint(launch(),e,aimHeight));
                 if(solved==null){look(e.getEyePosition());body.setXRot(-45);return;}
                 body.setYRot(solved[0]);body.setYHeadRot(solved[0]);body.setXRot(solved[1]);
             }

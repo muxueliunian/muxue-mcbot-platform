@@ -8,6 +8,7 @@ import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.inventory.ClickType;
@@ -30,6 +31,12 @@ import static com.mcbot.servercontrol.Protocol.*;
  */
 final class NativeSeat {
     static final int SEARCH_RADIUS=8,VERTICAL_RADIUS=3;
+    /**
+     * How far a sitting head may turn either side of the seat's facing. Vanilla does not limit a passenger's view on a plain
+     * entity (Entity.onPassengerTurned is empty in 1.21.1, and SitEntity overrides nothing). This value is borrowed from
+     * Boat.clampRotation, which holds a passenger to ±105 degrees of the boat's yaw (decompiled NeoForge 1.21.1 Boat.java).
+     */
+    static final float SIT_HEAD_YAW=105;
     /** What a body that sits can still do: talk, look, gesture, handle its own inventory and eat. Anything that moves it must stand up first. */
     private static final Set<String> WHILE_SEATED=Set.of("send-chat","look-at","emote","set-appearance","wake-up","sit","stand-up","select-slot","equip-item","swap-inventory","eat-item","drop-item","open-container","click-slot","close-container");
     private static int sequence;
@@ -46,6 +53,21 @@ final class NativeSeat {
      * Nothing sits it back down afterwards.
      */
     static boolean standForFight(boolean seated,boolean dutyHeld,boolean hostileNear) {return seated&&dutyHeld&&hostileNear;}
+
+    /** The facing of the seat: KC sets the SitEntity's yaw from the chair's or stool's FACING when it spawns it, and never changes it. */
+    static float seatYaw(ServerPlayer bot) {return bot.getVehicle().getYRot();}
+    /** Head yaw for a sitting body: the wanted yaw, held to SIT_HEAD_YAW either side of the seat, the short way round. */
+    static float seatedHeadYaw(float seatYaw,float wantedYaw) {return seatYaw+Mth.clamp(Mth.wrapDegrees(wantedYaw-seatYaw),-SIT_HEAD_YAW,SIT_HEAD_YAW);}
+    /** Only a standing body turns its body with its view; a sitting body keeps the seat's facing. */
+    static boolean bodyFollowsView(boolean seated) {return !seated;}
+    /**
+     * The one way a body turns toward a view (look-at, idle gaze, emote gestures). Standing: body, head and pitch go to the view.
+     * Sitting: only the head turns, held by seatedHeadYaw; the body and its yaw stay on the seat.
+     */
+    static void aim(ServerPlayer bot,float yaw,float pitch) {
+        if(bodyFollowsView(seated(bot))) {bot.setYRot(yaw);bot.setYBodyRot(yaw);bot.setYHeadRot(yaw);bot.setXRot(pitch);return;}
+        bot.setYHeadRot(seatedHeadYaw(seatYaw(bot),yaw));bot.setXRot(pitch);
+    }
 
     /** The hotbar slot to click with: the selected one when it is empty, else the first empty one, else -1. */
     static int handSlot(boolean[] hotbarEmpty,int selected) {
@@ -149,6 +171,8 @@ final class NativeSeat {
                 default -> error(code,"The game did not seat the body (nothing is riding it); the seat may be blocked or protected");
             };
         }
+        // Sitting: the body takes the seat's facing, so it matches the chair whatever the click turned it toward.
+        float facing=vehicle.getYRot();bot.setYRot(facing);bot.setYBodyRot(facing);bot.setYHeadRot(facing);
         JsonObject result=obj("seat",obj("x",position.getX(),"y",position.getY(),"z",position.getZ()),"id",BuiltInRegistries.BLOCK.getKey(bot.serverLevel().getBlockState(position).getBlock()).toString(),
             "vehicle",BuiltInRegistries.ENTITY_TYPE.getKey(vehicle.getType()).toString(),"sitting",true,"selectedSlot",bot.getInventory().selected);
         if(moved!=null) result.add("movedAside",moved);

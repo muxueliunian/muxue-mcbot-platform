@@ -20,7 +20,7 @@ final class IdleGaze {
     private long nextGlance;
 
     void tick(BodyPlayer body,ServerPlayer speaker,long spokeAt,long now){
-        if(!body.isAlive()||body.isSleeping()||body.isPassenger())return;
+        if(!body.isAlive()||body.isSleeping()||body.isPassenger()&&!NativeSeat.seated(body))return; // sitting: the head still watches
         Vec3 eye=body.getEyePosition();ServerPlayer watched=null;
         if(speaker!=null&&now-spokeAt<SPEAKER_MS&&usable(body,speaker,SPEAKER_RANGE))watched=speaker;
         if(watched==null)for(ServerPlayer other:body.serverLevel().players())
@@ -37,7 +37,7 @@ final class IdleGaze {
             yaw=glanceYaw;pitch=glancePitch;
         }
         float nextYaw=approach(body.getYHeadRot(),yaw,TURN_PER_TICK),nextPitch=approach(body.getXRot(),pitch,TURN_PER_TICK*0.6f);
-        body.setYRot(nextYaw);body.setYHeadRot(nextYaw);body.setYBodyRot(nextYaw);body.setXRot(Mth.clamp(nextPitch,-90,90));
+        NativeSeat.aim(body,nextYaw,Mth.clamp(nextPitch,-90,90));
     }
     private static boolean usable(BodyPlayer body,ServerPlayer other,double range){
         return other!=body&&!(other instanceof BodyPlayer)&&other.isAlive()&&!other.isSpectator()&&other.level()==body.level()

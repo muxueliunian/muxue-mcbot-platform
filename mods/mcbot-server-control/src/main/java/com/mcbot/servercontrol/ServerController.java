@@ -515,7 +515,7 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;actionGrace=new GuardDuty.Grace(timeout);
     }
-    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","host-notice","beside-follow").contains(name);}
+    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","host-notice","beside-follow","last-death").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     /** A momentary survival action may run beside a running follow-companion without stopping it (capability beside-follow). */
     @Override public boolean besideFollow(String name){return companion!=null&&Set.of("select-slot","equip-item").contains(name);}

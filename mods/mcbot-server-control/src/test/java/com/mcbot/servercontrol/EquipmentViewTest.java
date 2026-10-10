@@ -91,7 +91,7 @@ final class EquipmentViewTest {
         check(ledger.observation().getAsJsonArray("pickupReceipts").get(0).getAsJsonObject().get("thrownBy").getAsString().equals("muxue"),"observation carries thrownBy");
 
         check(ServerController.CAPABILITIES.contains("gift-receipts")&&ServerController.CAPABILITIES.contains("entity-equipment"),"both capabilities advertised");
-        check(!ServerController.atomicAction("gift-receipts")&&!ServerController.atomicAction("entity-equipment"),"capabilities are reads, never actions");
+        check(!ServerController.atomicAction("gift-receipts")&&!ServerController.atomicAction("entity-equipment")&&!ServerController.atomicAction("last-death"),"capabilities are reads, never actions");
         System.out.println("EquipmentViewTest: "+checks+" checks passed");
     }
 }

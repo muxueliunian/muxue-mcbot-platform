@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
 import { applyPluginPolicy, pluginRefusal, type PluginPolicy } from './plugins.js';
-import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus, type GuardDutyRequest, type GuardDutyState, type StopOptions } from './body.js';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type ArmourAssessment, type MachineStatus, type GuardDutyRequest, type GuardDutyState, type StopOptions } from './body.js';
 import { serverDetail } from './claim-failure.js';
 
 const identifier = z.string().min(1);
@@ -30,6 +30,8 @@ const survivalSchema = z.object({ ...stateIdentity, operationBudget: operationBu
   threats: z.object({ radius: z.number().finite().positive().max(32), complete: z.boolean(), nearby: z.array(threatSchema).max(64), serverTick: generation }).optional(),
   foods: z.array(z.object({ slot: z.number().int().min(0).max(35), id: identifier, count: z.number().int().positive(), nutrition: z.number().nonnegative(), saturationModifier: z.number().nonnegative(), eatDurationTicks: z.number().int().nonnegative(), safe: z.boolean(), reason: z.string().optional(), metadataIncomplete: z.boolean().optional() })).max(36) });
 const toolOptionsSchema = z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int(), expectedBlock: identifier.optional(), policy: z.enum(['fastest_valid', 'conserve_durability']).optional(), minRemainingDurability: z.number().int().min(0).max(10000).optional(), dropPreference: z.enum(['any', 'silk_touch', 'no_silk_touch']).optional() });
+const armourSchema = z.object({ instanceId: identifier, sessionId: identifier, worldId: identifier, controlGeneration: generation, operationBudget: z.unknown().optional(), candidates: z.array(z.object({ slot: z.number().int().min(0).max(35), item: identifier, count: z.number().int().positive(), part: z.enum(['head', 'chest', 'legs', 'feet', 'offhand']),
+  verdict: z.enum(['better', 'not-better', 'blocked']), reason: z.string().max(64), wearing: identifier.optional() }).passthrough()).max(36) });
 const toolAssessmentSchema = z.object({ ...stateIdentity, position, blockId: identifier, properties: components, requiresCorrectTool: z.boolean(), recommendedSlot: z.number().int().min(0).max(35).optional(), notes: z.array(z.string()),
   candidates: z.array(z.object({ ...observedStackShape, eligible: z.boolean().nullable(), nativeEligible: z.boolean().optional(), eligibilityBasis: z.string().optional(), baseSpeed: z.number().finite().nonnegative().nullable(), estimatedTicks: z.number().finite().nonnegative().nullable(), remainingDurability: z.number().int().nonnegative().nullable(), reason: z.string().optional(), estimate: z.enum(['native-base', 'estimated', 'unknown']), silkTouch: z.number().int().nonnegative().optional(), fortune: z.number().int().nonnegative().optional(), dropEffectsKnown: z.boolean().optional(), recommendationEligible: z.boolean().optional(), recommendationReason: z.string().optional() }).refine(validComponents)).max(36) });
 const helloSchema = z.object({
@@ -160,7 +162,7 @@ export class ServerBody implements Body {
   private async connect(): Promise<void> {
     // The single plugin filter: everything below (and every tool registered from this.hello) sees the filtered hello.
     const hello = applyPluginPolicy(await this.readHello(), this.options.plugins);
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks', 'step-aside-stop', 'gift-receipts', 'entity-equipment', 'beside-follow'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks', 'step-aside-stop', 'gift-receipts', 'entity-equipment', 'beside-follow', 'assess-armour'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -333,6 +335,12 @@ export class ServerBody implements Body {
       ticksLeft: z.number().int().optional(), secondsLeft: z.number().optional(), fuelTicks: z.number().int().optional(), stalled: z.boolean().optional(),
     }));
     return status;
+  }
+  /** Read only (assess-armour): which of these items in the main inventory would improve what is worn; the server decides, see ArmourChoice. */
+  assessArmour(items: string[]): Promise<ArmourAssessment> {
+    const args = z.object({ items: z.array(identifier).min(1).max(8) }).safeParse({ items });
+    if (!args.success) throw new BodyError('INVALID_ARGUMENT', '护甲评估的物品列表无效');
+    return this.survivalRead('assess-armour', args.data, armourSchema);
   }
   assessTool(options: ToolAssessmentOptions): Promise<ToolAssessment> {
     const args = toolOptionsSchema.safeParse(options);

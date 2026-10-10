@@ -183,6 +183,9 @@ export function sameControl(body: Pick<Body, 'carries'>, then: ControlContext, n
   if (then.controlGeneration === now.controlGeneration) return true;
   return then.controlGeneration !== undefined && now.controlGeneration !== undefined && body.carries?.(then.controlGeneration) === true && then.controlGeneration < now.controlGeneration;
 }
+/** assess-armour: per candidate stack in the main inventory, whether wearing it improves on what is worn (decided server-side). */
+export interface ArmourCandidate { slot: number; item: string; count: number; part: 'head' | 'chest' | 'legs' | 'feet' | 'offhand'; verdict: 'better' | 'not-better' | 'blocked'; reason: string; wearing?: string }
+export interface ArmourAssessment { candidates: ArmourCandidate[] }
 export interface Body {
   readonly hello: BodyHello;
   observe(block?: Position): Promise<Observation>;
@@ -192,6 +195,7 @@ export interface Body {
   lookAround?(options?: { radius?: number }): Promise<Record<string, unknown>>;
   survivalState?(options?: { details?: boolean }): Promise<SurvivalState>;
   assessTool?(options: ToolAssessmentOptions): Promise<ToolAssessment>;
+  assessArmour?(items: string[]): Promise<ArmourAssessment>;
   machineStatus?(position: Position): Promise<MachineStatus>;
   /** Turn the standing guard duty on, change it, or off (capability guard-duty). Not an operation; a stop keeps it. */
   setGuard?(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }>;

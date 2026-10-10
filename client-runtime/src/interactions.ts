@@ -48,10 +48,10 @@ export async function useItem(body: Body, request: UseItemRequest, taskToken?: s
 }
 
 /** Put on a piece of armour from anywhere in the main inventory; the server decides which armour slot it fits. */
-export async function equipItem(body: Body, request: { item: string }, taskToken?: string): Promise<Operation> {
+export async function equipItem(body: Body, request: { item: string; slot?: number }, taskToken?: string): Promise<Operation> {
   if (!body.hello.capabilities.includes('equip-item')) throw new BodyError('UNSUPPORTED', '身体没有声明穿装备的能力');
   const state = await body.observe();
-  const chosen = state.inventory.find(stack => stack.id === request.item && stack.count > 0 && stack.slot >= 0 && stack.slot <= 35);
+  const chosen = state.inventory.find(stack => stack.id === request.item && stack.count > 0 && stack.slot >= 0 && stack.slot <= 35 && (request.slot === undefined || stack.slot === request.slot));
   if (!chosen) throw new BodyError('MISSING_ITEM', `背包里没有 ${request.item}（已经穿在身上的不算）`);
   if (chosen.componentsComplete === false || !chosen.components) throw new BodyError('INCOMPLETE_GUARD', '这个物品的组件读不完整，不能安全穿戴');
   return body.act('equip-item', { slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components }, taskToken);

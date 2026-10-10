@@ -386,6 +386,12 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - **死后照样能下线**：宿主退出时驱动器先核对身体的会话编号，角色死了重生后编号变了，撤销就没发出去，留下假人。撤销现在不要求编号一致（服务端只认它自己退役的那份租约，别人接管了就不下线）。
 - 实测：`server-equip-swim-smoke.mjs`装着 SB 21 项、挪开模组加`--with-peer`19 项；`server-guard-smoke.mjs`14 项（含疾跑）；`server-navigation-defense-smoke.mjs`55 项；`server-stroll-smoke.mjs`10 项。
 
+### 瞬间动作旁边跟随（能力 beside-follow，2026-10-11）
+
+- 服务端声明 `beside-follow` 后，`select-slot`、`equip-item` 可以在 `follow-companion` 运行时执行：跟随不停、不重发，运行端也不让开。两个动作都在服务端同步完成（`begin` 返回时已不是 running）；它们不移动身体，不改跟随的 `active`。
+- 放行条件：当前正在 running 的非聊天动作全部是 `follow-companion`。运行端的 exclusive 槽和共享任务锁在这种情况下对这两个动作同样放行。
+- 其余照旧：别的动作（如 `dig-block`、`build`）在跟随旁边仍返回 `BUSY`；`emote`、`look-at` 等仍让开跟随。万一服务端没有同步完成，回执按 `failed`（`INTERNAL`）处理。
+
 ## 手持物品使用（2026-10-06）
 
 设计见 [use_item_design.md](use_item_design.md)，实测见 [验收记录](archive/use_item_validation.md)。

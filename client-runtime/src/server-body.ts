@@ -158,7 +158,7 @@ export class ServerBody implements Body {
   private async connect(): Promise<void> {
     // The single plugin filter: everything below (and every tool registered from this.hello) sees the filtered hello.
     const hello = applyPluginPolicy(await this.readHello(), this.options.plugins);
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks', 'step-aside-stop', 'gift-receipts', 'entity-equipment'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks', 'step-aside-stop', 'gift-receipts', 'entity-equipment', 'beside-follow'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -373,14 +373,17 @@ export class ServerBody implements Body {
   }
   async act<N extends ActionName>(name: N, args: ActionArguments[N], taskToken?: string): Promise<Operation> {
     this.assertActive();
-    if (name !== 'send-chat' && this.taskOwner && taskToken !== this.taskOwner) throw new BodyError('BUSY', '任务正在运行，原子动作不能绕过任务锁');
+    // select-slot and equip-item are momentary: beside a running follow-companion they pass the task lock and take no exclusive slot (beside-follow).
+    const holder = this.exclusive ? this.operations.get(this.exclusive) : undefined;
+    const beside = ['select-slot', 'equip-item'].includes(name) && this.hello.capabilities.includes('beside-follow') && holder?.name === 'follow-companion' && holder.status === 'running';
+    if (name !== 'send-chat' && this.taskOwner && taskToken !== this.taskOwner && !beside) throw new BodyError('BUSY', '任务正在运行，原子动作不能绕过任务锁');
     if (!this.hello.capabilities.includes(name)) throw new BodyError('UNSUPPORTED', `ServerBody 当前未实现 ${name}`);
     const refusal = pluginRefusal(name, args, this.options.plugins);
     if (refusal) throw new BodyError('UNSUPPORTED', refusal);
     if (this.stopping) throw new BodyError('BUSY', '正在停止，请等待确认后发送明确新动作');
     if (name === 'send-chat' && args && 'message' in args && (args.message.startsWith('/') || /[\r\n]/.test(args.message))) throw new BodyError('INVALID_ARGUMENT', 'send-chat 只允许普通单行聊天');
     this.validateSurvivalArguments(name, args);
-    const exclusive = name !== 'send-chat';
+    const exclusive = name !== 'send-chat' && !beside;
     if (exclusive && this.exclusive) throw new BodyError('BUSY', '已有身体动作运行；先查询或停止');
     const operationId = randomUUID();
     if (this.taskOwner && taskToken === this.taskOwner) this.internalOperations.add(operationId);

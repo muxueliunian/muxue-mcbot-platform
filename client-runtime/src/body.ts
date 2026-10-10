@@ -154,6 +154,7 @@ export interface Operation {
   operationId: string; sessionId: string; name: string; status: OperationStatus; summary: string; result?: unknown; controlGeneration?: number;
   operationBudget?: OperationBudget;
 }
+export interface StopOptions { clearGuard?: boolean }
 export interface Body {
   readonly hello: BodyHello;
   observe(block?: Position): Promise<Observation>;
@@ -171,7 +172,7 @@ export interface Body {
   operation(operationId: string): Promise<Operation>;
   pendingOperations(): readonly Operation[];
   isBusy?(): boolean;
-  stop(): Promise<{ stopped: true }>;
+  stop(options?: StopOptions): Promise<{ stopped: true }>;
   close(): Promise<void>;
 }
 export class BodyError extends Error {

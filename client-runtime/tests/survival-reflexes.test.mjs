@@ -45,6 +45,15 @@ test('failed preemption cannot start meal or automatically retry on the next obs
   assert.equal(f.eats, 0); assert.equal(f.reflexes.read().phase, 'blocked');
   await f.reflexes.tick(); assert.equal(f.reads.length, 1);
 });
+test('only the explicit stop clears standing protection; urgent preemption keeps it', async () => {
+  const f = fixture(5), stops = [];
+  f.setBusy(true);
+  f.options.stopCurrent = async options => { stops.push(options); return { stopped: true }; };
+  await f.reflexes.tick(); await turn();
+  assert.deepEqual(stops, [undefined]);
+  await f.reflexes.stop();
+  assert.deepEqual(stops, [undefined, { clearGuard: true }]);
+});
 test('stale policy writes fail; disabling while a read is pending prevents automatic action', async () => {
   const f = fixture(), pending = deferred(); f.body.survivalState = () => pending.promise;
   const sensing = f.reflexes.tick(), revision = f.reflexes.read().revision;

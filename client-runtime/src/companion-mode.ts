@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { BodyError, type Body, type Observation, type Operation, type GroundItem, type Components, type PickupReceipt, type GuardOptions, type GuardDutyState } from './body.js';
+import { BodyError, type Body, type Observation, type Operation, type GroundItem, type Components, type PickupReceipt, type GuardOptions, type GuardDutyState, type StopOptions } from './body.js';
 import type { EventJournal } from './events.js';
 import { GatherTasks, type BorrowedMining } from './gather-tasks.js';
 
@@ -56,6 +56,7 @@ export class CompanionMode {
   /** The guard duty asked of a body with guard-duty: kept across follow, wait and step-aside; ended by guard false, companion-mode stop or stop-action. */
   private duty?: { player: string; entityId: string; options: GuardOptions };
   private dutyState?: GuardDutyState;
+  private dutyRevision = 0;
   private fight?: { kills: number; targets: Set<string> };
   private fightNotedAt = -Infinity;
   private suspendedFor?: string;
@@ -72,23 +73,30 @@ export class CompanionMode {
   constructor(private readonly body: Body, private readonly events: EventJournal, gather?: GatherTasks, private readonly now = Date.now) { this.gather = gather ?? new GatherTasks(body, events, now); }
   snapshot(): CompanionState { return structuredClone({ ...this.value, ...(this.dutyMode() ? this.dutyView() : {}), ...(this.pickup ? { pickup: this.pickupState() } : {}), ...(this.mining ? { mining: this.miningState() } : {}) }); }
   /** The body keeps protection as its own standing duty (guard-duty) instead of inside the follow. */
-  private dutyMode(): boolean { return this.body.hello.capabilities.includes('guard-duty') && !!this.body.setGuard; }
+  private dutyMode(): boolean { return this.body.hello.capabilities.includes('guard-duty-fenced') && !!this.body.setGuard; }
   private dutyView(): Pick<CompanionState, 'guardEnabled' | 'guard'> {
-    if (!this.duty) return { guardEnabled: false };
+    if (!this.duty) return { guardEnabled: false, guard: undefined };
     const live = this.dutyState;
     return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}) }
       : { state: 'idle', hits: 0, kills: 0, shots: 0, retreats: 0, damage: 0, player: this.duty.player } };
   }
-  /** Turn the guard duty on for this player (or change its options); off when options is undefined. */
-  private async setDuty(player?: string, entityId?: string, options?: GuardOptions): Promise<void> {
-    if (!options || !player || !entityId) {
-      if (!this.duty) return;
-      this.duty = undefined; this.dutyState = undefined; this.lastGuard = undefined; this.fight = undefined;
-      this.observationRevision++;
-      await this.body.setGuard!({ off: true });
-      return;
+  private clearDutyState(): void {
+    this.duty = undefined; this.dutyState = undefined; this.lastGuard = undefined; this.fight = undefined;
+    this.observationRevision++;
+  }
+  private checkDuty(revision: number): void {
+    if (revision !== this.dutyRevision) throw new BodyError('CANCELLED', '保护请求已被更新的设置或停止取代');
+  }
+  /** Keep confirmed state until an off succeeds; even an unacknowledged on must be fenced by an off. */
+  private async setDuty(player?: string, entityId?: string, options?: GuardOptions, revision = ++this.dutyRevision): Promise<void> {
+    this.checkDuty(revision);
+    const off = !options || !player || !entityId;
+    const reply = await this.body.setGuard!(off ? { off: true } : { player, expectedEntityId: entityId, options });
+    this.checkDuty(revision);
+    if (off) {
+      if (reply.enabled) throw new BodyError('INVALID_RESPONSE', '保护关闭尚未确认');
+      this.clearDutyState(); return;
     }
-    const reply = await this.body.setGuard!({ player, expectedEntityId: entityId, options });
     if (!reply.enabled) throw new BodyError('INVALID_RESPONSE', '保护没有打开');
     if (this.duty?.player !== player) { this.lastGuard = undefined; this.fight = undefined; }
     this.duty = { player, entityId, options }; this.dutyState = reply;
@@ -347,22 +355,26 @@ export class CompanionMode {
   }
   /** companion-mode guard on a guard-duty body: protection on, changed or off, for the followed player or a named one; the follow or wait is not touched. */
   private async requestDuty(request: CompanionRequest): Promise<CompanionState> {
+    const epoch = this.epoch, revision = ++this.dutyRevision;
     if (request.guard === false) {
-      await this.say(this.epoch, request.say); await this.setDuty();
+      await this.say(epoch, request.say); this.check(epoch); this.checkDuty(revision);
+      await this.setDuty(undefined, undefined, undefined, revision);
       this.publish({ ...this.value, ...this.dutyView() }); return this.snapshot();
     }
     const player = request.player ?? (this.intent?.action === 'follow' ? this.intent.player : this.duty?.player);
     if (!player) throw new BodyError('INVALID_ARGUMENT', '没在跟随时开保护，要用 player 说明保护谁');
     if (!/^[A-Za-z0-9_]{1,16}$/.test(player)) throw new BodyError('INVALID_ARGUMENT', 'player 是游戏名');
     const options = this.guardFor(request.guard, this.duty?.player === player ? this.duty.options : undefined) ?? {};
-    const state = await this.body.observe();
+    const state = await this.body.observe(); this.check(epoch); this.checkDuty(revision);
     const entityId = this.identity(state, player, player === this.intent?.player ? this.intent?.expectedEntityId : undefined);
-    await this.say(this.epoch, request.say);
-    await this.setDuty(player, entityId, options);
+    await this.say(epoch, request.say); this.check(epoch); this.checkDuty(revision);
+    await this.setDuty(player, entityId, options, revision);
     this.publish({ ...this.value, ...this.dutyView() }); return this.snapshot();
   }
-  /** stop-action: the player's halt also ends protection (a reflex stop does not). */
-  async dropGuard(): Promise<void> { if (this.dutyMode() && this.duty) { await this.setDuty(); this.publish({ ...this.value, ...this.dutyView() }); } }
+  /** An off fences in-flight setup too; absence of a local acknowledgement is not absence of a server duty. */
+  async dropGuard(): Promise<void> {
+    if (this.dutyMode()) { await this.setDuty(); this.publish({ ...this.value, ...this.dutyView() }); }
+  }
   private observeDuty(state: Observation): void {
     if (!this.duty) return;
     if (!state.guard) {
@@ -558,7 +570,7 @@ export class CompanionMode {
   /** Lease/process loss is terminal; no persisted or automatic resume. */
   fail(error: Error, operation?: Operation, controlLost = false): void {
     const code = error instanceof BodyError ? error.code : 'INVALID_RESPONSE';
-    if (['idle', 'stopped'].includes(this.value.state) && !this.intent && !this.token) return;
+    if (['idle', 'stopped'].includes(this.value.state) && !this.intent && !this.token && !this.duty) { if (controlLost) ++this.dutyRevision; return; }
     ++this.epoch; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     this.observationRevision++;
     if (this.childActive) { this.gather.cancel(); this.childActive = false; }
@@ -571,7 +583,7 @@ export class CompanionMode {
       if (['PICKUP_GAP', 'PICKUP_UNKNOWN', 'UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'LEASE_EXPIRED', 'INVALID_RESPONSE', 'TRANSPORT_LOST', 'STOP_UNCONFIRMED'].includes(code)) this.mining.state.countStatus = 'partial-or-unknown';
     }
     const terminal = controlLost || terminalControl.has(code);
-    if (terminal) { this.intent = undefined; this.duty = undefined; this.dutyState = undefined; }
+    if (terminal) { ++this.dutyRevision; this.intent = undefined; this.clearDutyState(); }
     if (!this.stopUnconfirmed) this.release(); this.terminal = operation;
     this.publish({ ...this.base(terminal ? 'stopped' : 'blocked'), ...(operation ? { operationId: operation.operationId } : {}), code, reason: error.message }, false);
     const failureState = this.snapshot();
@@ -581,8 +593,9 @@ export class CompanionMode {
     if (terminal) { this.pickup = undefined; void this.body.close().catch(() => {}); }
   }
   /** Explicit stop clears intent synchronously and keeps the lock until in-flight work is fenced. */
-  stop(reason?: string): Promise<{ stopped: true }> {
-    if (this.stopping) return this.stopping;
+  stop(reason?: string, options: StopOptions = {}): Promise<{ stopped: true }> {
+    if (this.stopping) return options.clearGuard ? this.stopping.then(() => this.stop(reason, options)) : this.stopping;
+    const dutyRevision = options.clearGuard ? ++this.dutyRevision : undefined;
     ++this.epoch; this.intent = undefined; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     const owner = this.beginChange();
     const token = this.token, miningState = this.mining ? { ...this.miningState(), active: false, disabledReason: 'STOPPED' } : undefined;
@@ -593,8 +606,10 @@ export class CompanionMode {
     if (this.value.state !== 'idle' && this.value.state !== 'stopped') this.publish({ state: 'stopped', ...(reason ? { reason } : {}), ...(miningState ? { mining: miningState } : {}) });
     const stopping = (async () => {
       try {
-        const result = await this.body.stop();
+        const result = await this.body.stop(options);
         if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '身体停止未确认；保留陪伴写锁');
+        // A guard setting made after this stop was sent wins on the server too; keep its local state.
+        if (dutyRevision === this.dutyRevision) this.clearDutyState();
         this.gather.stopped(); this.stopUnconfirmed = false; this.release(token); return result;
       } catch (error) { this.stopUnconfirmed = true; throw error; }
     })().finally(() => { if (this.stopping === stopping) this.stopping = undefined; this.finishChange(owner); });
@@ -668,16 +683,19 @@ export class CompanionMode {
   }
   /** companion-mode stop: the follow/wait is over; whatever else is running keeps going. */
   private async endCompanion(say?: string): Promise<CompanionState> {
+    const revision = ++this.dutyRevision, epoch = this.epoch;
     const guarded = this.dutyMode() && !!this.duty;
     const message = `跟随／等待已结束（companion-mode stop）${guarded ? '，保护也关了' : ''}；正在做的其他任务不受影响。要再跟随需要新的 follow。`;
     if (!this.intent && ['idle', 'stopped'].includes(this.value.state)) {
-      if (say) await this.say(this.epoch, say);
+      if (say) await this.say(epoch, say);
+      this.check(epoch); this.checkDuty(revision);
       // Not following or waiting, but protecting: "stop" ends that too (the player's choice, docs/companion_state_design.md 6.1).
-      if (guarded) { await this.setDuty(); this.publish({ ...this.value, ...this.dutyView(), reason: '保护已关（companion-mode stop）' }); return this.snapshot(); }
+      if (this.dutyMode()) { await this.setDuty(undefined, undefined, undefined, revision); this.publish({ ...this.value, ...this.dutyView(), reason: '保护已关（companion-mode stop）' }); return this.snapshot(); }
       return { ...this.snapshot(), reason: '当前没有跟随或等待，什么都没改' };
     }
-    if (say) await this.say(this.epoch, say);
-    if (guarded) await this.setDuty();
+    if (say) await this.say(epoch, say);
+    this.check(epoch); this.checkDuty(revision);
+    if (this.dutyMode()) await this.setDuty(undefined, undefined, undefined, revision);
     if (['following', 'waiting'].includes(this.value.state)) { await this.stop(message); return this.snapshot(); }
     // Paused (also stepping aside) or blocked: nothing of ours runs on the body, so only the intent goes.
     const owner = this.beginChange();

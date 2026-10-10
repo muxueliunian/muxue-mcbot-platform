@@ -23,7 +23,8 @@
 | machine-status | `{instanceId,sessionId,leaseId,x,y,z}` | 只读（8b，10-09）：不走过去、不打开界面读一台机器的内容和进度，给运行端的“放好就走、到时回来取”用，不占动作、不打断正在做的事。只认身体所在维度、水平 256 格内（OUT_OF_REACH）；区块没加载回 `state:"unloaded"`（没加载的机器不工作，时间也不走）；加载了回 `id`，以及 `supported`（这个方块的工作站适配实现了 `progress`，现在是原版熔炉、烟熏炉、高炉和酿造台）、`machine`、`inputs`、`results`、`fuel`、`working`、`ticksLeft`／`secondsLeft`（照这样一直工作还要多久）、`fuelTicks`（燃料还够烧多少 tick）、`stalled`（还有料但没在工作：没燃料或出口满了） |
 | act | `{instanceId,sessionId,leaseId,controlGeneration,operationId,name,args}` | 现有 Operation 字段，另含 controlGeneration；同 ID 同内容返回原结果，异内容拒绝。动作按原生字段比较，不哈希；结果缓存淘汰后同 ID 也不能重新执行 |
 | operation | `{instanceId,sessionId,leaseId,operationId}` | 对应当前租约的 Operation；不以查询续租 |
-| stop | `{instanceId,sessionId,leaseId}` | `{stopped:true,controlGeneration}`；取消当前操作、推进代次、角色保持在线，旧代次 act 拒绝；同一租约后续明确新动作可执行 |
+| stop | `{instanceId,sessionId,leaseId,clearGuard?,guardRevision?}` | `{stopped:true,controlGeneration}`；取消当前操作、推进代次、角色保持在线，旧代次 act 拒绝；`guard-duty-fenced`支持`clearGuard:true`连同必填`guardRevision`在同一请求中清保护（停止本身从不因序号被拒，序号已被更新的设置超过时只停不清）；省略则保留保护意图 |
+| guard | `{instanceId,sessionId,leaseId,guardRevision,player?,expectedEntityId?,options?,off?}` | `guard-duty-fenced`保护配置；开启返回保护状态和`guardRevision`，关闭返回`{enabled:false,guardRevision}`；不占操作 ID 预算，见常驻保护一节 |
 | release | `{instanceId,sessionId,leaseId}` | `{released:true}`；仅停止并放弃这一份控制权，角色保留；旧 lease 不能影响新 lease |
 | revoke | `{instanceId,sessionId,leaseId,stopToken,leave?}` | `{stopped:true,revoked:true,left}`；宿主专用，仅撤销指定租约，角色默认保留；不能接管／移动，不续租。已释放的匹配旧租约可幂等确认，但绝不影响新租约。`leave:true`（宿主退出时用）同时让角色像玩家一样下线（原版存档），只在没有别的租约时生效，`left`说明这次是否真的下线；下次 claim 在原地重新上线 |
 | watch | `{instanceId,sessionId,leaseId,stopToken}` | `{chat,chatCursor}`；宿主只读新聊天，用于 MCP 不响应时直接叫停，不续租、不创建角色。也接受同 instance/session 下最近已撤销／释放／过期的租约，前提没有不同的新有效租约；新 claim 或角色代次变化即使旧 watch 失效。chat 格式同 Observation |
@@ -277,15 +278,18 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 
 ### 常驻保护（8m 第一步第一块，2026-10-10）
 
-设计见[陪伴状态设计](companion_state_design.md)第 5 节。能力标记`guard-duty`：保护不再挂在`follow-companion`操作上，而是租约上的一项常驻职责，战斗逻辑和上面 8h 的一样（`GuardCombat`）。
+设计见[陪伴状态设计](companion_state_design.md)第 5 节。能力标记`guard-duty-fenced`（第一块用过的`guard-duty`已不再声明）：保护不再挂在`follow-companion`操作上，而是租约上的一项常驻职责，战斗逻辑和上面 8h 的一样（`GuardCombat`），并支持下面的请求排序和原子清除。
 
-- **方法`guard`**（要租约，和`heartbeat`一样校验 instance／session／lease；**不是操作**，不占操作 ID 预算，正在跑的操作不会让它报`BUSY`）：`{player, expectedEntityId, options?}`打开或替换（`options`同 8h 的`guard`对象，省略用默认值），玩家不在 32 格内报`PLAYER_NOT_VISIBLE`，UUID 不符报`STALE_TARGET`；`{off:true}`关掉，返回`{enabled:false}`。
-- **生命周期**：`stop`（代次加一）不清保护，只打断正在进行的战斗，下一刻照常判断；`revoke`、`release`、新的`claim`、租约过期、身体死亡／换维度／移除时清掉。
+- **方法`guard`**（要租约，校验 instance／session／lease，不看`controlGeneration`；**不是操作**，不占操作 ID 预算）：`{player, expectedEntityId, options?}`打开或替换（`options`同 8h 的`guard`对象，省略用默认值），玩家不在 32 格内报`PLAYER_NOT_VISIBLE`，UUID 不符报`STALE_TARGET`；`{off:true}`关掉。所有请求还必须带`guardRevision`，回执带同一序号。运行中的普通操作不阻止配置；HTTP 队列仍可能报`BUSY`，原生写入尚未返回时不能确认停稳或开启替代职责。
+- **配置排序**：每份新租约从 0 开始记录`guardRevision`；每次配置及`stop(clearGuard:true)`携带严格递增的正安全整数，不复用序号。`guard`的序号小于或等于已接受序号报`CANCELLED`；接受序号后即使后续参数／原生检查失败也不回退。顺序只看序号：后到的旧开启不能越过新的关闭或`stop(clearGuard)`；普通 stop 保留保护意图，所以它前后到达的配置（开或关）照常生效。运行端同时撤销等待观察／聊天的旧配置，并丢弃被取代的迟到回执，不自动重放开启。
+- **生命周期**：普通`stop`（代次加一）保留保护意图，只打断正在进行的执行，后续 tick 可重新判断；`stop`带`clearGuard:true`及新`guardRevision`时，在同一服务端请求中停止操作并清保护，确认后才返回`stopped:true`；序号已被更新的设置超过时照样停止，但保留那个更新的设置。`revoke`、`release`、新的`claim`、租约过期、身体死亡／换维度／移除时也清掉。
+- **原生撤销**：意图绑定原租约和身体会话，当前战斗另持可撤销的执行授权。普通 stop、off 或替换配置立即使旧攻击 scope 的授权失效；后续 tick 或新租约不能复活旧 scope。原生攻击回调内重入停止／关闭时先撤销，调用栈尚未退出仍报`STOP_UNCONFIRMED`，已发生的伤害仅保留为旧执行的只读回执。
 - **观察**：保护开着时`observe`多一个`guard`：`{enabled:true, player, entityId, options, covering, reason?, returning, busyMs, state, target?, targetId?, hits, damage, shots, kills, retreats}`。`covering:false`时`reason`是`PLAYER_AWAY`（下线、换维度、超出 32 格）、`TOO_FAR`（Bot 离玩家超过 16 格）、`BUSY`（正在做的事不能打断）或`NO_CONTROL`；玩家回来后自动接着保护。`busyMs`是累计打架时长，以后给任务顺延期限用。
 - **什么时候接管身体**：Bot 离玩家 16 格内，且此刻没有操作在跑（空闲，或运行端在原地等待），或者在跑的是不带自己保护的`follow-companion`；在吃东西、挖掘、自卫（原生使用或写入中）、睡觉、开着界面时不接管。这一块里别的任务（建筑、采集、走路、长途走、工作站……）还不能被打断，保护等它们做完（`reason:BUSY`），这期间只有 3 格近身自卫；任务打断在下一块做。
 - **打完以后**：跟随时交还给跟随，跟随重新算路线，打架时挨的伤不再算作跟随受伤；空闲时走回开始打之前站的地方（1.2 格内算到，最多 15 秒，走不到就留在原地）。跟随在保护同一个玩家时挨打不会结束跟随。
-- **运行端**：身体有`guard-duty`时，`companion-mode follow`的保护（默认开，`guard:false`关）变成在开始跟随时调`guard`，`follow-companion`不再带`guard`；跟随让开、改成原地等待都不动保护；`companion-mode guard`不需要先跟随，没跟随时带`player`；`companion-mode stop`和`stop-action`关掉保护，反射引起的停止不关。`guard`事件从观察里的`guard`生成，规则同 8h；服务端那边保护没了（换过控制权等）时发一条`guard`事件说明。保护覆盖时 3 格近身自卫不插手，不覆盖时照常；保护在打时普通进食等打完，紧急进食照旧。
-- 旧路径保留：身体没有`guard-duty`时运行端照旧把保护放进`follow-companion`。
+- **运行端**：身体有`guard-duty-fenced`时，`companion-mode follow`的保护（默认开，`guard:false`关）变成在开始跟随时调`guard`，`follow-companion`不再带`guard`；跟随让开、改成原地等待都不动保护；`companion-mode guard`不需要先跟随，没跟随时带`player`；`companion-mode stop`发 off 关保护，`stop-action`使用上述原子停止并清除，反射引起的停止不关。关闭要收到确认才清本地已确认状态；关闭遭`BUSY`（HTTP 队列满）后可显式重试，即使此前开启尚未回执也必须发送关闭。正在停止时也可以发关闭或开启，不报`BUSY`。`guard`事件从观察里的`guard`生成，规则同 8h；服务端那边保护没了（换过控制权等）时发一条`guard`事件说明。保护覆盖时 3 格近身自卫不插手，不覆盖时照常；保护在打时普通进食等打完，紧急进食照旧。
+- **兼容**：新运行端连接没有`guard-duty-fenced`的旧身体（包括只有`guard-duty`的版本）时，回退到`follow-companion.guard`路径；新服务端不再声明`guard-duty`，第一块的旧运行端连上新服务端时也自动回退到这条路径，不需要同步升级。
+- **验证范围**：配置请求／回执乱序、关闭拒绝后重试、停止升级、租约边界及原生回调重入授权撤销均有离线回归；没有本次修复的隔离服实测或真实模型试玩证据，离线夹具不证明真实伤害事件顺序。
 
 ### 试玩反馈修正（2026-10-08）
 

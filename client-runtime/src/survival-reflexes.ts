@@ -1,4 +1,4 @@
-import { BodyError, type Body, type SurvivalState, type Threat, type Operation } from './body.js';
+import { BodyError, type Body, type SurvivalState, type Threat, type Operation, type StopOptions } from './body.js';
 import type { EventJournal } from './events.js';
 import { selectFood, selectThreat, threatRefusal, type DefensePolicy, type SurvivalTasks } from './survival-tasks.js';
 
@@ -27,7 +27,7 @@ export class SurvivalReflexes {
   /** Threats a defense just failed on, left alone until the time given so a refusal is not repeated every tick. */
   private readonly cooling = new Map<string, number>();
   constructor(private readonly body: Body, private readonly tasks: SurvivalTasks, private readonly events: EventJournal, private readonly options: {
-    stopCurrent: () => Promise<{ stopped: true }>; ordinaryBusy: () => boolean;
+    stopCurrent: (options?: StopOptions) => Promise<{ stopped: true }>; ordinaryBusy: () => boolean;
     /** The server guard is fighting for the followed player; the 3-block self-defense stays out of its way. */
     guarding?: () => boolean;
     /** Step a follow aside for a short reflex and return how to let it pick up again (hold keeps it paused when the outcome is unknown), or undefined when something else must be stopped instead. */
@@ -51,7 +51,7 @@ export class SurvivalReflexes {
     const fighting = this.defenseTarget;
     this.disarm('explicit-stop'); const epoch = this.epoch; this.phase = 'stopping';
     try {
-      const result = await this.options.stopCurrent();
+      const result = await this.options.stopCurrent({ clearGuard: true });
       // Stop ends what is running, not the reflexes: a body that was told to stop walking still hits back when attacked.
       // Only the fight it was stopped in pauses for a moment; if that mob keeps at it, defense picks it up again.
       if (epoch === this.epoch) {

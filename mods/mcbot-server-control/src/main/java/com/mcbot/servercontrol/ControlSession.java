@@ -58,7 +58,7 @@ final class ControlSession {
     private final LongSupplier clock;
     final String instanceId=UUID.randomUUID().toString(), worldId, username;
     private String sessionId, leaseId, stopToken, controllerId;
-    private long expiresAt, generation;
+    private long expiresAt, generation, guardRevision;
     private final LinkedHashMap<String,Operation> history=new LinkedHashMap<>();
     private final Set<String> seenIds=new HashSet<>();
     private final ArrayDeque<Retired> retired=new ArrayDeque<>();
@@ -74,10 +74,17 @@ final class ControlSession {
     void expire() {
         if(leaseId!=null&&clock.getAsLong()>=expiresAt) revokeCurrent("Controller lease expired");
     }
-    /** A standing duty (the guard) may drive while the lease is live, whatever the control generation. */
-    boolean mayDriveDuty() {
-        expire();
-        return leaseId!=null&&game.connected();
+    /** Bind standing intent to this exact lease and body session; a later claim never revives it. */
+    java.util.function.BooleanSupplier dutyPermission() {
+        String owner=leaseId,bodySession=sessionId;
+        return ()->{expire();return owner!=null&&owner.equals(leaseId)&&Objects.equals(bodySession,sessionId)&&game.connected();};
+    }
+    /** Guard settings apply in the order the controller issued them: false when a later setting already arrived. */
+    private boolean acceptGuardRevision(JsonObject params) {
+        double requested=number(params,"guardRevision");
+        if(requested<1||requested!=Math.rint(requested)||requested>9_007_199_254_740_991d)throw error("INVALID_ARGUMENT","Invalid guardRevision");
+        if(requested<=guardRevision)return false;
+        guardRevision=(long)requested;return true;
     }
     boolean mayDrive(Operation operation) {
         expire();
@@ -155,7 +162,7 @@ final class ControlSession {
             if(!game.connected()) throw error("WORLD_CHANGED","Cannot claim an unavailable body");
             if(sessionId==null) sessionId=UUID.randomUUID().toString();
             try { game.clearDuty(); } catch(RuntimeException ignored) { }
-            cancel("New explicit claim"); history.clear(); seenIds.clear();
+            cancel("New explicit claim"); history.clear(); seenIds.clear(); guardRevision=0;
             leaseId=UUID.randomUUID().toString(); stopToken=UUID.randomUUID().toString(); controllerId=requestedController;
             expiresAt=clock.getAsLong()+TTL_MS;
             return claimResult();
@@ -186,7 +193,12 @@ final class ControlSession {
         switch(method) {
             case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return withOperationBudget(obj("ttlMs",TTL_MS,"controlGeneration",generation));
             case "release": revokeCurrent("Controller released control");requireNativeStopped(); return obj("released",true);
-            case "stop": cancel("Stopped by controller");requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
+            case "stop": {
+                // The stop itself always happens; protection is cleared unless a later guard setting already arrived.
+                boolean clear=p.has("clearGuard")&&bool(p,"clearGuard")&&acceptGuardRevision(p);
+                try { cancel("Stopped by controller"); } finally { if(clear)game.clearDuty(); }
+                requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
+            }
             case "observe", "nearby-blocks", "nearby-resources", "look-around", "survival-state", "assess-tool", "machine-status": {
                 if(!method.equals("observe")&&!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree(method)))
                     throw error("UNSUPPORTED","Nearby discovery capability is not available");
@@ -206,9 +218,16 @@ final class ControlSession {
             case "watch":
                 if(!stopToken.equals(string(p,"stopToken"))) throw error("FORBIDDEN","Wrong host stop token");
                 return game.watch();
-            case "guard":
-                if(!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree("guard-duty"))) throw error("UNSUPPORTED","Guard duty is not available");
-                return withOperationBudget(game.guard(p));
+            case "guard": {
+                if(!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree("guard-duty-fenced"))) throw error("UNSUPPORTED","Guard duty is not available");
+                boolean off=p.has("off")&&bool(p,"off");
+                if(!acceptGuardRevision(p))throw error("CANCELLED","Guard request was superseded by a newer setting or stop");
+                // Off withdraws intent immediately, but cannot acknowledge completion inside a native write.
+                if(!off)requireNativeStopped();
+                JsonObject result=game.guard(p);
+                requireNativeStopped();result.addProperty("guardRevision",guardRevision);
+                return withOperationBudget(result);
+            }
             case "operation", "act": return operation(method,p);
             default: throw error("INVALID_ARGUMENT","Unknown protocol method");
         }

@@ -5,6 +5,9 @@ import { CompanionMode } from '../dist/companion-mode.js';
 import { ServerBody } from '../dist/server-body.js';
 import { RuntimeMonitor } from '../dist/lifecycle.js';
 import { EventJournal } from '../dist/events.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createMcpServer } from '../dist/mcp.js';
 import { mockServerControl } from './mock-server-control.mjs';
 
 // Bodies with guard-duty keep protection as a standing duty, not inside the follow (docs/companion_state_design.md, section 5).
@@ -12,19 +15,33 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { for (let i = 0; i < 400; i++) { if (check()) return; await delay(5); } assert.fail('condition did not become observable'); }
 const alex = randomUUID(), sam = randomUUID();
 const idle = { state: 'idle', hits: 0, kills: 0, shots: 0, retreats: 0, damage: 0, busyMs: 0 };
-async function fixture(t) {
+async function fixture(t, fenced = true) {
   const mock = await mockServerControl();
   mock.setState({ entities: [
     { id: alex, name: 'Alex', type: 'minecraft:player', position: { x: 3, y: 64, z: 0 } },
     { id: sam, name: 'Sam', type: 'minecraft:player', position: { x: -3, y: 64, z: 0 } },
   ] });
-  let duty = null;
+  let duty = null, guardRevision = 0;
   const hello = mock.handlers.hello;
-  mock.handlers.hello = () => ({ ...hello(), capabilities: ['send-chat', 'look-at', 'move-to-position', 'follow-companion', 'nearby-blocks', 'companion-guard', 'guard-duty'] });
+  mock.handlers.hello = () => ({ ...hello(), capabilities: ['send-chat', 'look-at', 'move-to-position', 'follow-companion', 'nearby-blocks', 'companion-guard', fenced ? 'guard-duty-fenced' : 'guard-duty'] });
+  // Like ControlSession: settings and clearing stops apply in revision order; a clearing stop itself is never refused.
+  const acceptRevision = params => {
+    if (!Number.isSafeInteger(params.guardRevision) || params.guardRevision < 1) throw Object.assign(new Error('bad revision'), { code: 'INVALID_ARGUMENT' });
+    if (params.guardRevision <= guardRevision) return false;
+    guardRevision = params.guardRevision; return true;
+  };
   mock.handlers.guard = params => {
-    if (params.off) { duty = null; return { enabled: false }; }
+    if (!acceptRevision(params)) throw Object.assign(new Error('superseded'), { code: 'CANCELLED' });
+    if (params.off) { duty = null; return { enabled: false, guardRevision }; }
     duty = { enabled: true, player: params.player, entityId: params.expectedEntityId, options: params.options, covering: true, ...idle };
-    return duty;
+    return { ...duty, guardRevision };
+  };
+  const stop = mock.handlers.stop;
+  mock.handlers.stop = params => {
+    const clear = params.clearGuard === true && acceptRevision(params);
+    const result = stop(params);
+    if (clear) duty = null;
+    return result;
   };
   const observe = mock.handlers.observe;
   mock.handlers.observe = params => ({ ...observe(params), ...(duty ? { guard: duty } : {}) });
@@ -43,7 +60,7 @@ async function fixture(t) {
   t.after(async () => { monitor.stop(); await body.close(); await mock.close(); });
   const guardCalls = () => mock.calls.filter(call => call.method === 'guard').map(call => call.params);
   const follows = () => mock.calls.filter(call => call.method === 'act' && call.params.name === 'follow-companion').map(call => call.params.args);
-  return { mock, mode, events, monitor, guardCalls, follows,
+  return { mock, body, mode, events, monitor, guardCalls, follows,
     duty: () => duty, setDuty: next => { duty = next === null ? null : { ...duty, ...next }; },
     follow: async request => { await mode.request({ action: 'follow', player: 'Alex', ...request }); await until(() => mode.snapshot().stage === 'active'); } };
 }
@@ -130,4 +147,149 @@ test('fights reported by the duty wake the model once; a duty the server dropped
   await f.monitor.tick();
   assert.equal(f.mode.snapshot().guardEnabled, false);
   assert.match(guardEvents().at(-1), /保护已经停了/);
+});
+
+async function mcp(t, f) {
+  const server = createMcpServer(f.body, f.events, { companion: f.mode });
+  const [left, right] = InMemoryTransport.createLinkedPair(), client = new Client({ name: 'guard-lifecycle', version: '1' });
+  await server.connect(left); await client.connect(right);
+  t.after(async () => { await client.close(); await server.close(); });
+  return async (name, args = {}) => { const r = await client.callTool({ name, arguments: args }); return { error: r.isError === true, result: JSON.parse(r.content[0].text) }; };
+}
+function gate() { let release; const wait = new Promise(resolve => { release = resolve; }); return { wait, release }; }
+const startGuard = { action: 'guard', player: 'Alex', guard: true };
+
+test('stop-action fences setup awaiting observation and still permits a fresh guard command', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  let entered = false;
+  const observe = f.mock.handlers.observe;
+  f.mock.handlers.observe = async p => { entered = true; await delayed.wait; return observe(p); };
+  const pending = call('companion-mode', startGuard);
+  await until(() => entered);
+  assert.equal((await call('stop-action')).result.stopped, true);
+  delayed.release();
+  assert.equal((await pending).result.code, 'CANCELLED');
+  assert.equal(f.duty(), null); assert.equal(f.guardCalls().length, 0);
+  assert.equal((await call('companion-mode', startGuard)).error, false);
+  assert.equal(f.duty().player, 'Alex');
+});
+
+for (const stop of ['stop-action', 'companion-mode stop', 'guard false']) {
+  for (const afterApply of [false, true]) {
+    test(`${stop} defeats an in-flight on delayed ${afterApply ? 'after' : 'before'} server acceptance`, async t => {
+      const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+      let entered = false;
+      const guard = f.mock.handlers.guard;
+      f.mock.handlers.guard = async p => {
+        if (p.off) return guard(p);
+        entered = true;
+        if (afterApply) { const result = guard(p); await delayed.wait; return result; }
+        await delayed.wait; return guard(p);
+      };
+      const pending = call('companion-mode', startGuard);
+      await until(() => entered);
+      const stopped = stop === 'stop-action' ? await call(stop) : await call('companion-mode', stop === 'guard false' ? { action: 'guard', guard: false } : { action: 'stop' });
+      assert.equal(stopped.error, false);
+      delayed.release();
+      assert.equal((await pending).result.code, 'CANCELLED');
+      assert.equal(f.duty(), null); assert.equal(f.mode.snapshot().guardEnabled, false);
+      if (stop === 'stop-action') {
+        assert.equal(f.mock.calls.filter(c => c.method === 'stop').at(-1).params.clearGuard, true);
+        assert.equal(f.guardCalls().some(p => p.off), false, 'stop and clear are one protocol request');
+      }
+    });
+  }
+}
+
+test('off rejected with BUSY keeps confirmed protection and can be retried', async t => {
+  const f = await fixture(t), call = await mcp(t, f);
+  await call('companion-mode', startGuard);
+  const guard = f.mock.handlers.guard; let offs = 0;
+  f.mock.handlers.guard = p => { if (p.off && ++offs === 1) throw Object.assign(new Error('queue full'), { code: 'BUSY' }); return guard(p); };
+  assert.equal((await call('companion-mode', { action: 'guard', guard: false })).result.code, 'BUSY');
+  assert.equal(f.mode.snapshot().guardEnabled, true);
+  await f.monitor.tick();
+  assert.equal((await call('companion-mode', { action: 'guard', guard: false })).error, false);
+  assert.equal(offs, 2); assert.equal(f.duty(), null);
+  assert.equal(f.mode.snapshot().guardEnabled, false); assert.equal(f.mode.snapshot().guard, undefined);
+});
+
+test('a delayed old off reply cannot overwrite a newer guard configuration', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  await call('companion-mode', startGuard);
+  let entered = false; const guard = f.mock.handlers.guard;
+  f.mock.handlers.guard = async p => { const result = guard(p); if (p.off) { entered = true; await delayed.wait; } return result; };
+  const oldOff = call('companion-mode', { action: 'guard', guard: false });
+  await until(() => entered);
+  assert.equal((await call('companion-mode', { ...startGuard, player: 'Sam' })).error, false);
+  delayed.release(); assert.equal((await oldOff).result.code, 'CANCELLED');
+  assert.equal(f.duty().player, 'Sam'); assert.equal(f.mode.snapshot().guard.player, 'Sam');
+});
+
+test('a stronger stop during an ordinary stop still clears standing protection', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  await call('companion-mode', startGuard);
+  let entered = false; const stop = f.mock.handlers.stop;
+  f.mock.handlers.stop = async p => { const result = stop(p); if (!p.clearGuard) { entered = true; await delayed.wait; } return result; };
+  const ordinary = f.mode.stop('reflex');
+  await until(() => entered);
+  const explicit = call('stop-action'); delayed.release();
+  await ordinary; assert.equal((await explicit).result.stopped, true);
+  assert.equal(f.duty(), null); assert.equal(f.mode.snapshot().guardEnabled, false);
+});
+
+test('an ordinary stop preserves an already accepted guard whose acknowledgement is delayed', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  let entered = false; const guard = f.mock.handlers.guard;
+  f.mock.handlers.guard = async p => { const result = guard(p); entered = true; await delayed.wait; return result; };
+  const pending = call('companion-mode', startGuard);
+  await until(() => entered);
+  await f.mode.stop('reflex');
+  delayed.release();
+  assert.equal((await pending).error, false);
+  assert.equal(f.duty().player, 'Alex'); assert.equal(f.mode.snapshot().guardEnabled, true);
+});
+
+test('loss of control clears standalone protection even without a follow intent', async t => {
+  const f = await fixture(t);
+  await f.mode.request(startGuard);
+  f.mode.fail(new Error('controller lost'), undefined, true);
+  assert.equal(f.mode.snapshot().guardEnabled, false);
+  assert.equal(f.mode.snapshot().state, 'stopped');
+});
+
+test('an older guard-duty server uses the existing guarded-follow path', async t => {
+  const f = await fixture(t, false);
+  await f.follow();
+  assert.equal(f.guardCalls().length, 0);
+  assert.deepEqual(f.follows()[0].guard, {});
+  await assert.rejects(f.body.setGuard({ off: true }), { code: 'UNSUPPORTED' });
+});
+
+test('companion-mode stop during an in-flight ordinary stop still ends the follow and protection', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  await f.follow();
+  assert.equal(f.duty().player, 'Alex');
+  let entered = false; const stop = f.mock.handlers.stop;
+  f.mock.handlers.stop = async p => { entered = true; await delayed.wait; return stop(p); };
+  const ordinary = f.body.stop();
+  await until(() => entered);
+  const ended = call('companion-mode', { action: 'stop' });
+  await until(() => f.guardCalls().some(p => p.off));
+  delayed.release(); await ordinary;
+  assert.equal((await ended).error, false);
+  assert.equal(f.duty(), null); assert.equal(f.mode.snapshot().guardEnabled, false);
+});
+
+test('an off overtaken at the server by an ordinary stop still turns protection off', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  await call('companion-mode', startGuard);
+  let entered = false; const guard = f.mock.handlers.guard;
+  f.mock.handlers.guard = async p => { if (p.off) { entered = true; await delayed.wait; } return guard(p); };
+  const off = call('companion-mode', { action: 'guard', guard: false });
+  await until(() => entered);
+  await f.body.stop();
+  delayed.release();
+  assert.equal((await off).error, false);
+  assert.equal(f.duty(), null); assert.equal(f.mode.snapshot().guardEnabled, false);
 });

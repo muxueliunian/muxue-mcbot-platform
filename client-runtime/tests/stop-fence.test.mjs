@@ -52,9 +52,13 @@ test('craft-item with say: a stop while the chat is in flight cancels the later 
 
 test('repeated right-click stops submitting once stop-action ran between attempts', async t => {
   const { body, acts } = await setup(t, ['use-item-on-block'], { interactions: ['example:pot/stir'] });
+  let received;
+  const firstReceipt = new Promise(resolve => { received = resolve; }), act = body.act.bind(body);
+  body.act = async (...args) => { const result = await act(...args); received(); return result; };
   const c = await client(t, body);
   const stirring = raw(c, 'interact-block', { x: 1, y: 64, z: 0, interaction: 'example:pot/stir', item: 'minecraft:wheat_seeds', repeatUntil: { field: 'stirsLeft', equals: 0, max: 8, intervalMs: 300 } });
-  await until(() => acts().length === 1);
+  // Wait for the first accepted receipt, not just HTTP arrival (which can still be cancelled in flight).
+  await firstReceipt;
   await raw(c, 'stop-action');
   const result = await stirring;
   assert.equal(result.isError, true); assert.equal(result.body.code, 'CANCELLED');

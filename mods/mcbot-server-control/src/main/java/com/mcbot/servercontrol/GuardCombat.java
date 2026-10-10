@@ -87,6 +87,7 @@ final class GuardCombat {
         void lowerShield();
     }
     private final View view;
+    private final GuardExecution execution;
     final Options options;
     private Foe target,lastHitFoe;
     private String state="idle";
@@ -95,7 +96,8 @@ final class GuardCombat {
     private long engagedAt,lastHitAt;
     private int hits,kills,shots,retreats;
     private double damage;
-    GuardCombat(View view,Options options){this.view=view;this.options=options;}
+    GuardCombat(View view,Options options){this(view,options,new GuardExecution(()->true));}
+    private GuardCombat(View view,Options options,GuardExecution execution){this.view=view;this.options=options;this.execution=execution;}
     String state(){return state;}
     JsonObject json() {
         JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"options",options.json());
@@ -104,6 +106,13 @@ final class GuardCombat {
     }
     /** True when the guard drove the body this tick; false leaves the tick to the ordinary follow. */
     boolean tick(Vec3 companion) {
+        var permission=execution.capture();
+        if(!permission.getAsBoolean())return false;
+        try {return tick(companion,permission)&&permission.getAsBoolean();}
+        catch(Protocol.Error failure){if(!permission.getAsBoolean())return false;throw failure;}
+    }
+    private static void requireDrive(java.util.function.BooleanSupplier permission){if(!permission.getAsBoolean())throw error("CANCELLED","Guard execution was interrupted");}
+    private boolean tick(Vec3 companion,java.util.function.BooleanSupplier permission) {
         long now=view.now();
         noPath.values().removeIf(at->now-at>NO_PATH_MS);
         if(lastHitFoe!=null) {
@@ -119,7 +128,7 @@ final class GuardCombat {
         if(boom!=null||retreating) {
             Foe from=boom!=null?boom:nearest;
             if(from==null||from.distance()>12){settle();return false;}
-            backOff(from,companion,boom!=null&&!retreating?"evading":"retreating");
+            backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",permission);
             return true;
         }
         Foe chosen=choose(foes);
@@ -131,33 +140,34 @@ final class GuardCombat {
         boolean melee=chosen.distance()<=MELEE_RANGE&&view.inReach(chosen);
         int drawn=view.drawing();
         if(!melee&&shouldShoot(chosen,drawn>=0)&&view.armBow()) {
-            view.stopMoving();view.lowerShield();
+            requireDrive(permission);view.stopMoving();view.lowerShield();
             if(!view.clearShot(chosen)) {
                 // Hold the draw while someone stands in the way; give up only after a long wait.
                 if(drawn>=0&&drawn<MAX_DRAW)view.draw(chosen);else view.cancelDraw();
-                state="aiming";return true;
+                requireDrive(permission);state="aiming";return true;
             }
             if(drawn<0)view.draw(chosen);
             else if(drawn>=FULL_DRAW){view.release(chosen);shots++;lastHitFoe=chosen;lastHitAt=now;}
             else view.draw(chosen);
-            state="shooting";return true;
+            requireDrive(permission);state="shooting";return true;
         }
-        view.cancelDraw();
+        requireDrive(permission);view.cancelDraw();
         if(melee) {
             view.stopMoving();
             if(!view.armMelee()){noPath.put(chosen.identity(),now);settle();return false;}
+            requireDrive(permission);
             if(view.cooledDown()) {
                 view.lowerShield();
                 float dealt=view.attack(chosen);
                 if(dealt>0){hits++;damage+=dealt;lastHitFoe=chosen;lastHitAt=now;}
-            } else if(options.shield()&&chosen.targetingSelf()&&view.armShield())view.raiseShield(chosen);
-            state="fighting";return true;
+            } else if(options.shield()&&chosen.targetingSelf()&&view.armShield()){requireDrive(permission);view.raiseShield(chosen);}
+            requireDrive(permission);state="fighting";return true;
         }
         if(chosen.flying()){settle();return false;} // nothing to walk to; wait for it to swoop into reach
         view.lowerShield();
         try {view.approach(chosen,companion,options.leash());}
         catch(Protocol.Error blocked){noPath.put(chosen.identity(),now);view.stopMoving();settle();return false;}
-        state="approaching";return true;
+        requireDrive(permission);state="approaching";return true;
     }
     private boolean shouldShoot(Foe foe,boolean drawing) {
         if(!options.bow()||!foe.visible()||foe.distance()>BOW_MAX||!view.hasBow())return false;
@@ -172,12 +182,13 @@ final class GuardCombat {
         if(target!=null)for(Foe foe:able)if(foe.identity()==target.identity())return foe;
         return able.stream().min(Comparator.comparing((Foe f)->!f.targetingCompanion()).thenComparing(f->!f.targetingSelf()).thenComparingDouble(Foe::companionDistance)).orElse(null);
     }
-    private void backOff(Foe from,Vec3 companion,String next) {
+    private void backOff(Foe from,Vec3 companion,String next,java.util.function.BooleanSupplier permission) {
         view.cancelDraw();target=null;
-        if(options.shield()&&view.armShield())view.raiseShield(from);
+        if(options.shield()&&view.armShield()){requireDrive(permission);view.raiseShield(from);}
+        requireDrive(permission);
         try {view.retreat(retreatPoint(view.position(),from.position(),companion,options.leash()),companion,options.leash());}
         catch(Protocol.Error blocked){view.stopMoving();}
-        state=next;
+        requireDrive(permission);state=next;
     }
     /** Toward the player when that is away from the foe; otherwise straight away from it, kept inside the leash. */
     static Vec3 retreatPoint(Vec3 feet,Vec3 foe,Vec3 companion,double leash) {
@@ -190,7 +201,7 @@ final class GuardCombat {
         return leashed.horizontalDistance()<=leash-1?point:flatCompanion.add(new Vec3(leashed.x,0,leashed.z).normalize().scale(leash-1));
     }
     private void settle(){view.cancelDraw();view.lowerShield();target=null;state="idle";}
-    void stop(){try{view.cancelDraw();view.lowerShield();}finally{view.stopMoving();target=null;state="idle";}}
+    void stop(){execution.interrupt();try{view.cancelDraw();view.lowerShield();}finally{view.stopMoving();target=null;state="idle";}}
 
     /** Full-power arrow pitch (Minecraft sign: negative looks up) that crosses `horizontal` blocks at `dy` above the launch point, or NaN. */
     static double arrowPitch(double horizontal,double dy) {
@@ -260,6 +271,7 @@ final class GuardCombat {
     }
     /** mayDrive: whether the guard may still move and swing (the follow operation is running, or the guard duty's lease is live). */
     static GuardCombat create(BodyPlayer body,java.util.function.BooleanSupplier mayDrive,MinecraftServer server,String companionName,Options options) {
+        GuardExecution execution=new GuardExecution(mayDrive);
         View view=new View() {
             NativeNavigation approach,retreat;Object approaching;
             int sequence;
@@ -293,14 +305,14 @@ final class GuardCombat {
             public boolean dead(Foe foe){return !living(foe).isAlive();}
             public boolean inReach(Foe foe){LivingEntity e=living(foe);return body.canInteractWithEntity(e,0)&&body.hasLineOfSight(e);}
             public boolean approach(Foe foe,Vec3 centre,double leash) {
-                if(approaching!=foe.identity()||approach==null){if(approach!=null)approach.stop();approach=new NativeNavigation(body,mayDrive).tolerateDamage().sprint();approaching=foe.identity();}
+                if(approaching!=foe.identity()||approach==null){if(approach!=null)approach.stop();approach=new NativeNavigation(body,execution.capture()).tolerateDamage().sprint();approaching=foe.identity();}
                 if(retreat!=null){retreat.stop();retreat=null;}
                 LivingEntity e=living(foe);
                 return approach.tick(e.position(),feet->feet.distanceTo(e.position())<=2.4,feet->feet.distanceTo(centre)<=leash);
             }
             public boolean retreat(Vec3 destination,Vec3 centre,double leash) {
                 if(approach!=null){approach.stop();approach=null;approaching=null;}
-                if(retreat==null)retreat=new NativeNavigation(body,mayDrive).tolerateDamage().sprint();
+                if(retreat==null)retreat=new NativeNavigation(body,execution.capture()).tolerateDamage().sprint();
                 return retreat.tick(destination,feet->feet.distanceTo(destination)<=1.2,feet->feet.distanceTo(centre)<=leash+1);
             }
             public void stopMoving() {
@@ -310,6 +322,7 @@ final class GuardCombat {
             }
             /** Bring the stack in `slot` into the hotbar (swapping with an empty slot first, else the selected one) and select it. */
             boolean hold(int slot) {
+                var permission=execution.capture();requireDrive(permission);
                 if(body.containerMenu!=body.inventoryMenu||!body.inventoryMenu.getCarried().isEmpty())return false;
                 int hotbar=slot;
                 if(slot>8) {
@@ -319,6 +332,7 @@ final class GuardCombat {
                     if(menu<0)return false;
                     if(body.isUsingItem())body.stopUsingItem();
                     NativeWorkstation.click(body,body.inventoryMenu,menu,hotbar,ClickType.SWAP);
+                    requireDrive(permission);
                 }
                 if(body.getInventory().selected!=hotbar){if(body.isUsingItem())body.stopUsingItem();body.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket(hotbar));}
                 return body.getInventory().selected==hotbar;
@@ -339,14 +353,15 @@ final class GuardCombat {
             public boolean cooledDown(){return body.getAttackStrengthScale(0.5f)>=1f;}
             public float attack(Foe foe) {
                 LivingEntity e=living(foe);String id=foe.id();float[] dealt={0};RuntimeException[] refused={null};
+                var permission=execution.capture();requireDrive(permission);
                 NativeAttackScope scope=new NativeAttackScope() {
-                    public boolean allowNativeTarget(String targetId){return id.equals(targetId)&&mayDrive.getAsBoolean()&&!protectedEntity(e);}
+                    public boolean allowNativeTarget(String targetId){return id.equals(targetId)&&permission.getAsBoolean()&&!protectedEntity(e);}
                     public void refuseNative(RuntimeException failure){if(refused[0]==null)refused[0]=failure;}
                     public void receipt(String targetId,float amount){if(id.equals(targetId)&&Float.isFinite(amount)&&amount>0)dealt[0]+=amount;}
                 };
                 look(e.getEyePosition());
                 SurvivalActions.scopedAttack(body,scope,()->body.attack(e));
-                if(mayDrive.getAsBoolean())body.swing(InteractionHand.MAIN_HAND,true);
+                if(permission.getAsBoolean())body.swing(InteractionHand.MAIN_HAND,true);
                 return refused[0]==null?dealt[0]:0;
             }
             public boolean hasBow(){return best(GuardCombat::bow,(a,b)->0)>=0&&!body.getProjectile(body.getInventory().getItem(best(GuardCombat::bow,(a,b)->0))).isEmpty();}
@@ -407,6 +422,6 @@ final class GuardCombat {
                 body.setYRot(yaw);body.setYHeadRot(yaw);body.setXRot((float)-Math.toDegrees(Math.atan2(delta.y,delta.horizontalDistance())));
             }
         };
-        return new GuardCombat(view,options);
+        return new GuardCombat(view,options,execution);
     }
 }

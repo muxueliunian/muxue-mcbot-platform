@@ -15,7 +15,7 @@ final class GuardCombatTest {
         long time;Vec3 feet=new Vec3(0,64,0);float health=20;
         final List<GuardCombat.Foe> foes=new ArrayList<>();final Set<Object> dead=new HashSet<>(),blocked=new HashSet<>();
         boolean bow,shield,weapon=true,cooled=true,clear=true,noPath;int drawn=-1;
-        int approaches,retreats,attacks,draws,releases,stops,raised;boolean shieldUp;Vec3 retreatTo;
+        Runnable duringAttack,duringArm;int approaches,retreats,attacks,draws,releases,stops,raised;boolean shieldUp;Vec3 retreatTo;
         public long now(){return time;}
         public Vec3 position(){return feet;}
         public float health(){return health;}
@@ -25,9 +25,9 @@ final class GuardCombatTest {
         public boolean approach(GuardCombat.Foe foe,Vec3 companion,double leash){if(noPath)throw error("NO_PATH","no way");approaches++;return false;}
         public boolean retreat(Vec3 destination,Vec3 companion,double leash){retreats++;retreatTo=destination;return false;}
         public void stopMoving(){stops++;}
-        public boolean armMelee(){return weapon;}
+        public boolean armMelee(){if(duringArm!=null)duringArm.run();return weapon;}
         public boolean cooledDown(){return cooled;}
-        public float attack(GuardCombat.Foe foe){attacks++;return 6;}
+        public float attack(GuardCombat.Foe foe){attacks++;if(duringAttack!=null)duringAttack.run();return 6;}
         public boolean hasBow(){return bow;}
         public boolean armBow(){return bow;}
         public boolean clearShot(GuardCombat.Foe foe){return clear;}
@@ -47,6 +47,7 @@ final class GuardCombatTest {
     static GuardCombat guard(FakeView view){return new GuardCombat(view,GuardCombat.Options.parse(JsonParser.parseString("true")));}
     static final Vec3 COMPANION=new Vec3(-2,64,0);
     static void run() {
+        interruptedExecution();
         options();geometry();melee();preference();bow();retreat();creeper();noPath();friendlyFire();
         System.out.println("GuardCombatTest: "+checks+" checks passed");
     }
@@ -158,4 +159,17 @@ final class GuardCombatTest {
         check(!GuardCombat.blocksFriendlyFire(true,true,false,false),"the body may hurt hostile mobs with its arrows");
         check(!GuardCombat.blocksFriendlyFire(true,true,true,true),"the body's own damage to itself is not blocked");
         check(GuardCombat.BODY_PROJECTILE_TAG.equals("mcbot_body_projectile"),"the projectile tag is stable across a restart");
-    }}
+    }
+    private static void interruptedExecution() {
+        FakeView view=new FakeView();
+        Object identity=new Object();
+        view.foes.add(new GuardCombat.Foe(identity,UUID.randomUUID().toString(),"minecraft:zombie",new Vec3(1,64,0),1,1,true,true,false,false,false,false,true));
+        GuardCombat combat=new GuardCombat(view,GuardCombat.Options.parse(JsonParser.parseString("true")));
+        view.duringArm=combat::stop;
+        check(!combat.tick(new Vec3(0,64,0))&&view.attacks==0,"stop inside equipment callback prevents a later attack in that tick");
+        view.duringArm=null;view.duringAttack=combat::stop;
+        check(!combat.tick(new Vec3(0,64,0))&&combat.state().equals("idle"),"stop inside attack cannot publish fighting again");
+        view.duringAttack=null;
+        check(combat.tick(new Vec3(0,64,0)),"standing intent may fight on a fresh tick after stop");
+    }
+}

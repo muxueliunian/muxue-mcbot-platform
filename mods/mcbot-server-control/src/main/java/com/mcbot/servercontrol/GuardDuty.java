@@ -39,7 +39,8 @@ final class GuardDuty {
     final GuardCombat.Options options;
     private final View view;
     private final Combat combat;
-    private boolean covering,fighting,driving;
+    private boolean covering,fighting,driving,stopped;
+    private long executionRevision;
     private String reason;
     private long fightStart,busyMs,backSince;
     private Vec3 anchor,back;
@@ -52,6 +53,8 @@ final class GuardDuty {
      * walks back to where it stood. Returns true when the duty drove the body this tick (the caller skips everything else).
      */
     boolean tick(boolean interruptible,boolean idle) {
+        if(stopped)return false;
+        long accepted=executionRevision;
         if(!view.mayDrive()){release();covering=false;reason="NO_CONTROL";return false;}
         Vec3 companion=view.companion();
         if(companion==null)return uncovered("PLAYER_AWAY");
@@ -60,6 +63,7 @@ final class GuardDuty {
         covering=true;reason=null;
         Vec3 before=view.position();
         boolean drove=combat.tick(companion);
+        if(stopped||accepted!=executionRevision)return false;
         long now=view.now();
         if(drove) {
             if(!fighting){fighting=true;fightStart=now;anchor=idle?before:null;back=null;}
@@ -71,6 +75,7 @@ final class GuardDuty {
             boolean there;
             try{there=view.position().distanceTo(back)<=BACK_REACH||view.walkBack(back);}
             catch(Protocol.Error noWay){there=true;}
+            if(stopped||accepted!=executionRevision)return false;
             if(there){endBack();return false;}
             driving=true;return true;
         }
@@ -89,9 +94,9 @@ final class GuardDuty {
     }
     private void endBack(){back=null;driving=false;view.stopWalking();}
     /** The body was stopped (any stop): drop the fight and the walk back, keep the duty. */
-    void interrupt(){release();}
+    void interrupt(){executionRevision++;boolean wasFighting=fighting;try{release();}finally{if(!wasFighting)combat.stop();}}
     /** Turned off or the lease ended. */
-    void stop(){try{release();}finally{combat.stop();}}
+    void stop(){stopped=true;interrupt();}
     /** True while the duty is moving the body (fighting or walking back). */
     boolean driving(){return driving;}
     boolean fighting(){return fighting;}

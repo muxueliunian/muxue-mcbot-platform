@@ -93,6 +93,8 @@ test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲�
   assert.match(prompt,/不自动 resume/);
   assert.equal(isWakeEvent({type:'bedtime',text:'天黑了，你在家附近'}),true,'bedtime 要叫醒模型去睡觉');
   assert.equal(isWakeEvent({type:'machine',text:'furnace (1, 64, 2) 烧好了'}),true,'炉子烧好了要叫醒模型回去取');
+  assert.equal(isWakeEvent({type:'gift',text:'muxue 丢给你：minecraft:netherite_sword ×1（已进背包）'}),true,'玩家丢来的东西要叫醒模型回应');
+  assert.match(prompt,/收到 gift/,'启动提示说明收到 gift 时简短回应');
 });
 
 test('startupPrompt 的 new-task 阶段去掉启动限制，其余内容不变',()=>{

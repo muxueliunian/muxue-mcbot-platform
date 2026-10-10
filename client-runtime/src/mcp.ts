@@ -64,6 +64,9 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   const observed = serverObserved ? 'server-observed' : 'client-observed';
   const navigation = body.hello.capabilities.includes('navigation-3d') ? 'loaded safe terrain including slabs, stairs, one-block jumps and bounded safe drops' : 'loaded safe level ground';
   const prediction = serverObserved ? ' Values come from the server authority.' : ' Values may include client prediction.';
+  // entity-equipment: which reads show what players and creatures hold and wear.
+  const equipment = body.hello.capabilities.includes('entity-equipment');
+  const entityGear = equipment ? ' Entities that hold or wear something carry equipment: only the non-empty slots among mainhand, offhand, head, chest, legs, feet and body (horse or wolf armour), each with item id, count and, when present, enchantments ("id level"), custom name and durability left ("left/max", absent when undamaged). No equipment field means nothing held or worn; equipmentOmitted means it was left out by the size limit (the nearest 16 are shown).' : '';
   const completeComponents = z.record(z.unknown()).describe('Copy the complete components JSON object from the current observed stack; empty stack uses {}. Never omit or summarize fields.');
   const serverBlockGuard: ZodRawShape = serverObserved ? { expectedProperties: z.record(z.unknown()).describe('Copy the complete current block.properties object from get-block.') } : {};
   const serverStackGuard: ZodRawShape = serverObserved ? { expectedCount: z.number().int().nonnegative(), expectedComponents: completeComponents } : {};
@@ -102,7 +105,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       }
     });
   };
-  register('get-status', `Read the current ${observed} snapshot.${prediction} Inspect operation status to confirm action completion. When present, operationBudget reports the current lease's remaining distinct operation IDs; stop does not replenish it. Exhaustion needs explicit release/re-claim, never automatic task replay.`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => {
+  register('get-status', `Read the current ${observed} snapshot.${prediction} Inspect operation status to confirm action completion. When present, operationBudget reports the current lease's remaining distinct operation IDs; stop does not replenish it. Exhaustion needs explicit release/re-claim, never automatic task replay.${entityGear}`, serverObserved ? { details: z.boolean().default(false) } : {}, async ({ details }) => {
     const state = await body.observe(); events.ingest(state); const projected = { ...state, chat: currentChat(state.chat) };
     return { ...(serverObserved && !details ? summarizeObservation(projected) as object : projected), platform: body.hello.platform, capabilities: body.hello.capabilities, ...(companion ? { companionMode: companion.read() } : {}), ...(reflexes ? { survivalPolicy: reflexes.read() } : {}), ...(options.machines?.waiting().length ? { machines: options.machines.waiting() } : {}) };
   });
@@ -110,7 +113,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     const state = await body.observe(); return { position: state.position, dimension: state.dimension, sessionId: state.sessionId, source: state.source };
   });
   register('list-inventory', `List current ${observed} inventory slots using namespaced item IDs.${prediction}`, {}, async () => (await body.observe()).inventory);
-  register('find-entity', `Find nearby ${observed} entities; not a global world search.`, {
+  register('find-entity', `Find nearby ${observed} entities, nearest first; not a global world search. Use it to see what a player is holding or wearing.${entityGear}`, {
     type: z.string().optional(), maxDistance: z.number().finite().min(0).max(32).default(16),
   }, async ({ type, maxDistance }) => {
     const state = await body.observe();
@@ -125,7 +128,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     localStops++;
     return reflexes ? reflexes.stop() : stopCurrent({ clearGuard: true });
   });
-  if (body.survivalState && body.hello.capabilities.includes('survival-state')) register('get-survival-state', 'Read current server survival facts, native dangers/threats when supported, active defense and effective program policy. Compact by default; details includes guarded inventory. Missing or incomplete threat facts do not establish safety. Reading never rearms stopped behavior.', { details: z.boolean().default(false) }, async args => ({ ...await body.survivalState!(args), ...(reflexes ? { policy: reflexes.read() } : {}) }));
+  if (body.survivalState && body.hello.capabilities.includes('survival-state')) register('get-survival-state', `Read current server survival facts, native dangers/threats when supported, active defense and effective program policy. Compact by default; details includes guarded inventory. Missing or incomplete threat facts do not establish safety. Reading never rearms stopped behavior.${equipment ? ' Hostile and unknown threats carry equipment (held and worn items, same format as get-status) to judge the danger, e.g. a zombie in iron armour or a skeleton with a bow.' : ''}`, { details: z.boolean().default(false) }, async args => ({ ...await body.survivalState!(args), ...(reflexes ? { policy: reflexes.read() } : {}) }));
   if (body.assessTool && body.hello.capabilities.includes('assess-tool')) register('assess-tool', 'Read-only whole-inventory tool eligibility and estimated base speed for a loaded block. Does not equip or dig. Unknown means not established; estimates exclude unobserved equip-dependent mod hooks. Actual native mining remains authoritative.', { ...blockXyz, expectedBlock: registryId.optional(), policy: z.enum(['fastest_valid', 'conserve_durability']).optional(), minRemainingDurability: z.number().int().min(0).max(10000).optional(), dropPreference: z.enum(['any', 'silk_touch', 'no_silk_touch']).default('any') }, async args => {
     const state = reflexes?.read(); const assessment = await body.assessTool!({ policy: state?.toolPolicy, minRemainingDurability: state?.minRemainingDurability, ...args });
     return { ...assessment, candidates: assessment.candidates.map(({ components: _components, ...candidate }) => ({ ...candidate, componentsOmitted: candidate.componentsComplete !== false })) };
@@ -158,7 +161,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
     });
     register('get-companion-mode', 'Read the current persistent companion mode without starting, resuming or stopping any action.', {}, async () => companion.read());
   }
-  if (serverObserved && body.lookAround && body.hello.capabilities.includes('look-around')) register('look-around', 'Read-only summary of loaded surroundings up to 32 blocks (8 below/above): players, creatures (hostile first), dropped items, and notable blocks with an open face (ores, logs, containers, beds, workstations, doors, crops, water/lava surfaces, spawners, portals), each with count and the nearest one\'s distance, compass direction, height difference and line of sight. Also biome, time phase, weather, open sky and light. Buried blocks are not reported. Use discover-resources/discover-containers for actionable targets.', {
+  if (serverObserved && body.lookAround && body.hello.capabilities.includes('look-around')) register('look-around', `Read-only summary of loaded surroundings up to 32 blocks (8 below/above): players, creatures (hostile first), dropped items, and notable blocks with an open face (ores, logs, containers, beds, workstations, doors, crops, water/lava surfaces, spawners, portals), each with count and the nearest one's distance, compass direction, height difference and line of sight. Also biome, time phase, weather, open sky and light. Buried blocks are not reported. Use discover-resources/discover-containers for actionable targets.${equipment ? ' Each player, and the nearest of each creature kind, carries equipment (held and worn items, same format as get-status).' : ''}`, {
     radius: z.number().int().min(8).max(32).default(32),
   }, async ({ radius }) => body.lookAround!({ radius }));
   register('wait-for-events', 'Read new chat and lifecycle events. Hosted agents should use timeoutSeconds 0 and end their turn when idle.', {

@@ -334,6 +334,34 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - **没武器时腾手空手打**：保护（`GuardCombat`）和`defend-self`都按这个顺序：背包里最好的可核验原版剑／斧 → 空着的热栏格 → 把手上那格的东西用原生 SWAP 挪进背包主区（9～35）第一个空格，空手打。挪开的东西不会被拿来打，未知 Mod 物品照旧不用。热栏和背包主区都满时照旧放弃：保护对这只怪暂时不打，观察的`guard.unarmed`为`NO_FREE_HAND`，运行端发一条`guard`事件说明；`defend-self`报`UNSAFE_WEAPON`，原因写明“热栏和背包主区都满，空不出手”。`defend-self`挪的是选中格，选中格组件不完整时换别的热栏格再选中，挪动走`swap-inventory`并核对两格的结果。
 - **验证范围**：运行端`npm test`（Node 24.21）新增`companion-step-aside.test.mjs`（跟随中发现后采集／走近箱子能开始、叫停后仍拒绝、非让开停止仍拒绝、让开途中到达的停止单独执行、跟随＋自卫失败后恢复且不断开、手动暂停接住新代次、`WORLD_CHANGED`只结束跟随），`survival-defense.test.mjs`腾手三项，`companion-guard-duty.test.mjs`空手原因一项。Java 用例补在`ControlSessionTest`（承接链）、`ResourcePickupTest`（资源目标）、`GuardCombatTest`（腾手顺序、放弃和原因）。
 
+### 玩家丢来的物品、附近实体的装备（2026-10-11）
+
+背景：玩家把下界合金剑丢给 Bot，原版拾取后保护战斗也用上了，但模型不知道，还说“你没给我”；模型也看不到玩家和生物拿着、穿着什么。两个能力标记都是只读的（不是动作），旧运行端不认识新字段时按原样忽略（zod 默认丢掉多出的键），新运行端遇到不带标记的旧服务端也照常工作。
+
+**`gift-receipts`：拾取收据记丢出者。** 原生拾取（`ItemEntityPickupEvent.Post`，以及背包类拾取槽在 Pre 里接走的那条路径）记收据时，读 `ItemEntity.getOwner()`（1.21.1 里就是丢出者 `thrower` 的 UUID 解析出的实体）。丢出者是玩家、且不是 Bot 自己时，收据多一个可选字段 `thrownBy`（玩家名）：`{seq,…,storedIn?,thrownBy?}`。采集的方块掉落、打怪掉落没有丢出者；Bot 自己 `drop-item`、递物没被接住又捡回来的，丢出者是 Bot 自己，都不带 `thrownBy`。死亡掉落（原版不记丢出者）、丢出者已下线（解析不到实体）时也没有这个字段；读取出错只丢掉名字，不影响收据本身。物品的 `target`（只许某人捡）不参与判断：指定给别人的物品 Bot 捡不到。
+
+运行端（`EventJournal.useGifts`，只在 hello 带 `gift-receipts` 时开启）：
+
+- 每个服务器实例（`instanceId`）的第一份观察是基线，之前的收据不算；之后只看 `seq` 更大的收据，同一条收据只通知一次（重复观察、`get-status` 和后台轮询都会 ingest，按 seq 去重）。
+- `thrownBy` 是自己的名字或 `--bot-players` 里的名字时不算。
+- 同一个人的物品从第一件起收集 2 秒，合成一条唤醒模型的 `gift` 事件；相同物品且组件相同的数量相加，进了背包类存储的单列：`muxue 丢给你：minecraft:netherite_sword ×1（已进背包）`、`muxue 丢给你：minecraft:bread ×5、minecraft:iron_sword ×1（带附魔、名字等属性）（已进背包）；minecraft:coal ×9（已放进 sophisticatedbackpacks:backpack）`。
+- 驱动器把 `gift` 加进唤醒类型；启动提示：收到 gift 时在游戏里简短回应、道谢或确认收到，需要时再用 `list-inventory` 查背包。
+
+**`entity-equipment`：附近实体的装备。** 观察 `entities` 里每个 `LivingEntity`（玩家、僵尸、骷髅、猪灵、凋灵骷髅、村民、盔甲架、马、狼……），只要有一个装备位不空，就带 `equipment`：
+
+```json
+{"mainhand":{"id":"minecraft:netherite_sword","count":1,"enchantments":["minecraft:sharpness 5"],"name":"屠龙","durability":"2000/2031"},
+ "offhand":{"id":"minecraft:shield","count":1},
+ "chest":{"id":"minecraft:iron_chestplate","count":1}}
+```
+
+- 装备位用原版 `EquipmentSlot` 名，顺序 `mainhand`、`offhand`、`head`、`chest`、`legs`、`feet`、`body`（马铠、狼铠等）；只列非空的。全部为空的实体不加字段。
+- 每件：`id`、`count`；有附魔时 `enchantments`（`"id 等级"`，排序，和 `ItemDescriptions` 的写法一样）；有自定义名字时 `name`；掉过耐久时 `durability`（`"剩余/上限"`，和 `ItemDescriptions.describe` 一样，没有这个字段表示满耐久或不会损耗）。不给整份组件 / NBT。
+- **上限**（`EquipmentView`）：`id` 和每条附魔最多 64 字符，名字最多 32 个字符（超出截断加 `…`），附魔最多列 4 条（多的数在 `enchantmentsMore`）；一个实体的装备最坏约 3.8 KB；每次观察最多给离 Bot 最近的 16 个实体带装备，装备 JSON 合计最多 8192 字节，超出的、或读取出错的实体带 `equipmentOmitted:true`（不是“没装备”）。`entities` 本身仍是 32 格内最多 64 个。典型场景（玩家拿附魔剑和盾、穿两三件钻石甲，一只穿铁甲拿铁剑的僵尸，一只拿弓的骷髅）约增加 620 字节（紧凑 JSON）。
+- **同样带装备的其它读取**：`survival-state` 的 `threats.nearby` 里 `hostile`、`attacking_self`、`unknown` 的条目（最多 24 条，同样的上限）；`look-around` 的 `players`（最多 8 个）和每种生物最近那只的 `nearest`。
+- **运行端**：观察、威胁的 zod schema 加可选的 `equipment`、`equipmentOmitted`，单个字段不合格只丢掉这个字段，不让整份观察失败。工具说明写明哪里有装备：`get-status`（紧凑视图前 16 个实体）、`find-entity`（按距离排序，用来看玩家拿着什么）、`look-around`、`get-survival-state`。`survival` 危险事件末尾加 `；装备：minecraft:zombie（穿 iron_helmet、iron_chestplate，拿 iron_sword），minecraft:skeleton（拿 bow）`，不进事件比较的键，装备变化不会再次唤醒。
+- **验证范围**：离线：Java `EquipmentViewTest`（玩家装备、穿铁甲的僵尸、拿弓的骷髅、全空不出字段、16 个实体和 8 KB 截断、读取失败标记、`thrownBy` 判断）；运行端 `gifts-equipment.test.mjs`。从原生实体读装备位（`ItemDescriptions.equipment`）、`getOwner()` 取丢出者只有代码审阅，没有隔离服实测和真实模型试玩。
+
 ### 试玩反馈修正（2026-10-08）
 
 10-08 小雪用 Claude（Haiku）实测时遇到的问题，按顺序修了五处；实测见`scripts/server-equip-swim-smoke.mjs`（隔离服：装着 SB 时 16 项；挪开客户端模组、加`--with-peer`时 15 项，含跟随下水）。

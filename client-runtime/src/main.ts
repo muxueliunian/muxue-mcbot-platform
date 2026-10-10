@@ -110,6 +110,8 @@ async function main(): Promise<void> {
     events = new EventJournal(values.hosted ? runtimeDir : undefined, values.username, values['bot-players']!.split(',').filter(Boolean), lease?.chatCursor);
     const places = new PlaceBook(runtimeDir, values['world-id']);
     events.useHome(() => places.home());
+    // Items a player throws to the body wake the model (gift-receipts); without it receipts carry no thrower.
+    if (body.hello.capabilities.includes('gift-receipts')) events.useGifts();
     const first = await body.observe(); events.ingest(first);
     // Furnaces loaded and left: tracked per world, checked when due, a machine event when done (8b).
     const machines = body.hello.capabilities.includes('smelt-item') ? new MachineWatch(new MachineBook(runtimeDir, values['world-id']), body, events) : undefined;

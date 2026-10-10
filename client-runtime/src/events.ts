@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Observation, Operation } from './body.js';
+import type { Observation, Operation, PickupReceipt } from './body.js';
 import { summarizeOperation } from './model-view.js';
 import type { Place } from './places.js';
 
 export interface GameEvent { session: string; seq: number; timestamp: number; type: string; text: string; operationId?: string }
+/** Items a player threw to the body, collected for a short window and told as one gift event. */
+interface PendingGift { items: Map<string, { id: string; count: number; extra: boolean; storedIn?: string }>; timer: ReturnType<typeof setTimeout> }
 /** Companion-compatible journal; each runtime process has its own cursor generation. */
 export class EventJournal {
   readonly session = randomUUID();
@@ -30,6 +32,8 @@ export class EventJournal {
   private sunsetSent = false;
   private weatherSeen?: { raining: boolean; thundering: boolean };
   private sceneDayTime?: number;
+  /** gift-receipts: the merge window, the last pickup receipt seen (per server instance) and gifts still being collected. */
+  private gifts?: { windowMs: number; instance?: string; cursor?: number; pending: Map<string, PendingGift> };
   constructor(runtimeDir?: string, private readonly username?: string, private readonly botPlayers: string[] = [], private readonly attachmentChatCursor?: number) {
     if (!runtimeDir || !username) return;
     fs.mkdirSync(runtimeDir, { recursive: true });
@@ -102,6 +106,8 @@ export class EventJournal {
     this.add('companion', JSON.stringify(state), operation.operationId);
   }
   ingest(observation: Observation): void {
+    // Before the attachment early return below, so the first observation is the gift baseline.
+    this.ingestGifts(observation);
     if (this.gameSession !== observation.sessionId) {
       this.gameSession = observation.sessionId;
       // Pre-attachment chat is observation, not a new command to replay.
@@ -142,6 +148,54 @@ export class EventJournal {
     if (!before || !weather.sky || observation.sleeping) return;
     if (weather.thundering && !before.thundering) this.add('scene', '打雷了，雷雨天外面会刷怪。想说就随口说一句，陪着玩家时可以提醒小心。');
     else if (weather.raining && !before.raining) this.add('scene', '下雨了。想说就随口说一句，不用特意做什么。');
+  }
+  /**
+   * Turn on gift events (the server declares gift-receipts): items a player threw that the body picked up, told as
+   * "muxue 丢给你：…". What the body mined, mob loot and its own drops carry no thrower and are never told.
+   */
+  useGifts(windowMs = 2000): void { this.gifts ??= { windowMs, pending: new Map() }; }
+  /**
+   * Each receipt is told once: the first observation of a server instance is a baseline (pickups before attaching are
+   * not news), then only receipts with a higher seq. Items from one player within the window become one event.
+   */
+  private ingestGifts(observation: Observation): void {
+    const gifts = this.gifts, cursor = observation.pickupCursor;
+    if (!gifts || cursor === undefined || !observation.instanceId) return;
+    if (gifts.instance !== observation.instanceId || gifts.cursor === undefined || cursor < gifts.cursor) { gifts.instance = observation.instanceId; gifts.cursor = cursor; return; }
+    for (const receipt of [...observation.pickupReceipts ?? []].sort((a, b) => a.seq - b.seq)) {
+      if (receipt.seq <= gifts.cursor || receipt.seq > cursor) continue;
+      const from = receipt.thrownBy;
+      if (from && from !== this.username && from !== observation.username && !this.botPlayers.includes(from)) this.collectGift(from, receipt);
+    }
+    gifts.cursor = cursor;
+  }
+  private collectGift(from: string, receipt: PickupReceipt): void {
+    const gifts = this.gifts!;
+    let pending = gifts.pending.get(from);
+    if (!pending) {
+      const timer = setTimeout(() => this.flushGift(from), gifts.windowMs);
+      timer.unref?.();
+      pending = { items: new Map(), timer };
+      gifts.pending.set(from, pending);
+    }
+    const extra = Object.keys(receipt.stack.components ?? {}).length > 0;
+    // Same item and same components add up; a different variant (an enchanted sword next to a plain one) stays apart.
+    const key = `${receipt.stack.id}\u0000${JSON.stringify(receipt.stack.components ?? {})}\u0000${receipt.storedIn ?? ''}`;
+    const item = pending.items.get(key);
+    if (item) item.count += receipt.pickedUpCount;
+    else pending.items.set(key, { id: receipt.stack.id, count: receipt.pickedUpCount, extra, ...(receipt.storedIn ? { storedIn: receipt.storedIn } : {}) });
+  }
+  private flushGift(from: string): void {
+    const pending = this.gifts?.pending.get(from);
+    if (!pending) return;
+    this.gifts!.pending.delete(from); clearTimeout(pending.timer);
+    const label = (item: { id: string; count: number; extra: boolean }) => `${item.id} ×${item.count}${item.extra ? '（带附魔、名字等属性）' : ''}`;
+    const items = [...pending.items.values()];
+    const parts = [];
+    const kept = items.filter(item => !item.storedIn);
+    if (kept.length) parts.push(`${kept.map(label).join('、')}（已进背包）`);
+    for (const storage of new Set(items.flatMap(item => item.storedIn ? [item.storedIn] : []))) parts.push(`${items.filter(item => item.storedIn === storage).map(label).join('、')}（已放进 ${storage}）`);
+    this.add('gift', `${from} 丢给你：${parts.join('；')}`);
   }
   /** Where home is (a remembered place named home or 家), for the bedtime nudge. */
   useHome(home: () => Place | undefined): void { this.home = home; }

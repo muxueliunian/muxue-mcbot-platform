@@ -1,5 +1,6 @@
 import { BodyError, type Body, type SurvivalState, type Threat, type Operation, type StopOptions } from './body.js';
 import type { EventJournal } from './events.js';
+import { gearLabel } from './model-view.js';
 import { selectFood, selectThreat, threatRefusal, type DefensePolicy, type SurvivalTasks } from './survival-tasks.js';
 
 export interface SurvivalPolicy extends DefensePolicy {
@@ -147,7 +148,7 @@ export class SurvivalReflexes {
     const key = JSON.stringify(facts);
     if (key !== this.dangerFacts) {
       const previous = this.dangerFacts; this.dangerFacts = key;
-      if (previous !== undefined || facts.lowHealth || facts.threats.length || state.dangers?.onFire || state.dangers?.inLava) this.events.add('survival', `危险状态变化：${key}${this.defenseNote(state, facts.threats.map(threat => threat.entityId))}`);
+      if (previous !== undefined || facts.lowHealth || facts.threats.length || state.dangers?.onFire || state.dangers?.inLava) this.events.add('survival', `危险状态变化：${key}${this.defenseNote(state, facts.threats.map(threat => threat.entityId))}${gearNote(state, facts.threats.map(threat => threat.entityId))}`);
     }
   }
   /**
@@ -250,4 +251,12 @@ export class SurvivalReflexes {
       if (resume) await this.resumeCompanion(resume, '进食', resumable);
     }
   }
+}
+/** What the threats in the event hold and wear (entity-equipment), to judge the danger; like defenseNote, never part of the event key. */
+function gearNote(state: SurvivalState, ids: string[]): string {
+  const parts = ids.map(id => state.threats?.nearby.find(threat => threat.entityId === id)).flatMap(threat => {
+    const gear = threat ? gearLabel(threat.equipment, threat.equipmentOmitted) : '';
+    return gear ? [`${threat!.type ?? '未知生物'}（${gear}）`] : [];
+  });
+  return parts.length ? `；装备：${parts.join('，')}` : '';
 }

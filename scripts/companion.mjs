@@ -45,7 +45,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { createServerBodyControl, respawnIfDead } from './server-body-control.mjs';
+import { createServerBodyControl, respawnIfDead, lastDeath } from './server-body-control.mjs';
 import { rcon, tellrawCommand } from './rcon.mjs';
 import { getAgentProtocol, claudeContextTokens, AGENT_NAMES, agentsFor, agentConfigDir } from './agents/process-protocols.mjs';
 
@@ -134,7 +134,44 @@ export function runtimeFiles(runtimeDir, name) {
     halt: path.join(runtimeDir, `companion-${name}.halt`),
     session: path.join(runtimeDir, `session-${name}.json`),
     botLock: path.join(runtimeDir, `bot-${name}.lock`),
+    // 运行端写的持续状态（跟随／等待／保护），重连后告诉 Agent；见 client-runtime/src/posture.ts
+    posture: path.join(runtimeDir, `posture-${name}.json`),
   };
+}
+
+// 游戏名之类的字段只认规范的游戏名；服务端给的死亡消息可能带命名牌上的字，只当资料，去掉控制字符并截短
+const GAME_NAME = /^[A-Za-z0-9_]{1,16}$/;
+const plainText = (text, max) => String(text ?? '').replace(/[\u0000-\u001f\u007f§]/g, ' ').trim().slice(0, max);
+
+/** 断开前的持续状态（运行端写的）；没有、坏了或超过 maxAgeMs 的不算 */
+export function readPosture(file, now = Date.now(), maxAgeMs = 60 * 60 * 1000) {
+  try {
+    const p = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!['follow', 'wait', 'guard'].includes(p?.action) || !Number.isFinite(p.at) || now - p.at > maxAgeMs || now < p.at - 60000) return null;
+    if (p.player !== undefined && !GAME_NAME.test(p.player)) return null;
+    if ((p.action === 'follow' || p.action === 'guard') && !p.player) return null;
+    return { action: p.action, ...(p.player ? { player: p.player } : {}), guard: p.guard === true, at: p.at };
+  } catch { return null; }
+}
+
+/** 重连后告诉 Agent 断开前在做的持续状态：跟随和保护是玩家要的，接上不算重放旧动作 */
+export function postureNote(p) {
+  if (!p) return '';
+  const who = p.player ?? '';
+  const what = p.action === 'follow' ? `在跟随 ${who}，保护${p.guard ? '开着' : '关着'}`
+    : p.action === 'wait' ? `在原地等${p.guard ? '，保护开着' : ''}` : `在保护 ${who}（没跟随）`;
+  const next = p.action === 'wait' ? '原来等的地方可能已经不在附近，问一下玩家要不要回去，或者改成跟随'
+    : `${who} 在附近就直接用 companion-mode ${p.action === 'follow' ? `follow 接上${p.guard ? '（保护照旧开着）' : ''}` : `guard 带 player:${who} 接上`}；不在附近就告诉玩家你在哪，等玩家过来或者按玩家说的做`;
+  return `【断开前的陪伴状态】断开前你${what}。这是玩家要你一直保持的状态，不是旧动作，接上它不算重放：先看清自己和玩家在哪，${next}。玩家说过不用了就别接。`;
+}
+
+/** 复活提示：服务端记下的死因和死的地方（30 分钟内的才用） */
+export function deathNote(death, now = Date.now()) {
+  const recent = death && Number.isFinite(death.at) && now - death.at >= 0 && now - death.at < 30 * 60 * 1000;
+  const message = recent ? plainText(death.message, 120) : '';
+  const p = recent ? death.position : null;
+  const where = p && [p.x, p.y, p.z].every(Number.isFinite) ? `，死在 ${Math.round(p.x)} ${Math.round(p.y)} ${Math.round(p.z)}${death.dimension && death.dimension !== 'minecraft:overworld' ? `（${plainText(death.dimension, 64)}）` : ''}` : '';
+  return `【角色重生】你之前死了${message ? `（游戏记录：「${message}」）` : ''}${where}，托管启动时已在重生点复活（有床在床边，没有在世界出生点）。身上的东西可能掉在死的地方，掉落物一般 5 分钟左右消失；先看看自己在哪、还剩什么，简短告诉玩家。`;
 }
 
 export function isWakeEvent(e) {
@@ -1174,6 +1211,8 @@ function main() {
     if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
     lastStopAt = Date.now();
     lastStopBy = typeof event?.username === 'string' ? event.username : '';
+    // 叫停也结束跟随和保护：下次重连不再提示接上
+    try { fs.rmSync(F.posture, { force: true }); } catch { /* 忽略 */ }
     lastRequestAt = 0;
     saveSession();
     if (event?.session && Number.isSafeInteger(event.seq)) {
@@ -1552,6 +1591,8 @@ function main() {
           .catch((e) => info(`退出撤销：${e.code || '失败'}`));
       }
       await Promise.all([...procs].map((p) => endProc(p)));
+      // 托管真的停了（不是等重连）：跟随和保护随之结束，下次启动不再提示接上
+      if (exitCode !== RECONNECT_EXIT) { try { fs.rmSync(F.posture, { force: true }); } catch { /* 忽略 */ } }
       cleanupBodyArtifacts(bodyArtifacts);
       cleanupFiles();
       // 等一下再退：agent 子进程刚退出时它的管道还在关，Windows 上马上 process.exit 会让 Node 断言崩掉（退出码
@@ -1655,14 +1696,24 @@ function main() {
       startAgent();
       sendTurn(STARTUP_PROMPT, 'startup');
     }
+    // 重连（死了、游戏关过）后不等玩家先开口：死因和断开前的跟随／保护作为驱动器提示，马上给 Agent 一轮
+    if (args.reconnect) {
+      // 叫停之前的状态不算（叫停时已经删了文件，这里再挡一次迟到的写入）
+      const held = readPosture(F.posture);
+      try { fs.rmSync(F.posture, { force: true }); } catch { /* 忽略 */ }
+      if (held && !(lastStopAt && held.at <= lastStopAt)) pendingNotes.push(postureNote(held));
+    }
+    if (respawnNote) { pendingNotes.push(respawnNote); respawnNote = ''; }
+    if (pendingNotes.length) flush();
   }
   // 死掉的角色接管不了（claim 会拒绝 DEAD_BODY），先走原生重生再启动 agent
   if (args.body === 'server') {
-    void respawnIfDead(BODY_SCOPE).then((outcome) => {
+    void respawnIfDead(BODY_SCOPE).then(async (outcome) => {
       // start-server-play --wait 等连接时已经复活过的，由环境变量告诉这里
       if (outcome === 'respawned' || (outcome === 'alive' && process.env.MCBOT_RESPAWNED === '1')) {
-        info('角色之前死了，已经原生重生（有床就在床边，没有就在世界出生点）');
-        respawnNote = '【角色重生】你之前死了，托管启动时已在重生点复活。身上的东西可能掉在死的地方；先看看自己在哪、还剩什么。';
+        const death = await lastDeath(BODY_SCOPE);
+        info(`角色之前死了，已经原生重生（有床就在床边，没有就在世界出生点）${death?.message ? `：${death.message}` : ''}`);
+        respawnNote = deathNote(death);
       } else if (outcome !== 'alive') info(`启动时没能检查角色是不是死了：${outcome}`);
       if (!shuttingDown) startSession();
     });

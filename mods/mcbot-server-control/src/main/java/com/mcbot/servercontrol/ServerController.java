@@ -30,7 +30,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","host-notice","beside-follow");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","step-aside-stop","gift-receipts","entity-equipment","host-notice","beside-follow","last-death");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -88,6 +88,9 @@ final class ServerController implements ControlSession.Game {
     private ServerChatEvent outgoingChatEvent;
     private final Consumer<LivingEntityUseItemEvent.Finish> foodFinishListener=this::receiveFoodFinish;
     private final Consumer<net.neoforged.neoforge.event.level.BlockEvent.FarmlandTrampleEvent> trampleGuard=this::guardFarmland;
+    private final Consumer<net.neoforged.neoforge.event.entity.living.LivingDeathEvent> deathListener=this::recordDeath;
+    /** How and where the body last died (vanilla's death message), shown in hello until the next death; null before any. */
+    private JsonObject lastDeath;
     ServerController(MinecraftServer server,ServerConfig config) {
         this.server=server; this.config=config;
         session=new ControlSession(this,()->System.nanoTime()/1_000_000,config.worldId(),config.username());
@@ -102,6 +105,13 @@ final class ServerController implements ControlSession.Game {
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,trampleGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,friendlyFireGuard);
         NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST,projectileMark);
+        NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST,deathListener);
+    }
+    /** A death that went through (not cancelled): the message vanilla is about to print, the place the drops fall, the time. */
+    private void recordDeath(net.neoforged.neoforge.event.entity.living.LivingDeathEvent event) {
+        if(player==null||event.getEntity()!=player)return;
+        String message;try{message=player.getCombatTracker().getDeathMessage().getString();}catch(RuntimeException ignored){message=event.getSource().getMsgId();}
+        lastDeath=obj("message",message,"dimension",player.serverLevel().dimension().location().toString(),"position",position(player.position()),"at",System.currentTimeMillis());
     }
     /** The body never tramples farmland: a companion walking the player's field must not turn it back to dirt. */
     /** Whatever the body does (a swing, an arrow, a guard fight), it never hurts a player, a pet, a villager or anything named. */
@@ -146,7 +156,7 @@ final class ServerController implements ControlSession.Game {
     }
     @Override public void ensureBody() {
         if(connected()) return;
-        if(player!=null&&!player.isRemoved()&&sink!=null&&sink.isConnected()&&server.getPlayerList().getPlayer(config.uuid())==player) {
+        if(player!=null&&NativeRespawn.present(player)&&sink!=null&&sink.isConnected()&&server.getPlayerList().getPlayer(config.uuid())==player) {
             if(forbiddenOp(player.getGameProfile())) throw error("FORBIDDEN","Server body refuses an OP identity");
             if(!player.isAlive()) throw error("DEAD_BODY","Body is dead; use explicit native respawn before claiming control");
             throw error("FORBIDDEN","Existing body is not in survival mode; no automatic game-mode change");
@@ -180,7 +190,7 @@ final class ServerController implements ControlSession.Game {
     }
     @Override public void respawn() {
         if(forbiddenOp(new GameProfile(config.uuid(),config.username()))) throw error("FORBIDDEN","Server body refuses an OP identity");
-        if(player!=null&&(player.isRemoved()||sink==null||!sink.isConnected()||server.getPlayerList().getPlayer(config.uuid())!=player)) remove();
+        if(player!=null&&(!NativeRespawn.present(player)||sink==null||!sink.isConnected()||server.getPlayerList().getPlayer(config.uuid())!=player)) remove();
         if(player==null) {
             NativeRespawn.requireDeadSave(server,config.uuid());
             try { ensureBody(); } catch(Protocol.Error failure) { if(!failure.code.equals("DEAD_BODY")) throw failure; }
@@ -194,6 +204,7 @@ final class ServerController implements ControlSession.Game {
         List<String> capabilities=new ArrayList<>(CAPABILITIES);capabilities.addAll(ItemInteractions.capabilities(interactions));
         JsonObject hello=obj("platform",obj("minecraft","1.21.1","loader","neoforge","loaderVersion",loaderVersion()),"capabilities",capabilities);
         hello.add("interactions",ItemInteractions.ids(interactions));
+        if(lastDeath!=null)hello.add("lastDeath",lastDeath.deepCopy());
         hello.add("itemInteractions",ItemInteractions.itemIds(interactions));
         hello.add("adapters",ModAdapters.containerIds());
         hello.add("itemHandlerMods",ModAdapters.itemHandlerModIds());
@@ -735,7 +746,7 @@ final class ServerController implements ControlSession.Game {
         if(oldSink!=null) oldSink.closeSink();
         wasConnected=false; lastDimension=null;
     }
-    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);NeoForge.EVENT_BUS.unregister(trampleGuard);NeoForge.EVENT_BUS.unregister(friendlyFireGuard);NeoForge.EVENT_BUS.unregister(projectileMark);}}
+    void close() {try{remove();}finally{validationProtection.close();NeoForge.EVENT_BUS.unregister(foodFinishListener);NeoForge.EVENT_BUS.unregister(damageListener);NeoForge.EVENT_BUS.unregister(attackGuard);NeoForge.EVENT_BUS.unregister(incomingDamageGuard);NeoForge.EVENT_BUS.unregister(sweepGuard);NeoForge.EVENT_BUS.unregister(trampleGuard);NeoForge.EVENT_BUS.unregister(friendlyFireGuard);NeoForge.EVENT_BUS.unregister(projectileMark);NeoForge.EVENT_BUS.unregister(deathListener);}}
     private void look(Vec3 target) {
         Vec3 delta=target.subtract(player.getEyePosition());
         float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));

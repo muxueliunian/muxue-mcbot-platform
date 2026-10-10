@@ -51,6 +51,15 @@ export async function respawnIfDead(scope, { timeoutMs = 10000 } = {}) {
   }
 }
 
+// How the body last died (capability last-death): { message, dimension, position, at } from hello, or null.
+export async function lastDeath(scope, { timeoutMs = 5000 } = {}) {
+  try {
+    const hello = await rpc(serverConnection(scope.connectionFile, scope), 'hello', {}, timeoutMs);
+    const death = hello?.lastDeath;
+    return hello?.username === scope.username && death && typeof death === 'object' && typeof death.message === 'string' ? death : null;
+  } catch { return null; }
+}
+
 export function createServerBodyControl({ scope, runtimeDir, controllerId, isStop, isNewTask,
   onStop, onNewTask, onLost = () => {}, botPlayers = [], log = () => {}, intervalMs = 500, requestTimeoutMs = 1800 }) {
   const file = path.join(runtimeDir, `server-control-${scope.username}.json`);

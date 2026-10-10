@@ -7,8 +7,8 @@ import http from 'node:http';
 import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {parseArgs,bodySessionScope,runtimeFiles,startupPrompt,readSessionState,completeServerChat,captureBodyArtifacts,cleanupBodyArtifacts,taskAlreadyDelivered,isWakeEvent,busyAck} from '../../scripts/companion.mjs';
-import {createServerBodyControl,respawnIfDead} from '../../scripts/server-body-control.mjs';
+import {parseArgs,bodySessionScope,runtimeFiles,startupPrompt,readSessionState,completeServerChat,captureBodyArtifacts,cleanupBodyArtifacts,taskAlreadyDelivered,isWakeEvent,busyAck,readPosture,postureNote,deathNote} from '../../scripts/companion.mjs';
+import {createServerBodyControl,respawnIfDead,lastDeath} from '../../scripts/server-body-control.mjs';
 import {CODEX_SERVER_TOOLS,codexThreadConfig} from '../../scripts/agents/codex-app-server.mjs';
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(HERE,'../..');
@@ -24,7 +24,7 @@ async function mock(){
     const ok=result=>res.end(JSON.stringify({ok:true,result}));const fail=code=>res.end(JSON.stringify({ok:false,error:{code,message:code}}));
     if(req.headers.authorization!=='Bearer test-only-token')return fail('FORBIDDEN');
     if(method==='hello'&&state.unreachable){req.socket.destroy();return;}
-    if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:state.capabilities});
+    if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:state.capabilities,...(state.lastDeath?{lastDeath:state.lastDeath}:{})});
     // Like the server: a revoke may name the session the body already left (it is matched against the retired lease).
     if(p.instanceId!==state.instanceId||p.sessionId&&p.sessionId!==state.sessionId&&method!=='revoke')return fail('WRONG_INSTANCE');
     if(method==='respawn'){
@@ -492,6 +492,59 @@ test('托管启动时角色死了就原生重生，活着的不动，服务器�
     assert.equal(await respawnIfDead(scope),'CONTROL_IDENTITY_CHANGED');
   }finally{await api.close();}
   try{assert.equal(await respawnIfDead(scope,{timeoutMs:500}),'CONTROL_UNREACHABLE');}finally{cleanup(dir);}
+});
+
+test('死后重连：驱动器马上给 Agent 一轮，带死因和断开前的跟随／保护，读完就删',async()=>{
+  const dir=temp(),api=await mock(),runtime=path.join(dir,'runtime');fs.mkdirSync(runtime);
+  const connectionFile=path.join(dir,'connection.json'),configFile=path.join(dir,'mcp.json'),agentLog=path.join(dir,'agent.jsonl');
+  fs.writeFileSync(connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:'world-a',username:'ServerTest'}));
+  fs.writeFileSync(configFile,JSON.stringify({mcpServers:{minecraft:{command:process.execPath,args:['not-executed.mjs','--body','server','--connection-file',connectionFile,'--world-id','world-a','--username','ServerTest']}}}));
+  const F=runtimeFiles(runtime,'ServerTest');let driver,exit,output='';
+  api.state.dead=true;api.state.lastDeath={message:'ServerTest被骷髅射杀',dimension:'minecraft:overworld',position:{x:12.4,y:64,z:-30.6},at:Date.now()-5000};
+  fs.writeFileSync(F.posture,JSON.stringify({action:'follow',player:'tester',guard:true,at:Date.now()-8000}));
+  try{
+    driver=spawn(process.execPath,[path.join(ROOT,'scripts/companion.mjs'),'--agent','claude','--body','server','--name','ServerTest','--nickname','小克','--mcp-config',configFile,'--headless','--reconnect'],
+      {windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,COMPANION_RUNTIME_DIR:runtime,COMPANION_MEMORY_DIR:path.join(dir,'memory'),COMPANION_AGENT_CMD:JSON.stringify([process.execPath,path.join(HERE,'fixtures/fake-server-agent.mjs')]),FAKE_SERVER_AGENT:'claude',FAKE_AGENT_LOG:agentLog,FAKE_AGENT_CLOSE_DELAY_MS:'200'}});
+    driver.stdout.on('data',d=>output+=d);driver.stderr.on('data',d=>output+=d);exit=new Promise(r=>driver.once('exit',r));
+    const turn=await waitFor(()=>records(agentLog).find(r=>r.kind==='turn'&&r.text.includes('断开前的陪伴状态')),'重连提示不等玩家开口就送到');
+    assert.match(turn.text,/被骷髅射杀/);assert.match(turn.text,/死在 12 64 -31/);
+    assert.match(turn.text,/在跟随 tester，保护开着/);assert.match(turn.text,/companion-mode follow 接上/);assert.match(turn.text,/不算重放/);
+    assert.equal(api.state.sessionId,'session-respawned','先原生复活再启动');
+    assert.equal(fs.existsSync(F.posture),false,'读完就删，下次断开不重复提示');
+    fs.writeFileSync(F.stop,'1');await waitFor(()=>driver.exitCode!==null,'normal shutdown');assert.equal(await exit,0,output);
+  }finally{
+    if(driver&&driver.exitCode===null&&driver.signalCode===null){if(process.platform==='win32')spawnSync('taskkill',['/PID',String(driver.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else driver.kill();}
+    if(exit)await exit;await api.close();cleanup(dir);
+  }
+});
+
+test('断开前的状态：过期、坏的、不是游戏名的不提示；死因只用 30 分钟内的、去掉控制字符',async()=>{
+  const dir=temp(),file=path.join(dir,'posture.json'),now=Date.now();
+  try{
+    assert.equal(readPosture(file,now),null,'没有文件');
+    fs.writeFileSync(file,'{');assert.equal(readPosture(file,now),null,'坏文件');
+    fs.writeFileSync(file,JSON.stringify({action:'follow',player:'tester',guard:true,at:now-2*3600000}));assert.equal(readPosture(file,now),null,'超过一小时');
+    fs.writeFileSync(file,JSON.stringify({action:'follow',player:'bad name!',guard:true,at:now}));assert.equal(readPosture(file,now),null,'不是游戏名');
+    fs.writeFileSync(file,JSON.stringify({action:'follow',guard:true,at:now}));assert.equal(readPosture(file,now),null,'跟随没有玩家');
+    fs.writeFileSync(file,JSON.stringify({action:'wait',guard:false,at:now}));assert.match(postureNote(readPosture(file,now)),/在原地等。.*问一下玩家要不要回去/);
+    fs.writeFileSync(file,JSON.stringify({action:'guard',player:'tester',guard:true,at:now}));assert.match(postureNote(readPosture(file,now)),/在保护 tester（没跟随）.*guard 带 player:tester/);
+    assert.equal(postureNote(null),'');
+    const bell=String.fromCharCode(7),section=String.fromCharCode(0xa7);
+    assert.match(deathNote({message:`a${bell}b${section}c`,position:{x:1,y:2,z:3},dimension:'minecraft:the_nether',at:now-1000},now),/「a b c」）?，死在 1 2 3（minecraft:the_nether）/);
+    const old=deathNote({message:'被僵尸杀死了',position:{x:1,y:2,z:3},at:now-3600000},now);assert.doesNotMatch(old,/僵尸|死在/);assert.match(old,/你之前死了，托管启动时/);
+    assert.match(deathNote(null,now),/你之前死了，托管启动时/);
+  }finally{cleanup(dir);}
+});
+
+test('lastDeath 只读 hello，不改身体；没有记录或连不上时是 null',async()=>{
+  const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
+  fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));
+  try{
+    assert.equal(await lastDeath(scope),null);
+    api.state.lastDeath={message:'ServerTest摔死了',at:1};assert.equal((await lastDeath(scope)).message,'ServerTest摔死了');
+    assert.deepEqual([...new Set(api.state.calls.map(c=>c.method))],['hello']);
+  }finally{await api.close();}
+  try{assert.equal(await lastDeath(scope,{timeoutMs:500}),null);}finally{cleanup(dir);}
 });
 
 test('stopped host reports changed identity once, but ignores temporary unreachable and active owners',async()=>{

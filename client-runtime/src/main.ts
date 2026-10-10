@@ -18,6 +18,7 @@ import { BodyError, type Body, type GuardOptions } from './body.js';
 import { PlaceBook } from './places.js';
 import { MachineBook, MachineWatch } from './machines.js';
 import { BlueprintShelf } from './blueprints.js';
+import { writePosture } from './posture.js';
 import { loadPluginPolicy } from './plugins.js';
 import { fileURLToPath } from 'node:url';
 
@@ -118,6 +119,7 @@ async function main(): Promise<void> {
     if (machines) { events.onOperation(operation => machines.operation(operation)); void machines.tick(first.dimension); }
     const gather = new GatherTasks(body, events);
     if (body.hello.capabilities.includes('follow-companion')) { companion = new CompanionMode(body, events, gather); companion.guardDefaults = guardDefaults; }
+    if (companion && values.hosted) companion.onPosture = writePosture(path.join(runtimeDir, `posture-${values.username}.json`));
     const tasks = new ContainerTasks(body, Date.now, operation => events!.deliverOperation(operation));
     const survival = ['survival-state', 'swap-inventory', 'eat-item'].every(cap => body!.hello.capabilities.includes(cap)) ? new SurvivalTasks(body, Date.now, operation => events!.recordOperation(operation)) : undefined;
     const stopCurrent = createActionStop(body, tasks, gather, companion, survival);

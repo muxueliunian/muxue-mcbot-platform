@@ -33,6 +33,7 @@ final class GuardDutyTest {
         idleFight();
         coverage();
         handOver();
+        interruptedTick();
         System.out.println("GuardDutyTest: "+checks+" checks passed");
     }
     private static void idleFight() {
@@ -78,4 +79,19 @@ final class GuardDutyTest {
         duty.stop();
         check(combat.stops>=3&&!duty.driving(),"turning it off stops the fight");
     }
+    private static void interruptedTick() {
+        for(boolean off:new boolean[]{false,true}) {
+            FakeView view=new FakeView();GuardDuty[] current={null};boolean[] interrupt={true};int[] stops={0};
+            GuardDuty.Combat combat=new GuardDuty.Combat(){
+                public boolean tick(Vec3 companion){if(interrupt[0]){interrupt[0]=false;if(off)current[0].stop();else current[0].interrupt();}return true;}
+                public void stop(){stops[0]++;}
+                public JsonObject json(){return obj("state","idle");}
+            };
+            current[0]=new GuardDuty("Alex",UUID.randomUUID(),GuardCombat.Options.parse(JsonParser.parseString("true")),view,combat);
+            check(!current[0].tick(true,true)&&!current[0].driving()&&!current[0].fighting(),"native callback cannot resurrect the interrupted tick");
+            check(stops[0]>0,"even the first combat tick is cancelled before fighting was recorded");
+            check(current[0].tick(true,true)!=off,off?"a removed duty never drives again":"an ordinary stop permits a fresh tick");
+        }
+    }
+
 }

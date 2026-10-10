@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty","guard-duty-fenced");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -248,7 +248,7 @@ final class ServerController implements ControlSession.Game {
         if(target==null) throw error("PLAYER_NOT_VISIBLE","Player to guard is not within 32 blocks in this dimension");
         if(!target.getUUID().equals(uuid)) throw error("STALE_TARGET","Player to guard changed identity");
         clearDuty();
-        duty=GuardDuty.create(player,session::mayDriveDuty,server,name,uuid,options);
+        duty=GuardDuty.create(player,session.dutyPermission(),server,name,uuid,options);
         return duty.json();
     }
     @Override public void clearDuty() {
@@ -263,9 +263,11 @@ final class ServerController implements ControlSession.Game {
     }
     /** True when the duty drove the body this tick. */
     private boolean tickDuty(BodyPlayer body) {
+        GuardDuty current=duty;
         boolean drove;
-        try { drove=duty.tick(dutyMayInterrupt(),active==null); }
-        catch(RuntimeException fault) { drove=false; duty.interrupt(); }
+        try { drove=current.tick(dutyMayInterrupt(),active==null); }
+        catch(RuntimeException fault) { drove=false; current.interrupt(); }
+        if(current!=duty)return false; // A native callback may have cleared or replaced the duty.
         if(drove) { dutyDrove=true; if(companion!=null) companion.guardedElsewhere(); return true; }
         if(dutyDrove) { dutyDrove=false; if(companion!=null) companion.resumeAfterGuard(); else if(active==null) body.stopInput(); }
         return false;
@@ -449,7 +451,7 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;
     }
-    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty").contains(name);}
+    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty","guard-duty-fenced").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }

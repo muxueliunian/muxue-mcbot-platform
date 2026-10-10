@@ -29,6 +29,7 @@ async function fixture(t, { guardCapability = true } = {}) {
   const body = await ServerBody.connect({ connection: mock.connection, username: 'ServerBot', worldId: 'test-world', heartbeatIntervalMs: 60000 });
   const events = new EventJournal();
   const mode = new CompanionMode(body, events);
+  mode.resumeDelayMs = 0; // This suite checks the handoff, not the production debounce interval.
   const monitor = new RuntimeMonitor(body, events, { companion: mode, onFatal: () => {} });
   t.after(async () => { monitor.stop(); await body.close(); await mock.close(); });
   const sent = () => mock.calls.filter(call => call.method === 'act' && call.params.name === 'follow-companion').map(call => call.params.args);

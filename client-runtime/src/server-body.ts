@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
-import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus, type GuardDutyRequest, type GuardDutyState } from './body.js';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus, type GuardDutyRequest, type GuardDutyState, type StopOptions } from './body.js';
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -147,7 +147,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty', 'guard-duty-fenced'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -257,14 +257,23 @@ export class ServerBody implements Body {
       return observed;
     } catch (error) { throw this.invalidate(error); }
   }
+  private guardRevision = 0;
   async setGuard(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }> {
     this.assertActive();
-    if (!this.hello.capabilities.includes('guard-duty')) throw new BodyError('UNSUPPORTED', '身体不支持常驻保护（guard-duty）');
+    if (!this.hello.capabilities.includes('guard-duty-fenced')) throw new BodyError('UNSUPPORTED', '身体不支持带撤销屏障的常驻保护（guard-duty-fenced）');
+    if (this.stopping) throw new BodyError('BUSY', '正在停止，请等待确认后更改保护');
+    const guardRevision = ++this.guardRevision, revision = this.revision;
     try {
-      const reply = z.union([guardDutySchema, z.object({ enabled: z.literal(false) })]).parse(await this.rpc('guard', { ...this.identity(), ...request }));
+      const raw = await this.rpc('guard', { ...this.identity(), controlGeneration: this.controlGeneration, guardRevision, ...request });
       this.assertActive();
+      if (guardRevision !== this.guardRevision) throw new BodyError('CANCELLED', '保护请求已被更新的设置或停止取代');
+      const reply = z.union([guardDutySchema, z.object({ enabled: z.literal(false) })]).parse(raw);
+      if (z.object({ guardRevision: generation }).parse(raw).guardRevision !== guardRevision) throw new BodyError('INVALID_RESPONSE', '保护回执序号不匹配');
       return reply;
-    } catch (error) { throw this.invalidate(error); }
+    } catch (error) {
+      if (error instanceof BodyError && error.code === 'STALE_CONTROL' && revision !== this.revision) throw new BodyError('CANCELLED', '停止前的保护请求已被服务端拒绝');
+      throw this.invalidate(error);
+    }
   }
   acquireTask(taskToken: string): void {
     this.assertActive();
@@ -459,14 +468,17 @@ export class ServerBody implements Body {
   }
   pendingOperations(): readonly Operation[] { return [...this.operations.values()].filter(op => op.status === 'running' && !this.internalOperations.has(op.operationId)); }
   isBusy(): boolean { return !!(this.taskOwner || this.exclusive || this.stopping); }
-  stop(): Promise<{ stopped: true }> {
-    if (this.stopping) return this.stopping;
+  stop(options: StopOptions = {}): Promise<{ stopped: true }> {
+    // A stronger stop arriving during an ordinary stop must also clear protection.
+    if (this.stopping) return options.clearGuard ? this.stopping.then(() => this.stop(options)) : this.stopping;
     this.assertActive();
     const oldGeneration = this.controlGeneration;
+    const clearGuard = options.clearGuard === true && this.hello.capabilities.includes('guard-duty-fenced');
+    const guardRevision = clearGuard ? ++this.guardRevision : undefined;
     this.revision++;
     const stopping = async (): Promise<{ stopped: true }> => {
       try {
-        const reply = z.object({ stopped: z.literal(true), controlGeneration: generation }).parse(await this.rpc('stop', this.identity()));
+        const reply = z.object({ stopped: z.literal(true), controlGeneration: generation }).parse(await this.rpc('stop', { ...this.identity(), ...(clearGuard ? { clearGuard: true, guardRevision } : {}) }));
         this.assertActive();
         if (reply.controlGeneration !== oldGeneration + 1) throw new BodyError('STALE_CONTROL', '停止回执代次异常，控制已终止');
         this.controlGeneration = reply.controlGeneration;

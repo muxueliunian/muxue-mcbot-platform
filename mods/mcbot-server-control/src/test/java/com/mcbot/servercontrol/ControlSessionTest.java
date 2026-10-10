@@ -12,7 +12,8 @@ public final class ControlSessionTest {
         boolean exists,dead,savedDead;
         int creations,starts,stops,respawns;
         boolean immediate=true;
-        boolean crashChat,crashStop,nearby;
+        boolean crashChat,crashStop,nearby,guardDuty;
+        JsonObject guarding;int dutyClears;
         int discoveries;
         ControlSession.Operation active;
         @Override public boolean connected() { return exists&&!dead; }
@@ -22,7 +23,9 @@ public final class ControlSessionTest {
             exists=true;dead=false;savedDead=false;respawns++;
         }
         @Override public boolean leave() { if(!exists)return false;exists=false;dead=false;return true; }
-        @Override public JsonObject hello() { return obj("capabilities",nearby?List.of("send-chat","nearby-blocks"):List.of("send-chat")); }
+        @Override public JsonObject hello() { List<String> caps=new ArrayList<>(List.of("send-chat"));if(nearby)caps.add("nearby-blocks");if(guardDuty)caps.add("guard-duty");return obj("capabilities",caps); }
+        @Override public JsonObject guard(JsonObject p) { guarding=p.has("off")?null:p;return obj("enabled",guarding!=null); }
+        @Override public void clearDuty() { dutyClears++;guarding=null; }
         @Override public JsonObject observe(JsonObject p) { return obj("source","server-observed","container",null); }
         @Override public JsonObject nearbyBlocks(JsonObject p) {discoveries++;return obj("dimension","minecraft:overworld","candidates",List.of());}
         @Override public JsonObject watch() { return obj("chat",List.of(),"chatCursor",7); }
@@ -217,6 +220,20 @@ public final class ControlSessionTest {
         cleanupFailure.time.set(ControlSession.TTL_MS);
         errorCode("LEASE_LOST",()->cleanupFailure.session.call("heartbeat",cleanupFailure.auth(afterFailure)));
         check(cleanupFailure.game.exists,"cleanup exception does not remove retained body");
+        // The guard duty: a lease-bound method, not an operation; a stop keeps it, the end of the lease drops it.
+        Fixture duty=new Fixture();JsonObject dutyLease=duty.claim("a");
+        JsonObject guardRequest=duty.auth(dutyLease);guardRequest.addProperty("player","Alex");guardRequest.addProperty("expectedEntityId",UUID.randomUUID().toString());
+        errorCode("UNSUPPORTED",()->duty.session.call("guard",guardRequest));
+        duty.game.guardDuty=true;
+        JsonObject guarded=duty.session.call("guard",guardRequest);
+        check(guarded.get("enabled").getAsBoolean()&&duty.game.guarding!=null,"guard turns the duty on");
+        budget(guarded,0,"guard uses no operation ID");
+        duty.session.call("stop",duty.auth(dutyLease));
+        check(duty.game.guarding!=null,"a stop keeps the guard duty");
+        JsonObject noLease=duty.auth(dutyLease);noLease.addProperty("leaseId",UUID.randomUUID().toString());noLease.addProperty("player","Alex");noLease.addProperty("expectedEntityId",UUID.randomUUID().toString());
+        errorCode("LEASE_LOST",()->duty.session.call("guard",noLease));
+        duty.session.call("release",duty.auth(dutyLease));
+        check(duty.game.guarding==null&&duty.game.dutyClears>=1,"releasing the lease drops the guard duty");
         System.out.println("ControlSessionTest: "+checks+" checks passed");
         LocalHttpBridgeTest.run();
         ExactNbtTest.run();
@@ -231,7 +248,7 @@ public final class ControlSessionTest {
         ToolAssessmentTest.run();
         SurvivalAlphaTest.run();
         NavigationTest.run();SurfaceRouteTest.run();BuildTaskTest.run();IdleGazeTest.run();LookAroundTest.run();
-        DefenseAlphaTest.run();GuardCombatTest.run();
+        DefenseAlphaTest.run();GuardCombatTest.run();GuardDutyTest.run();
         ItemInteractionsTest.run();HostingRulesTest.run();ModAdaptersTest.run();WorkstationCoreTest.run();GenericItemSlotsTest.run();
     }
 }

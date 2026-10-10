@@ -2,7 +2,9 @@
 
 2026-10-10 起草。起因是用户觉得托管时的状态管理设计得不好（8l 刚把跟随改成持续状态，但守卫、跟随、建筑、临时小任务之间的关系还是乱的）。本文先整理现状和问题，再定分层目标和分步路线；**第一步是守卫和跟随解耦**，详细设计见第 5 节。同一天的外部陪伴体验评审见 [companion_experience_review.md](companion_experience_review.md)，其中第 5 条与本文第一步是同一个问题。
 
-状态：设计中，没有改代码。第 6 节的三个问题用户 10-10 已定。
+状态：第 6 节的三个问题用户 10-10 已定。第一步分两块做：
+- **第一块（10-10，离线完成）**：服务端常驻保护（`GuardDuty`、协议方法 `guard`、观察里的 `guard`），空闲、原地等待、跟随时都能保护，等待中打完走回原位；运行端改用它（跟随让开、等待都不关保护，`companion-mode stop`／`stop-action` 关）。协议见 [server_body_protocol.md](server_body_protocol.md#常驻保护8m-第一步第一块2026-10-10)。离线：Java `GuardDutyTest` 17 项、`ControlSessionTest` 和 `FollowCompanionTest` 补的检查，运行端 `companion-guard-duty.test.mjs` 5 项；没有隔离服实测、没有真实模型试玩。
+- **第二块（未做）**：5.2 表里的任务打断（建筑、种地、走路、长途走、工作站走路段……）和期限顺延；在那之前，做这些任务时保护等它们做完（`reason:BUSY`），只有近身自卫。
 
 ## 1. 现状：状态分在三层
 

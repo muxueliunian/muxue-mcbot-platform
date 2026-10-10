@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance","build","machine-items","machine-status");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -47,6 +47,9 @@ final class ServerController implements ControlSession.Game {
     private ServerPlayer approachPlayer;
     private Vec3 approachPlayerStart;
     private FollowCompanion companion;
+    /** Standing guard: kept across operations and stops, cleared when the lease ends (docs/companion_state_design.md, section 5). */
+    private GuardDuty duty;
+    private boolean dutyDrove;
     private PickupItem pickup;
     private NativeNavigation navigation;
     private NativePillar pillar;
@@ -207,6 +210,7 @@ final class ServerController implements ControlSession.Game {
         result.add("weather",obj("natural",player.level().dimensionType().natural(),"sky",player.level().canSeeSky(BlockPos.containing(player.getEyePosition())),"raining",player.level().isRaining(),"thundering",player.level().isThundering()));
         JsonObject drops=groundItems();drops.entrySet().forEach(entry->result.add(entry.getKey(),entry.getValue()));
         pickups.observation().entrySet().forEach(entry->result.add(entry.getKey(),entry.getValue()));
+        if(duty!=null) result.add("guard",duty.json());
         if(params.has("block")) {
             Vec3 requested=point(object(params,"block")); BlockPos block=BlockPos.containing(requested);
             JsonObject state=obj("position",position(Vec3.atLowerCornerOf(block)),"state","unloaded");
@@ -234,6 +238,38 @@ final class ServerController implements ControlSession.Game {
     @Override public JsonObject survivalState(JsonObject params) {return survival.survivalState(params);}
     @Override public JsonObject assessTool(JsonObject params) {return ToolAssessment.assess(player,params);}
     @Override public JsonObject machineStatus(JsonObject params) {return MachineStatus.read(player,params);}
+    @Override public JsonObject guard(JsonObject params) {
+        if(params.has("off")&&bool(params,"off")) { clearDuty(); return obj("enabled",false); }
+        String name=string(params,"player"),expected=string(params,"expectedEntityId");
+        UUID uuid;
+        try { uuid=UUID.fromString(expected); } catch(IllegalArgumentException invalid) { throw error("INVALID_ARGUMENT","expectedEntityId must be a UUID"); }
+        GuardCombat.Options options=GuardDuty.options(params);
+        ServerPlayer target=findPlayer(name);
+        if(target==null) throw error("PLAYER_NOT_VISIBLE","Player to guard is not within 32 blocks in this dimension");
+        if(!target.getUUID().equals(uuid)) throw error("STALE_TARGET","Player to guard changed identity");
+        clearDuty();
+        duty=GuardDuty.create(player,session::mayDriveDuty,server,name,uuid,options);
+        return duty.json();
+    }
+    @Override public void clearDuty() {
+        GuardDuty old=duty; duty=null;
+        if(old!=null) { try { old.stop(); } finally { if(dutyDrove) { dutyDrove=false; if(companion!=null) companion.resumeAfterGuard(); } } }
+    }
+    /** What runs now can stand aside for a fight (more tasks open up in later steps; until then they keep the body). */
+    private boolean dutyMayInterrupt() {
+        if(survival!=null&&survival.busy()||nativeWriteInProgress()||player.isSleeping()||player.containerMenu!=player.inventoryMenu) return false;
+        if(active==null) return true;
+        return companion!=null&&!companion.ownGuard();
+    }
+    /** True when the duty drove the body this tick. */
+    private boolean tickDuty(BodyPlayer body) {
+        boolean drove;
+        try { drove=duty.tick(dutyMayInterrupt(),active==null); }
+        catch(RuntimeException fault) { drove=false; duty.interrupt(); }
+        if(drove) { dutyDrove=true; if(companion!=null) companion.guardedElsewhere(); return true; }
+        if(dutyDrove) { dutyDrove=false; if(companion!=null) companion.resumeAfterGuard(); else if(active==null) body.stopInput(); }
+        return false;
+    }
     private void receiveFoodFinish(LivingEntityUseItemEvent.Finish event) {
         if(player==event.getEntity()&&survival!=null)survival.receiveFoodFinish(event.getHand()==InteractionHand.MAIN_HAND,event.getItem(),event.getResultStack());
     }
@@ -350,7 +386,8 @@ final class ServerController implements ControlSession.Game {
         if(operation.name.equals("approach-container")||operation.name.equals("approach-player")||operation.name.equals("approach-resource")) { beginApproach(operation);return; }
         if(operation.name.equals("pickup-item")) {pickup=PickupItem.create(operation,player,session,survival,resources);active=operation;pickup.tick();if(!operation.status.equals("running"))stop();return;}
         if(operation.name.equals("follow-companion")) {
-            companion=FollowCompanion.create(operation,player,session,server);active=operation;
+            String followed=string(args,"player");
+            companion=FollowCompanion.create(operation,player,session,server,()->duty!=null&&duty.protects(followed));active=operation;
             companion.tick();if(!operation.status.equals("running")) stop();return;
         }
         if(operation.name.equals("retreat-from-entity")){beginRetreat(operation);return;}
@@ -412,17 +449,18 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;
     }
-    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status").contains(name);}
+    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }
         reconcile();
         if(lastDriveTick==server.getTickCount()){
-            if(active==null||!session.mayDrive(active))body.stopInput();return;
+            if(!dutyDrove&&(active==null||!session.mayDrive(active)))body.stopInput();return;
         }
         lastDriveTick=server.getTickCount();
         if(survival!=null) survival.tick();
         emotes.tick(now());
+        if(duty!=null&&tickDuty(body)) return;
         if(active==null) { body.stopInput(); idleGaze(body); return; }
         if(!session.mayDrive(active)) { stop(); return; }
         if(companion!=null) {
@@ -613,7 +651,7 @@ final class ServerController implements ControlSession.Game {
         if(active!=null) active.finish(status,summary,result);
         stop();
     }
-    @Override public void stop() { active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(build!=null)build.stop();build=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
+    @Override public void stop() { if(duty!=null)duty.interrupt();dutyDrove=false;active=null;pillar=null;emotes.cancelGesture(player);if(station!=null)station.stop();station=null;if(job!=null)job.stop();job=null;if(travel!=null)travel.stop();travel=null;if(farm!=null)farm.stop();farm=null;if(build!=null)build.stop();build=null;if(breed!=null)breed.stop();breed=null;sleepBed=null;if(navigation!=null)navigation.stop();navigation=null;followedPlayer=null;retreatTarget=null;retreatOrigin=null;approachPlayer=null;approachPlayerStart=null; if(companion!=null) companion.stop();companion=null;if(pickup!=null)pickup.stop();pickup=null; if(player!=null) player.stopInput();if(survival!=null) survival.stop(); }
     @Override public void abort(ControlSession.Operation operation) { if(active==operation) stop();else if(survival!=null) survival.abort(operation); }
     @Override public boolean leave() {
         if(player==null)return false;

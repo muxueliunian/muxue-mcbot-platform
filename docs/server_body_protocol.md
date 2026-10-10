@@ -275,6 +275,18 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 
 分段时间字段sensedAt、stopRequestedAt、stopConfirmedAt、actionRequestedAt、actionAcceptedAt记录运行端时间；actionAcceptedAt是收到回执的时刻，不是服务器最后实际写入tick。真实反应延迟与更长运行的结果须看本批验收，工具数量不代表通用Mod、任意武器或全地形支持。
 
+### 常驻保护（8m 第一步第一块，2026-10-10）
+
+设计见[陪伴状态设计](companion_state_design.md)第 5 节。能力标记`guard-duty`：保护不再挂在`follow-companion`操作上，而是租约上的一项常驻职责，战斗逻辑和上面 8h 的一样（`GuardCombat`）。
+
+- **方法`guard`**（要租约，和`heartbeat`一样校验 instance／session／lease；**不是操作**，不占操作 ID 预算，正在跑的操作不会让它报`BUSY`）：`{player, expectedEntityId, options?}`打开或替换（`options`同 8h 的`guard`对象，省略用默认值），玩家不在 32 格内报`PLAYER_NOT_VISIBLE`，UUID 不符报`STALE_TARGET`；`{off:true}`关掉，返回`{enabled:false}`。
+- **生命周期**：`stop`（代次加一）不清保护，只打断正在进行的战斗，下一刻照常判断；`revoke`、`release`、新的`claim`、租约过期、身体死亡／换维度／移除时清掉。
+- **观察**：保护开着时`observe`多一个`guard`：`{enabled:true, player, entityId, options, covering, reason?, returning, busyMs, state, target?, targetId?, hits, damage, shots, kills, retreats}`。`covering:false`时`reason`是`PLAYER_AWAY`（下线、换维度、超出 32 格）、`TOO_FAR`（Bot 离玩家超过 16 格）、`BUSY`（正在做的事不能打断）或`NO_CONTROL`；玩家回来后自动接着保护。`busyMs`是累计打架时长，以后给任务顺延期限用。
+- **什么时候接管身体**：Bot 离玩家 16 格内，且此刻没有操作在跑（空闲，或运行端在原地等待），或者在跑的是不带自己保护的`follow-companion`；在吃东西、挖掘、自卫（原生使用或写入中）、睡觉、开着界面时不接管。这一块里别的任务（建筑、采集、走路、长途走、工作站……）还不能被打断，保护等它们做完（`reason:BUSY`），这期间只有 3 格近身自卫；任务打断在下一块做。
+- **打完以后**：跟随时交还给跟随，跟随重新算路线，打架时挨的伤不再算作跟随受伤；空闲时走回开始打之前站的地方（1.2 格内算到，最多 15 秒，走不到就留在原地）。跟随在保护同一个玩家时挨打不会结束跟随。
+- **运行端**：身体有`guard-duty`时，`companion-mode follow`的保护（默认开，`guard:false`关）变成在开始跟随时调`guard`，`follow-companion`不再带`guard`；跟随让开、改成原地等待都不动保护；`companion-mode guard`不需要先跟随，没跟随时带`player`；`companion-mode stop`和`stop-action`关掉保护，反射引起的停止不关。`guard`事件从观察里的`guard`生成，规则同 8h；服务端那边保护没了（换过控制权等）时发一条`guard`事件说明。保护覆盖时 3 格近身自卫不插手，不覆盖时照常；保护在打时普通进食等打完，紧急进食照旧。
+- 旧路径保留：身体没有`guard-duty`时运行端照旧把保护放进`follow-companion`。
+
 ### 试玩反馈修正（2026-10-08）
 
 10-08 小雪用 Claude（Haiku）实测时遇到的问题，按顺序修了五处；实测见`scripts/server-equip-swim-smoke.mjs`（隔离服：装着 SB 时 16 项；挪开客户端模组、加`--with-peer`时 15 项，含跟随下水）。

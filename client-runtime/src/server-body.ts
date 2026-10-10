@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
-import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus } from './body.js';
+import { BodyError, type Body, type BodyHello, type Position, type Observation, type ActionName, type ActionArguments, type Operation, type NearbyBlocks, type NearbyResources, type ResourceScanOptions, type SurvivalState, type ToolAssessment, type ToolAssessmentOptions, type MachineStatus, type GuardDutyRequest, type GuardDutyState } from './body.js';
 
 const identifier = z.string().min(1);
 const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -50,6 +50,13 @@ const observationSchema = z.object({
   weather: z.object({ natural: z.boolean(), sky: z.boolean(), raining: z.boolean(), thundering: z.boolean() }).optional(),
   groundItems: z.array(z.object({ entityId: z.string().uuid(), position, stack: itemValue, onGround: z.boolean().optional(), visible: z.boolean().nullable().optional(), visibility: z.enum(['visible', 'occluded', 'unknown']) })).max(32).optional(), groundItemsTruncated: z.boolean().optional(),
   pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier, storedIn: identifier.optional() })).max(256).optional(),
+  guard: z.lazy(() => guardDutySchema).optional(),
+});
+const guardDutySchema = z.object({
+  enabled: z.literal(true), player: z.string(), entityId: z.string().uuid(), options: z.record(z.unknown()).optional(),
+  covering: z.boolean(), reason: z.string().optional(), returning: z.boolean().optional(), busyMs: z.number().nonnegative(),
+  state: z.string(), target: z.string().optional(), targetId: z.string().optional(),
+  hits: z.number(), kills: z.number(), shots: z.number(), retreats: z.number(), damage: z.number(),
 });
 const operationSchema = z.object({
   operationId: identifier, sessionId: identifier, name: z.string(), controlGeneration: generation,
@@ -140,7 +147,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -248,6 +255,15 @@ export class ServerBody implements Body {
       if (!observed.connected || observed.instanceId !== this.lease!.instanceId || observed.sessionId !== this.lease!.sessionId || observed.worldId !== this.options.worldId || observed.username !== this.options.username) throw new BodyError('WORLD_CHANGED', '角色或世界会话已改变，必须显式重新接管');
       if (revision === this.revision) this.checkGeneration(observed.controlGeneration);
       return observed;
+    } catch (error) { throw this.invalidate(error); }
+  }
+  async setGuard(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }> {
+    this.assertActive();
+    if (!this.hello.capabilities.includes('guard-duty')) throw new BodyError('UNSUPPORTED', '身体不支持常驻保护（guard-duty）');
+    try {
+      const reply = z.union([guardDutySchema, z.object({ enabled: z.literal(false) })]).parse(await this.rpc('guard', { ...this.identity(), ...request }));
+      this.assertActive();
+      return reply;
     } catch (error) { throw this.invalidate(error); }
   }
   acquireTask(taskToken: string): void {

@@ -40,6 +40,8 @@ final class FollowCompanion {
         default GuardCombat guard(){return null;}
         /** The guard drove the body elsewhere: the follow route is stale. */
         default void resetNavigation(){}
+        /** A standing guard duty protects this follow's player, so being hit is expected and the duty decides about fights. */
+        default boolean dutyGuards(){return false;}
     }
     private final ControlSession.Operation operation;
     private final View view;
@@ -101,7 +103,7 @@ final class FollowCompanion {
             view.refresh();
             Target actual=view.target(name);validate(actual);
             // A guarding follow expects to be hit; the guard decides whether to fight or back off.
-            if(guard==null&&view.health()<health) throw error("BLOCKED","Body took damage during continuous follow");
+            if(guard==null&&!view.dutyGuards()&&view.health()<health) throw error("BLOCKED","Body took damage during continuous follow");
             health=view.health();
             if(guard!=null) {
                 if(guard.tick(actual.position())) {
@@ -223,20 +225,36 @@ final class FollowCompanion {
     /** Someone spoke: stop strolling and stay where the body is, so it can turn to them. */
     void holdStroll(){if(stroll!=null||strollAnchor!=null||waitAnchor!=null)endStroll(clock.getAsLong(),true);}
     boolean strolling(){return stroll!=null;}
+    /** The guard duty took the body this tick: the follow stands aside and reports guarding. */
+    void guardedElsewhere() {
+        if(stopped)return;
+        if(stroll!=null||strollAnchor!=null)endStroll(clock.getAsLong(),false);
+        waitAnchor=null;unreachableTarget=null;guarded=true;publish("guarding");
+    }
+    /** The duty handed the body back: route again from where the fight left it, counting damage from now on. */
+    void resumeAfterGuard() {
+        if(stopped)return;
+        guarded=false;route=null;view.resetNavigation();health=view.health();
+    }
+    /** This follow fights for itself (the guard passed in its arguments). */
+    boolean ownGuard(){return guard!=null;}
     boolean waiting(){return "waiting".equals(state)&&stroll==null;}
     void stop() {
         stopped=true;route=null;if(stroll!=null)view.endStroll();stroll=null;
         try {if(guard!=null)guard.stop();} finally {view.cancelNavigation();view.stop();}
     }
 
-    static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server) {
+    static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server) {return create(operation,body,session,server,()->false);}
+    /** dutyGuards: a standing guard duty protects the followed player (ServerController asks its duty). */
+    static FollowCompanion create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,MinecraftServer server,java.util.function.BooleanSupplier dutyGuards) {
         GuardCombat.Options guardOptions=GuardCombat.Options.parse(operation.args.get("guard"));
         GuardCombat guard=guardOptions==null?null:GuardCombat.create(body,session,operation,server,string(operation.args,"player"),guardOptions);
         View view=new View() {
             FlatApproach geometry;
-            final NativeNavigation navigation=guard==null?new NativeNavigation(body,session,operation):new NativeNavigation(body,session,operation).tolerateDamage();
+            final NativeNavigation navigation=guard==null?new NativeNavigation(body,session,operation).tolerateDamageWhile(dutyGuards):new NativeNavigation(body,session,operation).tolerateDamage();
             public GuardCombat guard(){return guard;}
-            public void resetNavigation(){navigation.reset();endStroll();}
+            public boolean dutyGuards(){return dutyGuards.getAsBoolean();}
+            public void resetNavigation(){navigation.reset();navigation.rebaseHealth();endStroll();}
             public boolean mayDrive() {return session.mayDrive(operation);}
             public void refresh() {NativeNavigation.conditions(body);geometry=new FlatApproach(body);}
             public boolean nativeNavigation(){return true;}

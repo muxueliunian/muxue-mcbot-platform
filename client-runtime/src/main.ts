@@ -113,7 +113,7 @@ async function main(): Promise<void> {
     const reflexes = survival ? new SurvivalReflexes(body, survival, events, { stopCurrent, stopWork: stopCurrent.keepCompanion, ...companionReflexHooks(tasks, gather, companion, stopCurrent.keepCompanion, survival), ordinaryBusy: () => {
       try { tasks.assertIdle(); gather.assertIdle(); survival.assertIdle(); }
       catch { return true; }
-      return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && !['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state);
+      return body!.isBusy?.() === true || body!.pendingOperations().length > 0 || !!companion && (!['idle', 'paused', 'stopped', 'blocked'].includes(companion.snapshot().state) || companion.guardFighting());
     } }) : undefined;
     if (survival && reflexes) gather.useSurvival(survival, () => reflexes.read());
     server = createMcpServer(body, events, { chatFloor: lease?.chatCursor, companion, gather, tasks, survival, reflexes, stopCurrent, places, machines, blueprints: new BlueprintShelf(path.resolve(values['blueprint-dir'] ?? path.join(runtimeDir, 'blueprints'))) });

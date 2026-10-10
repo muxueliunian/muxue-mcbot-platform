@@ -45,10 +45,10 @@ final class NativeNavigation {
     private final Set<BlockPos> badShores=new HashSet<>();
     private int swimTries,swims;
     private final BodyPlayer body;
-    private final ControlSession session;
-    private final ControlSession.Operation operation;
+    private final java.util.function.BooleanSupplier mayDrive;
     private final Object dimension;
-    private final float initialHealth;
+    private float initialHealth;
+    private java.util.function.BooleanSupplier damageToleratedWhile=()->false;
     private Zombie model;
     private RouteEvaluator evaluator;
     private PathFinder finder;
@@ -62,8 +62,10 @@ final class NativeNavigation {
     private int leaps;
     private int lastTick=Integer.MIN_VALUE;
     private boolean arrivedThisTick;
-    NativeNavigation(BodyPlayer body,ControlSession session,ControlSession.Operation operation){
-        this.body=body;this.session=session;this.operation=operation;dimension=body.serverLevel();initialHealth=body.getHealth();
+    NativeNavigation(BodyPlayer body,ControlSession session,ControlSession.Operation operation){this(body,()->session.mayDrive(operation));}
+    /** Driven by something other than one operation (the guard duty): mayDrive says whether it may still move the body. */
+    NativeNavigation(BodyPlayer body,java.util.function.BooleanSupplier mayDrive){
+        this.body=body;this.mayDrive=mayDrive;dimension=body.serverLevel();initialHealth=body.getHealth();
         progress=replanAnchor=body.position();lastProgress=clock();
     }
     private static long clock(){return System.nanoTime()/1_000_000;}
@@ -75,9 +77,9 @@ final class NativeNavigation {
     }
     boolean tick(Vec3 destination,Predicate<Vec3> goal){return tick(destination,goal,p->true);}
     boolean tick(Vec3 destination,Predicate<Vec3> goal,Predicate<Vec3> allowed){
-        if(stopped||!session.mayDrive(operation)){stop();return false;}
+        if(stopped||!mayDrive.getAsBoolean()){stop();return false;}
         conditions(body);if(body.serverLevel()!=dimension)throw error("STALE_TARGET","Navigation dimension changed");
-        if(!damageTolerated&&body.getHealth()<initialHealth){
+        if(!damageTolerated&&!damageToleratedWhile.getAsBoolean()&&body.getHealth()<initialHealth){
             var source=body.getLastDamageSource();
             throw error("BLOCKED","Body took damage during navigation"+(source!=null?" ("+source.getMsgId()+")":"")+"; safe movement was not confirmed");
         }
@@ -103,7 +105,7 @@ final class NativeNavigation {
         if(route==null){
             if(!body.onGround()){steer(feet,null);return false;}
             plan(feet,destination,goal,allowed,now);
-            if(!session.mayDrive(operation)){stop();return false;}
+            if(!mayDrive.getAsBoolean()){stop();return false;}
         }
         while(index<route.size()&&reached(feet,route.get(index)))index++;
         if(index>=route.size()){
@@ -316,6 +318,10 @@ final class NativeNavigation {
     void stop(){stopped=true;route=null;body.stopInput();}
     /** A guarding body fights while it walks: damage is expected, not a sign of an unsafe route. */
     NativeNavigation tolerateDamage(){damageTolerated=true;return this;}
+    /** Damage is expected while `when` holds (a guard duty protects the player this follows); afterwards only new damage counts. */
+    NativeNavigation tolerateDamageWhile(java.util.function.BooleanSupplier when){damageToleratedWhile=when;return this;}
+    /** Count damage from now on only (after a fight the guard duty took the body for). */
+    void rebaseHealth(){initialHealth=body.getHealth();}
     /** A leg of a long walk: search the whole range with a larger node budget, to find the way round a cliff or along a river. */
     NativeNavigation wide(){wide=true;return this;}
     private boolean wide;

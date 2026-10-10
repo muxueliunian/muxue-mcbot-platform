@@ -256,6 +256,10 @@ final class GuardCombat {
     static boolean shield(ItemStack stack){return verified(stack,ShieldItem.class,Known.SHIELD);}
 
     static GuardCombat create(BodyPlayer body,ControlSession session,ControlSession.Operation operation,MinecraftServer server,String companionName,Options options) {
+        return create(body,()->session.mayDrive(operation),server,companionName,options);
+    }
+    /** mayDrive: whether the guard may still move and swing (the follow operation is running, or the guard duty's lease is live). */
+    static GuardCombat create(BodyPlayer body,java.util.function.BooleanSupplier mayDrive,MinecraftServer server,String companionName,Options options) {
         View view=new View() {
             NativeNavigation approach,retreat;Object approaching;
             int sequence;
@@ -289,14 +293,14 @@ final class GuardCombat {
             public boolean dead(Foe foe){return !living(foe).isAlive();}
             public boolean inReach(Foe foe){LivingEntity e=living(foe);return body.canInteractWithEntity(e,0)&&body.hasLineOfSight(e);}
             public boolean approach(Foe foe,Vec3 centre,double leash) {
-                if(approaching!=foe.identity()||approach==null){if(approach!=null)approach.stop();approach=new NativeNavigation(body,session,operation).tolerateDamage().sprint();approaching=foe.identity();}
+                if(approaching!=foe.identity()||approach==null){if(approach!=null)approach.stop();approach=new NativeNavigation(body,mayDrive).tolerateDamage().sprint();approaching=foe.identity();}
                 if(retreat!=null){retreat.stop();retreat=null;}
                 LivingEntity e=living(foe);
                 return approach.tick(e.position(),feet->feet.distanceTo(e.position())<=2.4,feet->feet.distanceTo(centre)<=leash);
             }
             public boolean retreat(Vec3 destination,Vec3 centre,double leash) {
                 if(approach!=null){approach.stop();approach=null;approaching=null;}
-                if(retreat==null)retreat=new NativeNavigation(body,session,operation).tolerateDamage().sprint();
+                if(retreat==null)retreat=new NativeNavigation(body,mayDrive).tolerateDamage().sprint();
                 return retreat.tick(destination,feet->feet.distanceTo(destination)<=1.2,feet->feet.distanceTo(centre)<=leash+1);
             }
             public void stopMoving() {
@@ -336,13 +340,13 @@ final class GuardCombat {
             public float attack(Foe foe) {
                 LivingEntity e=living(foe);String id=foe.id();float[] dealt={0};RuntimeException[] refused={null};
                 NativeAttackScope scope=new NativeAttackScope() {
-                    public boolean allowNativeTarget(String targetId){return id.equals(targetId)&&session.mayDrive(operation)&&!protectedEntity(e);}
+                    public boolean allowNativeTarget(String targetId){return id.equals(targetId)&&mayDrive.getAsBoolean()&&!protectedEntity(e);}
                     public void refuseNative(RuntimeException failure){if(refused[0]==null)refused[0]=failure;}
                     public void receipt(String targetId,float amount){if(id.equals(targetId)&&Float.isFinite(amount)&&amount>0)dealt[0]+=amount;}
                 };
                 look(e.getEyePosition());
                 SurvivalActions.scopedAttack(body,scope,()->body.attack(e));
-                if(session.mayDrive(operation))body.swing(InteractionHand.MAIN_HAND,true);
+                if(mayDrive.getAsBoolean())body.swing(InteractionHand.MAIN_HAND,true);
                 return refused[0]==null?dealt[0]:0;
             }
             public boolean hasBow(){return best(GuardCombat::bow,(a,b)->0)>=0&&!body.getProjectile(body.getInventory().getItem(best(GuardCombat::bow,(a,b)->0))).isEmpty();}

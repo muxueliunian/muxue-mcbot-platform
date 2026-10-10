@@ -68,6 +68,8 @@ export interface Observation {
   sleeping?: boolean; time?: { dayTime: number; canSleep: boolean };
   /** ServerBody: whether the sky is overhead (not underground or indoors), and the weather, for scene hints. */
   weather?: { natural: boolean; sky: boolean; raining: boolean; thundering: boolean };
+  /** ServerBody: the guard duty, present while it is on. */
+  guard?: GuardDutyState;
 }
 export interface BodyHello {
   protocol: 1 | 2; backend?: 'client' | 'server'; instanceId?: string; worldId?: string;
@@ -90,6 +92,14 @@ export interface BodyHello {
 export type ModifyAction = { kind: 'enchant' | 'anvil' | 'grind' | 'smith' | 'loom' | 'cartography'; option?: number; with?: string; rename?: string; template?: string; addition?: string; dye?: string; pattern?: string; patternItem?: string };
 /** Companion guard: fight hostiles within `radius` of the followed player; back off at `lowHealth`. */
 export interface GuardOptions { radius?: number; lowHealth?: number; bow?: boolean; shield?: boolean }
+/** ServerBody guard duty (capability guard-duty): protecting one player, kept across operations and stops until turned off or the lease ends. */
+export interface GuardDutyState {
+  enabled: true; player: string; entityId: string; options?: Record<string, unknown>;
+  /** Whether the duty can fight for the player right now; reason says why not (PLAYER_AWAY, TOO_FAR, BUSY, NO_CONTROL). */
+  covering: boolean; reason?: string; returning?: boolean; busyMs: number;
+  state: string; target?: string; targetId?: string; hits: number; kills: number; shots: number; retreats: number; damage: number;
+}
+export type GuardDutyRequest = { player: string; expectedEntityId: string; options?: GuardOptions } | { off: true };
 export interface ActionArguments {
   'send-chat': { message: string };
   'look-at': Position;
@@ -154,6 +164,8 @@ export interface Body {
   survivalState?(options?: { details?: boolean }): Promise<SurvivalState>;
   assessTool?(options: ToolAssessmentOptions): Promise<ToolAssessment>;
   machineStatus?(position: Position): Promise<MachineStatus>;
+  /** Turn the standing guard duty on, change it, or off (capability guard-duty). Not an operation; a stop keeps it. */
+  setGuard?(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }>;
   acquireTask?(taskToken: string): void;
   releaseTask?(taskToken: string): void;
   operation(operationId: string): Promise<Operation>;

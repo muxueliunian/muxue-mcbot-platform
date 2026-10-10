@@ -29,6 +29,10 @@ final class ControlSession {
         void abort(Operation operation);
         void stop();
         default boolean nativeWriteInProgress() {return false;}
+        /** Turn the standing guard duty on, change it or turn it off ({off:true}); not an operation (docs/server_body_protocol.md). */
+        default JsonObject guard(JsonObject params) {throw error("UNSUPPORTED","Guard duty is not available");}
+        /** The lease ended: drop standing duties. A stop keeps them. */
+        default void clearDuty() {}
     }
     static final class Operation {
         final String id, sessionId, name;
@@ -70,6 +74,11 @@ final class ControlSession {
     void expire() {
         if(leaseId!=null&&clock.getAsLong()>=expiresAt) revokeCurrent("Controller lease expired");
     }
+    /** A standing duty (the guard) may drive while the lease is live, whatever the control generation. */
+    boolean mayDriveDuty() {
+        expire();
+        return leaseId!=null&&game.connected();
+    }
     boolean mayDrive(Operation operation) {
         expire();
         return leaseId!=null&&game.connected()&&operation.generation==generation&&operation.sessionId.equals(sessionId)&&operation.status.equals("running");
@@ -90,7 +99,7 @@ final class ControlSession {
     }
     void revokeCurrent(String reason) {
         Retired previous=leaseId==null?null:new Retired(sessionId,leaseId,stopToken);
-        try { cancel(reason); }
+        try { try { game.clearDuty(); } catch(RuntimeException ignored) { /* the next physical guard remains authoritative */ } cancel(reason); }
         finally {
             if(previous!=null) {
                 retired.addLast(previous);
@@ -145,6 +154,7 @@ final class ControlSession {
             game.ensureBody();
             if(!game.connected()) throw error("WORLD_CHANGED","Cannot claim an unavailable body");
             if(sessionId==null) sessionId=UUID.randomUUID().toString();
+            try { game.clearDuty(); } catch(RuntimeException ignored) { }
             cancel("New explicit claim"); history.clear(); seenIds.clear();
             leaseId=UUID.randomUUID().toString(); stopToken=UUID.randomUUID().toString(); controllerId=requestedController;
             expiresAt=clock.getAsLong()+TTL_MS;
@@ -196,6 +206,9 @@ final class ControlSession {
             case "watch":
                 if(!stopToken.equals(string(p,"stopToken"))) throw error("FORBIDDEN","Wrong host stop token");
                 return game.watch();
+            case "guard":
+                if(!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree("guard-duty"))) throw error("UNSUPPORTED","Guard duty is not available");
+                return withOperationBudget(game.guard(p));
             case "operation", "act": return operation(method,p);
             default: throw error("INVALID_ARGUMENT","Unknown protocol method");
         }

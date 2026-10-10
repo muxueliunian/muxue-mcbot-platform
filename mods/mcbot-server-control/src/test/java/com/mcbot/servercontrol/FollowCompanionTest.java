@@ -53,8 +53,9 @@ final class FollowCompanionTest {
         }
         public void move(Vec3 delta) {moves++;input=delta;}
         public void stop() {stops++;input=null;}
-        GuardCombat guard;int resets;
+        GuardCombat guard;int resets;boolean dutyGuards;
         public GuardCombat guard() {return guard;}
+        public boolean dutyGuards() {return dutyGuards;}
         public void resetNavigation() {resets++;}
         void physics() {if(input!=null)feet=feet.add(new Vec3(input.x,0,input.z).normalize().scale(Math.min(0.22,input.horizontalDistance())));}
         static FlatRoute.Cell cell(Vec3 point) {return new FlatRoute.Cell((int)Math.floor(point.x),(int)Math.floor(point.z));}
@@ -210,6 +211,14 @@ final class FollowCompanionTest {
         guarded.stop();
         Fixture plain=new Fixture(new NativeTerrain());plain.start();plain.terrain.health=14;plain.tick(50);
         plain.failed("BLOCKED");
+        // A standing guard duty protects the player: being hit does not end the follow; the duty takes ticks, then hands the body back.
+        Fixture duty=new Fixture(new NativeTerrain());duty.terrain.dutyGuards=true;duty.start();duty.terrain.health=14;duty.tick(50);
+        check(duty.operation.status.equals("running"),"hit while a guard duty protects the player: the follow keeps running");
+        duty.follower.guardedElsewhere();
+        check(duty.state().equals("guarding")&&duty.operation.summary.equals("Guarding companion")&&!duty.follower.ownGuard(),"the duty took the body: the follow reports guarding");
+        int dutyResets=duty.terrain.resets;duty.follower.resumeAfterGuard();duty.terrain.dutyGuards=false;duty.tick(50);
+        check(duty.operation.status.equals("running")&&duty.terrain.resets==dutyResets+1,"handed back: a fresh route, and earlier damage no longer counts");
+        duty.stop();
     }
     /** Idle stroll while waiting on native navigation: late, short, stays put until the player moves. */
     private static void stroll() {

@@ -55,7 +55,7 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
   onStop, onNewTask, onLost = () => {}, botPlayers = [], log = () => {}, intervalMs = 500, requestTimeoutMs = 1800 }) {
   const file = path.join(runtimeDir, `server-control-${scope.username}.json`);
   let cached = null, cursor = 0, observedCursor = 0, pending = [], stopped = false, revoking = 0, polling = false, timer = null, closed = false;
-  let lastError = '', lostNotified = false;
+  let lastError = '', lostNotified = false, lastNoticeError = '';
 
   function capture() {
     const value = readJson(file);
@@ -79,13 +79,14 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
 
   // sameSession false: revoking a session the body already left (it died and respawned) is still allowed; the server
   // only accepts it for its own retired lease and never lets it touch a newer controller's lease.
-  async function checkedConnection(owner, { sameSession = true } = {}) {
+  async function checkedHello(owner, { sameSession = true } = {}) {
     const connection = serverConnection(scope.connectionFile, scope);
     const hello = await call(connection, 'hello', {});
     if (hello?.protocol !== 2 || hello.backend !== 'server' || hello.worldId !== scope.worldId || hello.username !== scope.username
         || hello.instanceId !== owner.instanceId || (sameSession && hello.sessionId !== owner.sessionId)) throw failure('CONTROL_IDENTITY_CHANGED');
-    return connection;
+    return { connection, hello };
   }
+  async function checkedConnection(owner, options) { return (await checkedHello(owner, options)).connection; }
 
   const capability = (owner) => ({ instanceId: owner.instanceId, sessionId: owner.sessionId,
     leaseId: owner.leaseId, stopToken: owner.stopToken });
@@ -111,6 +112,24 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
       stopped = true;
       return result;
     } finally { revoking--; }
+  }
+
+  // Shows a short host line in the game (the server enforces length, characters and rate). Never throws: the stop
+  // channel must keep working, so a missing capability or any failure only logs once and returns false.
+  async function notice(text) {
+    try {
+      const owner = capture();
+      if (!owner) return false;
+      const { connection, hello } = await checkedHello(owner);
+      if (!Array.isArray(hello.capabilities) || !hello.capabilities.includes('host-notice')) return false;
+      await call(connection, 'notice', { ...capability(owner), text });
+      lastNoticeError = '';
+      return true;
+    } catch (error) {
+      const code = error.code || 'CONTROL_ERROR';
+      if (code !== lastNoticeError) { log(`服务端提示：${code}`); lastNoticeError = code; }
+      return false;
+    }
   }
 
   async function poll() {
@@ -169,7 +188,7 @@ export function createServerBodyControl({ scope, runtimeDir, controllerId, isSto
   }
 
   return {
-    capture, revoke, poll, isCurrent,
+    capture, revoke, poll, isCurrent, notice,
     get stopped() { return stopped; },
     start() { if (!timer) { void poll(); timer = setInterval(() => { void poll(); }, intervalMs); } },
     close() { closed = true; if (timer) clearInterval(timer); timer = null; },

@@ -33,6 +33,8 @@ final class ControlSession {
         default JsonObject guard(JsonObject params) {throw error("UNSUPPORTED","Guard duty is not available");}
         /** The lease ended: drop standing duties. A stop keeps them. */
         default void clearDuty() {}
+        /** Short plain host message shown to players; rate limited by the session (docs/server_body_protocol.md). */
+        default void notice(String text){throw error("UNSUPPORTED","Host notice is not available");}
     }
     static final class Operation {
         final String id, sessionId, name;
@@ -64,6 +66,8 @@ final class ControlSession {
     private final LinkedHashMap<String,Operation> history=new LinkedHashMap<>();
     private final Set<String> seenIds=new HashSet<>();
     private final ArrayDeque<Retired> retired=new ArrayDeque<>();
+    /** Clock time of the last successful notice; null before the first one. */
+    private Long lastNoticeAt;
     ControlSession(Game game,LongSupplier clock,String worldId,String username) {
         this.game=game; this.clock=clock; this.worldId=worldId; this.username=username;
     }
@@ -196,6 +200,12 @@ final class ControlSession {
                 throw error("LEASE_LOST","No matching recent host watch lease");
             return game.watch();
         }
+        if(method.equals("notice")&&leaseId==null) {
+            Retired last=retired.peekLast();
+            if(last==null||!Objects.equals(sessionId,last.sessionId)||!last.sessionId.equals(string(p,"sessionId"))||!last.leaseId.equals(string(p,"leaseId"))||!last.stopToken.equals(string(p,"stopToken")))
+                throw error("LEASE_LOST","No matching recent host notice lease");
+            return notice(p);
+        }
         authorize(p);
         switch(method) {
             case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return withOperationBudget(obj("ttlMs",TTL_MS,"controlGeneration",generation));
@@ -228,6 +238,9 @@ final class ControlSession {
             case "watch":
                 if(!stopToken.equals(string(p,"stopToken"))) throw error("FORBIDDEN","Wrong host stop token");
                 return game.watch();
+            case "notice":
+                if(!stopToken.equals(string(p,"stopToken"))) throw error("FORBIDDEN","Wrong host stop token");
+                return notice(p);
             case "guard": {
                 if(!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree("guard-duty-fenced"))) throw error("UNSUPPORTED","Guard duty is not available");
                 boolean off=p.has("off")&&bool(p,"off");
@@ -241,6 +254,15 @@ final class ControlSession {
             case "operation", "act": return operation(method,p);
             default: throw error("INVALID_ARGUMENT","Unknown protocol method");
         }
+    }
+    private JsonObject notice(JsonObject p) {
+        String text=string(p,"text");
+        if(text.length()>120) throw error("INVALID_ARGUMENT","text must be at most 120 characters");
+        for(int i=0;i<text.length();i++) { char c=text.charAt(i); if(c<32||c==127||c==167) throw error("INVALID_ARGUMENT","text contains a control character or section sign"); }
+        long now=clock.getAsLong();
+        if(lastNoticeAt!=null&&now-lastNoticeAt<2000) throw error("RATE_LIMITED","Host notice is rate limited");
+        game.notice(text); lastNoticeAt=now;
+        return obj("shown",true);
     }
     private JsonObject claimResult() {
         return withOperationBudget(obj("leaseId",leaseId,"stopToken",stopToken,"ttlMs",Math.max(1,expiresAt-clock.getAsLong()),"instanceId",instanceId,"sessionId",sessionId,"controlGeneration",generation,"chatCursor",game.chatCursor()));

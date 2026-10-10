@@ -7,7 +7,7 @@ import http from 'node:http';
 import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {parseArgs,bodySessionScope,runtimeFiles,startupPrompt,readSessionState,completeServerChat,captureBodyArtifacts,cleanupBodyArtifacts,taskAlreadyDelivered,isWakeEvent} from '../../scripts/companion.mjs';
+import {parseArgs,bodySessionScope,runtimeFiles,startupPrompt,readSessionState,completeServerChat,captureBodyArtifacts,cleanupBodyArtifacts,taskAlreadyDelivered,isWakeEvent,busyAck} from '../../scripts/companion.mjs';
 import {createServerBodyControl,respawnIfDead} from '../../scripts/server-body-control.mjs';
 import {CODEX_SERVER_TOOLS,codexThreadConfig} from '../../scripts/agents/codex-app-server.mjs';
 const HERE=path.dirname(fileURLToPath(import.meta.url));
@@ -18,13 +18,13 @@ const records=file=>{try{return fs.readFileSync(file,'utf8').trim().split('\n').
 function temp(){return fs.mkdtempSync(path.join(os.tmpdir(),'mcbot-server-driver-'));}
 function cleanup(dir){assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));assert.ok(path.basename(dir).startsWith('mcbot-server-driver-'));fs.rmSync(dir,{recursive:true,force:true});}
 async function mock(){
-  const state={instanceId:'instance-a',sessionId:'session-a',worldId:'world-a',username:'ServerTest',seq:10,chat:[{seq:10,username:'tester',message:'停下'}],lease:null,revoked:null,claims:0,calls:[],revokeCount:0};
+  const state={instanceId:'instance-a',sessionId:'session-a',worldId:'world-a',username:'ServerTest',seq:10,chat:[{seq:10,username:'tester',message:'停下'}],lease:null,revoked:null,claims:0,calls:[],revokeCount:0,capabilities:[],notices:[]};
   const server=http.createServer(async(req,res)=>{
     let raw='';for await(const p of req)raw+=p;const {method,params:p}=JSON.parse(raw);state.calls.push({method,leaseId:p.leaseId,...(p.leave!==undefined?{leave:p.leave}:{})});
     const ok=result=>res.end(JSON.stringify({ok:true,result}));const fail=code=>res.end(JSON.stringify({ok:false,error:{code,message:code}}));
     if(req.headers.authorization!=='Bearer test-only-token')return fail('FORBIDDEN');
     if(method==='hello'&&state.unreachable){req.socket.destroy();return;}
-    if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:[]});
+    if(method==='hello')return ok({protocol:2,backend:'server',instanceId:state.instanceId,sessionId:state.sessionId,worldId:state.worldId,username:state.username,connected:true,capabilities:state.capabilities});
     // Like the server: a revoke may name the session the body already left (it is matched against the retired lease).
     if(p.instanceId!==state.instanceId||p.sessionId&&p.sessionId!==state.sessionId&&method!=='revoke')return fail('WRONG_INSTANCE');
     if(method==='respawn'){
@@ -50,6 +50,11 @@ async function mock(){
       if(state.beforeWatch)await state.beforeWatch();
       if(allowed)return ok(snapshot);
       return fail('LEASE_LOST');
+    }
+    if(method==='notice'){
+      const allowed=(current&&state.lease.stopToken===p.stopToken)||(!state.lease&&old);
+      if(!allowed)return fail('LEASE_LOST');
+      state.notices.push(p.text);return ok({shown:true});
     }
     if(method==='heartbeat')return current?ok({ttlMs:10000,controlGeneration:1}):fail('LEASE_LOST');
     return fail('UNSUPPORTED');
@@ -389,6 +394,39 @@ test('start-server-play --wait：等到能接管才启动托管，断开（75）
     // 托管自己出错（不是断开）不重启
     assert.equal(await supervise(fakePrepare,{runtime:dir,prepare,check:async()=>({ok:true}),run:async()=>3,sleep:async()=>{},log:()=>{},pollMs:0}),3);
   }finally{cleanup(dir);}
+});
+
+test('busyAck：忙、到 6 秒、同一轮只回一次、只对唤醒事件回',()=>{
+  const base={busy:true,turnStartedAt:1000,now:7000,ackedTurn:0,wakes:true};
+  assert.equal(busyAck(base),true);
+  assert.equal(busyAck({...base,busy:false}),false);
+  assert.equal(busyAck({...base,now:6999}),false);
+  assert.equal(busyAck({...base,now:7000,turnStartedAt:1001}),false);
+  assert.equal(busyAck({...base,ackedTurn:1000}),false);
+  assert.equal(busyAck({...base,wakes:false}),false);
+  assert.equal(busyAck({...base,ackedTurn:500}),true);
+});
+
+test('notice：hello 带 host-notice 时发出 notice 并带 text；不带时不发请求；租约已失效也只返回 false',async()=>{
+  const dir=temp(),api=await mock();const scope={connectionFile:path.join(dir,'connection.json'),worldId:'world-a',username:'ServerTest'};
+  fs.writeFileSync(scope.connectionFile,JSON.stringify({protocol:2,backend:'server',endpoint:api.endpoint,token:'test-only-token',worldId:scope.worldId,username:scope.username}));
+  const lease={leaseId:'lease-a',stopToken:'stop-a',instanceId:'instance-a',sessionId:'session-a'};
+  fs.writeFileSync(path.join(dir,'server-control-ServerTest.json'),JSON.stringify({protocol:2,backend:'server',...scope,controllerId:'owner',...lease,chatCursor:10}));
+  api.state.lease={...lease,ttlMs:10000,controlGeneration:1};
+  const control=createServerBodyControl({scope,runtimeDir:dir,controllerId:'owner',isStop:()=>false,isNewTask:()=>false,onStop:()=>{},onNewTask:()=>{}});
+  try{
+    assert.equal(await control.notice('托管已启动'),false);
+    assert.equal(api.state.calls.filter(c=>c.method==='notice').length,0);
+    assert.deepEqual(api.state.notices,[]);
+    api.state.capabilities=['host-notice'];
+    assert.equal(await control.notice('托管已启动'),true);
+    assert.deepEqual(api.state.notices,['托管已启动']);
+    assert.equal(api.state.calls.filter(c=>c.method==='notice').length,1);
+    const saved=api.state.lease;api.state.lease=null;
+    assert.equal(await control.notice('lease gone'),false);
+    assert.deepEqual(api.state.notices,['托管已启动']);
+    api.state.lease=saved;
+  }finally{control.close();await api.close();cleanup(dir);}
 });
 
 test('宿主只接自身controller，旧capability不撤销新lease或新instance',async()=>{

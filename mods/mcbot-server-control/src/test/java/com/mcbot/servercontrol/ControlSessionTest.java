@@ -15,6 +15,7 @@ public final class ControlSessionTest {
         boolean crashChat,crashStop,nearby,guardDuty;
         JsonObject guarding;int dutyClears;
         int discoveries;
+        final List<String> notices=new ArrayList<>();
         ControlSession.Operation active;
         @Override public boolean connected() { return exists&&!dead; }
         @Override public void ensureBody() { if(dead)throw error("DEAD_BODY","Explicit respawn required");if(!exists) {exists=true;creations++;} }
@@ -30,6 +31,7 @@ public final class ControlSessionTest {
         @Override public JsonObject nearbyBlocks(JsonObject p) {discoveries++;return obj("dimension","minecraft:overworld","candidates",List.of());}
         @Override public JsonObject watch() { return obj("chat",List.of(),"chatCursor",7); }
         @Override public long chatCursor() { return 7; }
+        @Override public void notice(String text) { notices.add(text); }
         @Override public void begin(ControlSession.Operation o) {
             starts++;
             if(crashChat&&o.name.equals("send-chat"))throw new IllegalStateException();
@@ -102,6 +104,26 @@ public final class ControlSessionTest {
         check(f.game.stops==stops,"old host revoke never stops new lease");
         errorCode("LEASE_LOST",()->f.session.call("watch",f.host(claim)));
         f.session.call("heartbeat",f.auth(next));
+        Fixture notices=new Fixture();JsonObject noticeClaim=notices.claim("a");
+        JsonObject note=notices.host(noticeClaim);note.addProperty("text","started");
+        check(notices.session.call("notice",note).get("shown").getAsBoolean()&&notices.game.notices.equals(List.of("started")),"leased notice reaches the game");
+        JsonObject second=note.deepCopy();second.addProperty("text","second");
+        errorCode("RATE_LIMITED",()->notices.session.call("notice",second));
+        notices.time.set(1999);errorCode("RATE_LIMITED",()->notices.session.call("notice",second));
+        notices.time.set(2000);check(notices.session.call("notice",second).get("shown").getAsBoolean()&&notices.game.notices.size()==2,"notice passes once two seconds have elapsed");
+        notices.session.call("revoke",notices.host(noticeClaim));
+        JsonObject retiredNote=notices.host(noticeClaim);retiredNote.addProperty("text","stopped");notices.time.set(4000);
+        check(notices.session.call("notice",retiredNote).get("shown").getAsBoolean()&&notices.game.notices.size()==3,"retired lease can notice without a live lease");
+        JsonObject retiredWrong=retiredNote.deepCopy();retiredWrong.addProperty("stopToken","wrong");
+        errorCode("LEASE_LOST",()->notices.session.call("notice",retiredWrong));
+        JsonObject nextClaim=notices.claim("b");
+        JsonObject badToken=notices.host(nextClaim);badToken.addProperty("text","bad");badToken.addProperty("stopToken","wrong");
+        errorCode("FORBIDDEN",()->notices.session.call("notice",badToken));
+        JsonObject tooLong=notices.host(nextClaim);tooLong.addProperty("text","x".repeat(121));
+        errorCode("INVALID_ARGUMENT",()->notices.session.call("notice",tooLong));
+        JsonObject controlled=notices.host(nextClaim);controlled.addProperty("text","a§b");
+        errorCode("INVALID_ARGUMENT",()->notices.session.call("notice",controlled));
+        check(notices.game.notices.size()==3,"rejected notices never reach the game");
         Fixture leaving=new Fixture();JsonObject leavingClaim=leaving.claim("a");
         JsonObject shutdown=leaving.host(leavingClaim);shutdown.addProperty("leave",true);
         check(leaving.session.call("revoke",shutdown).get("left").getAsBoolean()&&!leaving.game.exists,"host shutdown revoke logs the body out");

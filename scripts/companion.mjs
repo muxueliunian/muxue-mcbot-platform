@@ -338,6 +338,11 @@ export function createRateLimiter(intervalMs = NOTIFY_INTERVAL_MS) {
   };
 }
 
+// 一轮还没做完时玩家又说话：等这一轮跑满 minMs 后，每轮只回一次“收到，正在忙”，不挡住后面的正常送达
+export function busyAck({ busy, turnStartedAt, now, ackedTurn, wakes, minMs = 6000 }) {
+  return Boolean(busy && wakes && now - turnStartedAt >= minMs && ackedTurn !== turnStartedAt);
+}
+
 // 本轮报错的文字看起来像额度或登录问题
 export function classifyError(text) {
   const t = String(text ?? '');
@@ -720,6 +725,7 @@ function main() {
   let child = null;
   let busy = false;
   let turnStartedAt = 0;
+  let currentTool = '', busyAckedTurn = 0;
   let conversationId = '';
   let session = '';
   let lastSeq = 0;
@@ -802,12 +808,14 @@ function main() {
     activity(kind, { text: msg, ...data });
   }
 
-  // 在游戏里用灰字告诉小雪（同类限频）；RCON 连不上就只写日志
+  // 在游戏里用灰字告诉玩家（同类限频）；RCON 连不上就只写日志
   function notifyGame(kind, text, { force = false } = {}) {
     if (!force && !canNotify(kind)) return;
     const msg = `[${args.nickname}托管] ${text}`;
     const viaRcon = agentProtocol.identity === 'xiaoke' && args.body === 'mineflayer';
     info(`${viaRcon ? '游戏内提示' : '托管提示'}：${msg}`);
+    // 新身体走宿主的 notice（服务端广播灰斜体）；通道内部吞掉所有错误，这里只是保险
+    if (args.body === 'server' && serverControl) serverControl.notice(msg.length > 120 ? `${msg.slice(0, 119)}…` : msg).catch(() => {});
     // 独立试玩身份允许连接外部服，不借用本机正式服的 RCON 发通知；新身体也不走 RCON。
     if (!viaRcon) return;
     rcon([tellrawCommand(msg)], { timeoutMs: 3000 }).catch((e) => info(`RCON 发送失败（${e.message}），只记在日志里`));
@@ -877,7 +885,7 @@ function main() {
       restartCount += 1;
       if (restartCount > args.maxRestarts) {
         info(`agent 连续 ${restartCount - 1} 次没能正常跑完一轮，不再重启`);
-        notifyGame('gave_up', `连续出错 ${restartCount - 1} 次，托管先停了。小雪可以重新运行 start-play.ps1，日志在 runtime/companion-${args.name}.log`, { force: true });
+        notifyGame('gave_up', `连续出错 ${restartCount - 1} 次，托管先停了。可以在 WebUI 里重新启动托管，日志在 runtime/companion-${args.name}.log`, { force: true });
         setTimeout(() => shutdown('agent 反复崩溃'), 2000);
         return;
       }
@@ -923,6 +931,7 @@ function main() {
     turnKind = kind;
     busy = true;
     turnStartedAt = Date.now();
+    currentTool = '';
     activity('turn_start', { turnKind: kind });
     lastInputAt = turnStartedAt;
     lastActivity = Date.now();
@@ -1040,7 +1049,7 @@ function main() {
     if (shuttingDown) return;
     const lock = readJson(F.botLock);
     info(`Bot 锁还被 pid ${lock?.pid} 占着（可能开着交互式会话），照样启动新会话；小克会停放成 locked，调用动作工具时再进服`);
-    notifyGame('lock_busy', '换会话时小克被另一个会话占着，先不进服；关掉那个会话后我再回来');
+    notifyGame('lock_busy', `换会话时${args.nickname}被另一个会话占着，先不进服；关掉那个会话后我再回来`);
   }
 
   // 结束一个 agent 进程（连同它的 MCP 服务端）：先关 stdin 让它自己收尾，graceMs 后还没退就结束进程树
@@ -1212,7 +1221,7 @@ function main() {
         case 'request_completed': lastRequestAt = lastInputAt || Date.now(); break;
         case 'usage': contextTokens = event.contextTokens; break;
         case 'text': printText(event.text, event.done); break;
-        case 'tool': info(`· ${event.name} ${JSON.stringify(event.input).slice(0, 120)}`, 'tool', { name: event.name, input: JSON.stringify(event.input ?? null).slice(0, 400) }); break;
+        case 'tool': currentTool = event.name || ''; info(`· ${event.name} ${JSON.stringify(event.input).slice(0, 120)}`, 'tool', { name: event.name, input: JSON.stringify(event.input ?? null).slice(0, 400) }); break;
         case 'completed': {
           saveSession();
           if (event.cancelled) {
@@ -1355,6 +1364,12 @@ function main() {
     }
     // 长时间没有唤醒事件时（比如只有 presence / reflex），只留最近的一些
     if (pendingEvents.length > MAX_PENDING_EVENTS) pendingEvents = pendingEvents.slice(-MAX_PENDING_EVENTS);
+    // 玩家在 Bot 忙的时候说话：先回一句，让玩家知道消息已经收到（每轮一次）
+    if (args.body === 'server' && (e.type === 'chat' || e.type === 'whisper')
+        && busyAck({ busy, turnStartedAt, now: Date.now(), ackedTurn: busyAckedTurn, wakes: wakesAgent(e) })) {
+      busyAckedTurn = turnStartedAt;
+      notifyGame('busy', `收到，正在忙（${currentTool || '想事情'}），做完就回你`, { force: true });
+    }
     if (wakesAgent(e)) scheduleFlush(e);
     const trigger = consolidationTrigger(e);
     if (trigger) requestConsolidation(trigger);

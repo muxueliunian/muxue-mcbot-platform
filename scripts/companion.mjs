@@ -184,6 +184,11 @@ export function isAddressedStop(e, { name, nickname } = {}) {
   return false;
 }
 
+// 叫停的玩家在窗口内不点名说的话也当新指令（叫停词本身已由 isStop 先过滤）。
+export function stopFollowup(event, { lastStopBy, lastStopAt, now, windowMs = 10 * 60 * 1000 }) {
+  return !!lastStopBy && event?.username === lastStopBy && lastStopAt > 0 && now - lastStopAt <= windowMs;
+}
+
 // This only selects the scheduling fast path; intent and authorization remain with the Agent.
 export function completeServerChat(e, { name, nickname }) {
   if (!['chat', 'whisper'].includes(e.type)) return false;
@@ -741,6 +746,7 @@ function main() {
   let shuttingDown = false;
   let cancellingActions = false;
   let lastStopAt = 0;
+  let lastStopBy = '';
   let hostedConfigFile = '';
   let hostedServer = null;
   const controllerId = args.body === 'server' ? randomUUID() : '';
@@ -1158,8 +1164,7 @@ function main() {
     runningConsolidation = null;
     if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
     lastStopAt = Date.now();
-    conversationId = '';
-    contextTokens = 0;
+    lastStopBy = typeof event?.username === 'string' ? event.username : '';
     lastRequestAt = 0;
     saveSession();
     if (event?.session && Number.isSafeInteger(event.seq)) {
@@ -1202,7 +1207,7 @@ function main() {
     resumeNote = '';
     startAgent();
     const prompt = startupPrompt(args, memoryOn, 'new-task');
-    sendTurn(`${prompt}\n\n【停止后的新指令】${tasks.map(event => event.text).join('\n')}`, 'normal');
+    sendTurn(`${prompt}\n\n【停止记录】旧任务已取消，不要自行恢复；只执行下面的新指令。\n\n【停止后的新指令】${tasks.map(event => event.text).join('\n')}`, 'normal');
   }
 
   function handleAgentEvent(event) {
@@ -1612,7 +1617,8 @@ function main() {
     serverControl = createServerBodyControl({ scope: BODY_SCOPE, runtimeDir: RUNTIME, controllerId,
       botPlayers: (argValue(hostedServer.args, '--bot-players') || '').split(','),
       isStop: (event) => isAddressedStop(event, args),
-      isNewTask: (event) => [args.name, args.nickname].some(name => name && event.message.toLowerCase().includes(name.toLowerCase())),
+      isNewTask: (event) => [args.name, args.nickname].some(name => name && event.message.toLowerCase().includes(name.toLowerCase()))
+        || stopFollowup(event, { lastStopBy, lastStopAt, now: Date.now() }),
       onStop: (event, owner) => stopServerAgent('玩家叫停（独立聊天通道）', event, owner),
       onLost: (code) => { if (args.reconnect && waitingNewServerTask && !shuttingDown) shutdown(`停止后世界身份已变化（${code}），等重新连接`, RECONNECT_EXIT); },
       onNewTask: newServerTask, log: info });

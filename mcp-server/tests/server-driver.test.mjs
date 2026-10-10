@@ -314,7 +314,7 @@ test('start-server-play.mjs只要Node：参数和ps1一样转进mcp.json和驱�
     const after=(a,f)=>a[a.indexOf(f)+1];
     assert.equal(after(mcp.args,'--world-id'),'node-world');assert.equal(after(mcp.args,'--guard'),'off');assert.equal(after(mcp.args,'--guard-radius'),'10');
     assert.equal(after(mcp.args,'--appearance'),'yes_steve_model:model=ds_whale.ysm');
-    assert.equal(after(p.driverArgs,'--agent'),'codex');assert.equal(after(p.driverArgs,'--nickname'),'Codex');assert.equal(after(p.driverArgs,'--effort'),'medium');
+    assert.equal(after(p.driverArgs,'--agent'),'codex');assert.equal(after(p.driverArgs,'--nickname'),'NodePrep','昵称留空时用游戏名');assert.equal(after(p.driverArgs,'--memory-agent'),'nodeprep','人设按游戏名分目录');assert.equal(after(p.driverArgs,'--effort'),'medium');
     assert.equal(after(p.driverArgs,'--max-restarts'),'0');assert.ok(!p.driverArgs.includes('--idle-minutes'),'-1 用驱动器默认');assert.ok(p.driverArgs.includes('--headless'));
     const bad=(extra)=>()=>prepareServerPlay(parseArgs(['--connection-file',connectionFile,'--prepare-only',...extra]),{root:dir});
     assert.throws(bad(['--appearance','ds_whale.ysm']),/appearance/);

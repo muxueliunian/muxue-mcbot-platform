@@ -16,7 +16,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const AGENTS = ['claude', 'codex', 'dsh'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const ON_OFF = ['on', 'off'];
-const NICKNAMES = { claude: '小克', dsh: 'DeepSeek', codex: 'Codex' };
 // 会话选项，-1（或不填）表示用驱动器的默认值（见 scripts/companion.mjs 开头的说明）
 const SESSION = { 'idle-minutes': 1440, 'resume-window-min': 1440, 'rotate-tokens': 2000000, 'max-restarts': 100 };
 const VALUE_FLAGS = ['connection-file', 'agent', 'nickname', 'config-dir', 'memory-dir', 'model', 'node-path', 'effort',
@@ -89,7 +88,8 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
   if (appearance && !/^[a-z0-9_.-]+:[a-z0-9_/.-]+=[^"\\\x00-\x1f\x7f]{1,128}$/.test(appearance)) throw new Error('appearance 应为 <来源>=<选项>');
   const name = String(connection.username);
   const worldId = String(connection.worldId);
-  const nickname = options.nickname || NICKNAMES[agent];
+  // 昵称留空时用游戏名
+  const nickname = options.nickname || name;
   const entry = path.join(root, 'client-runtime', 'dist', 'main.js');
   const prepareOnly = !!options['prepare-only'];
   if (!prepareOnly && !fs.existsSync(entry)) throw new Error('未找到运行端：请先在 client-runtime 目录运行 npm install 和 npm run build');
@@ -115,6 +115,8 @@ export function prepareServerPlay(options, { root = ROOT, env = process.env, exe
     '--nickname', nickname, '--mcp-config', configFile, '--effort', effort];
   if (options['config-dir']) driverArgs.push('--config-dir', full(options['config-dir']));
   if (options['memory-dir']) driverArgs.push('--memory-dir', full(options['memory-dir']));
+  // 人设和记忆按 Bot 游戏名分目录（<记忆目录>/<游戏名小写>/persona.md），和 WebUI 编辑人设的位置一致
+  driverArgs.push('--memory-agent', name.toLowerCase());
   if (options.model) driverArgs.push('--model', options.model);
   for (const [flag, value] of Object.entries(session)) if (value !== undefined && value >= 0) driverArgs.push(`--${flag}`, String(value));
   if (options.headless) driverArgs.push('--headless');

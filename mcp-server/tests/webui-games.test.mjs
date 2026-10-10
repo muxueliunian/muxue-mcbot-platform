@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { addGameDir, connectionFileOf, findGames, gameDirOf, gameOnline, inspectGame, localAppearances, modelLabels, personaFile, readPersona, gameType, readGameConfig, removeGameDir, writeGameConfig, writePersona } from '../../scripts/webui-games.mjs';
+import { addGameDir, connectionFileOf, findGames, gameDirOf, gameOnline, importYsmModel, inspectGame, localAppearances, modelLabels, personaFile, readPersona, gameType, readGameConfig, removeGameDir, writeGameConfig, writePersona } from '../../scripts/webui-games.mjs';
 import { endReason, waitingText } from '../../scripts/webui-profiles.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-games-'));
@@ -101,10 +101,11 @@ test('外观：世界没开时列游戏目录里的 YSM 模型（要装适配）
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('人设：位置和驱动器一致（小克在 xiaoke，独立身份按游戏名小写），能读写，示例里写了说话方式', () => {
+test('人设：位置和驱动器一致（各 Agent 都按游戏名小写分目录），能读写', () => {
   const root = tmp();
   try {
-    assert.equal(personaFile({ agent: 'claude' }, root), path.join(root, 'memory', 'xiaoke', 'persona.md'));
+    assert.equal(personaFile({ agent: 'claude', username: 'Claude' }, root), path.join(root, 'memory', 'claude', 'persona.md'));
+    assert.throws(() => personaFile({ agent: 'claude' }, root), /游戏名/);
     assert.equal(personaFile({ agent: 'dsh', username: 'ServerBot' }, root), path.join(root, 'runtime', 'dsh-memory', 'serverbot', 'persona.md'));
     assert.equal(personaFile({ agent: 'codex', username: 'Bot', memoryDir: path.join(root, 'm') }, root), path.join(root, 'm', 'bot', 'persona.md'));
     assert.throws(() => personaFile({ agent: 'dsh' }, root), /游戏名/);
@@ -131,4 +132,27 @@ test('等待中：日志里最后一行「[等待]」之后还没开始托管才
   assert.equal(waitingText('[等待] 等世界打开\nServerBody 配置：x\n托管 小克'), '');
   assert.equal(waitingText('ServerBody 配置：x\n[等待] 角色断开了，能连上时自动接上'), '角色断开了，能连上时自动接上');
   assert.equal(waitingText(''), '');
+});
+
+test('导入 YSM 模型：.ysm 文件或带 ysm.json 的文件夹复制到 custom；需装 YSM 插件，不覆盖同名，路径不能越界', () => {
+  const dir = tmp();
+  const b = (t) => Buffer.from(t).toString('base64');
+  const custom = path.join(dir, 'config', 'yes_steve_model', 'custom');
+  try {
+    assert.match(importYsmModel(dir, [{ path: 'a.ysm', data: b('x') }]).error, /未安装 Yes Steve Model/);
+    put(path.join(dir, 'mods', 'mcbot-yes-steve-model-0.1.0.jar'), 'jar');
+    assert.deepEqual(importYsmModel(dir, [{ path: 'whale.ysm', data: b('model') }]).ok, true);
+    assert.equal(fs.readFileSync(path.join(custom, 'whale.ysm'), 'utf8'), 'model');
+    const folder = [{ path: 'cat/ysm.json', data: b(JSON.stringify({ metadata: { name: '猫', authors: [{ name: 'A' }] } })) }, { path: 'cat/textures/skin.png', data: b('png') }];
+    const r = importYsmModel(dir, folder);
+    assert.deepEqual([r.ok, r.model, r.label.name], [true, 'cat', '猫']);
+    assert.equal(fs.readFileSync(path.join(custom, 'cat', 'textures', 'skin.png'), 'utf8'), 'png');
+    assert.match(importYsmModel(dir, folder).error, /已有同名模型/);
+    assert.match(importYsmModel(dir, [{ path: 'dog/readme.txt', data: b('x') }]).error, /缺少 ysm\.json/);
+    assert.match(importYsmModel(dir, [{ path: '../evil/ysm.json', data: b('x') }]).error, /路径无效/);
+    assert.match(importYsmModel(dir, [{ path: 'a/ysm.json', data: b('x') }, { path: 'b/ysm.json', data: b('x') }]).error, /一个模型文件夹/);
+    assert.match(importYsmModel(dir, [{ path: '模型/ysm.json', data: b('x') }]).error, /英文字母/);
+    assert.deepEqual(fs.readdirSync(custom).sort(), ['cat', 'whale.ysm'], '失败时不留临时目录');
+    assert.deepEqual(localAppearances(dir)[0].choices, ['cat', 'whale.ysm']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

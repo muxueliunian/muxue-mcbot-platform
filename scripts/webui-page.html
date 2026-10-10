@@ -222,7 +222,7 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .wait-note{margin:12px 0 0}
 .pane-note button{margin-left:auto}
 .games{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
-.game{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
+.game{all:unset;box-sizing:border-box;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
   transition:background .2s,border-color .25s,box-shadow .25s,transform .3s var(--spring)}
 .game:hover{background:var(--fill-hover);transform:translateY(-2px)}
 .game:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
@@ -240,19 +240,21 @@ input.sw:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .g-add input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
 .g-add .hint{font-size:12px;color:var(--muted)}
 .role{display:flex;gap:18px;align-items:flex-start}
-.avatar{width:72px;height:72px;flex:none;border-radius:22px;display:grid;place-items:center;font-size:30px;font-weight:700;color:#fff;
-  background:linear-gradient(135deg,var(--primary),var(--secondary));box-shadow:0 10px 24px var(--primary-soft);transition:transform .4s var(--spring)}
+.avatar{width:72px;height:72px;flex:none;border-radius:18px;overflow:hidden;box-shadow:0 10px 24px var(--primary-soft);transition:transform .4s var(--spring)}
+.avatar:hover{transform:rotate(-4deg) scale(1.04)}
+svg.px{display:block;width:100%;height:100%;shape-rendering:crispEdges}
+.look-import{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
 .avatar.bump{animation:wiggle .5s ease}
 .role-fields{flex:1}
 .look-f{margin-top:14px}
 .looks{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
-.look{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
+.look{all:unset;box-sizing:border-box;position:relative;overflow:hidden;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--fill);border:1px solid transparent;cursor:pointer;min-width:0;
   transition:background .2s,border-color .25s,box-shadow .25s,transform .3s var(--spring)}
 .look:hover{background:var(--fill-hover);transform:translateY(-2px)}
 .look:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .look.sel{border-color:var(--primary);background:var(--glass-strong);box-shadow:0 0 0 3px var(--primary-soft)}
 .look i{width:36px;height:36px;flex:none;border-radius:12px;display:grid;place-items:center;font-style:normal;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--secondary),var(--tool))}
-.look.none i{background:var(--fill-hover);color:var(--muted)}
+.look.none i{background:var(--fill-hover);color:var(--muted);overflow:hidden}
 .look .lt{display:flex;flex-direction:column;min-width:0}.look .lt b{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .look .lt small{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 textarea{font:13px/1.6 inherit;font-family:inherit;padding:10px 12px;border:1px solid transparent;border-radius:12px;background:var(--fill);color:var(--text);width:100%;resize:vertical;outline:none;transition:background .2s,border-color .25s,box-shadow .25s}
@@ -349,13 +351,15 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
 
 <div class="pane" data-pane="role" hidden>
 <div class="role">
-  <div class="avatar" id="r-avatar"><span>?</span></div>
+  <div class="avatar" id="r-avatar"></div>
   <div class="fields role-fields">
-    <div class="f"><label for="r-name">游戏名</label><input id="r-name" maxlength="16" placeholder="Claude"><span class="hint" id="h-name"></span></div>
-    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16"><span class="hint">聊天中也可使用此名称称呼 Bot</span></div>
+    <div class="f"><label for="r-name">游戏名</label><input id="r-name" maxlength="16" placeholder="英文字母、数字和下划线"><span class="hint" id="h-name"></span></div>
+    <div class="f"><label for="c-nickname">昵称</label><input id="c-nickname" maxlength="16" placeholder="留空则使用游戏名"><span class="hint">聊天中也可使用此名称称呼 Bot</span></div>
   </div>
 </div>
-<div class="f look-f"><span class="lb">外观</span><div class="looks" id="looks"></div><span class="hint" id="h-appearance"></span></div>
+<div class="f look-f"><span class="lb">外观</span><div class="looks" id="looks"></div><span class="hint" id="h-appearance"></span>
+  <div class="look-import"><button type="button" class="ghost small" id="l-file">导入 .ysm 文件</button><button type="button" class="ghost small" id="l-dir">导入模型文件夹</button><span class="hint" id="h-import">导入到所选游戏的 YSM 模型目录；需已安装 Yes Steve Model 插件</span>
+    <input type="file" id="l-file-in" accept=".ysm" hidden><input type="file" id="l-dir-in" webkitdirectory hidden></div></div>
 </div>
 
 <div class="pane" data-pane="soul" hidden>
@@ -364,8 +368,8 @@ textarea:focus{border-color:var(--primary);background:var(--glass-strong);box-sh
   <div class="f"><label for="c-model">模型</label><input id="c-model" placeholder="留空则使用默认模型"><span class="hint" id="h-model"></span></div>
   <div class="f"><label for="c-effort">思考强度</label><select id="c-effort" hidden></select><span class="hint" id="h-effort"></span></div>
   <div class="f"><label for="c-configDir">账号目录</label><input id="c-configDir" placeholder="留空则使用默认账号"><span class="hint" id="h-account"></span></div>
-  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="10" maxlength="8000" placeholder="填写 Bot 的名字、性格和说话方式。未填写时回复会偏向客服语气，可先点击「填入示例」再修改。"></textarea>
-    <div class="persona-bar"><span class="hint" id="h-persona"></span><span style="flex:1"></span><button type="button" class="ghost small" id="s-sample">填入示例</button><button type="button" class="small" id="s-save">保存人设</button></div></div>
+  <div class="f wide"><label for="s-persona">人设</label><textarea id="s-persona" rows="10" maxlength="8000" placeholder="填写 Bot 的名字、性格和说话方式。未填写时回复会偏向客服语气。"></textarea>
+    <div class="persona-bar"><span class="hint" id="h-persona"></span><span style="flex:1"></span><button type="button" class="small" id="s-save">保存人设</button></div></div>
 </div>
 </div>
 
@@ -429,7 +433,8 @@ if (location.protocol === 'file:') document.addEventListener('DOMContentLoaded',
 document.addEventListener('pointerdown', (e) => {
   const b = e.target.closest('button,.dd-btn,.nav-item');
   if (!b || b.disabled) return;
-  const r = b.getBoundingClientRect(), d = Math.max(r.width, r.height);
+  // 扩散圆最大 120px：大卡片（游戏、外观）上只在点击处扩散，不铺满整张卡片
+  const r = b.getBoundingClientRect(), d = Math.min(Math.max(r.width, r.height), 120);
   const s = el('span', 'rip');
   s.style.cssText = 'width:' + d + 'px;height:' + d + 'px;left:' + (e.clientX - r.left - d / 2) + 'px;top:' + (e.clientY - r.top - d / 2) + 'px';
   b.append(s); setTimeout(() => s.remove(), 650);
@@ -626,6 +631,15 @@ const accountCombo = combo($('#c-configDir'), () => (cfg?.accounts[$('#c-agent')
 // ---- 外观：服务器给的模型做成卡片（装了 YSM 适配时有） ----
 let appearanceWant = '', appearanceSeq = 0, looks = { list: [], labels: {} };
 const glyph = (s) => (String(s || '?').replace(/^[^\p{L}\p{N}]+/u, '')[0] || '?').toUpperCase();
+/** 8×8 像素头像（默认外观：史蒂夫），每行一个字符串，字符对应颜色。 */
+const STEVE = ['HHHHHHHH', 'HHHHHHHH', 'HsSSSSsH', 'SSSSSSSS', 'SWESSEWS', 'SSSNNSSS', 'SsMMMMsS', 'SsSSSSsS'];
+const STEVE_C = { H: '#3a2814', S: '#c79a7c', s: '#b5856a', W: '#f4f4f4', E: '#4b3d8c', N: '#8e5a46', M: '#6a3a28' };
+function pixelFace(rows = STEVE, colors = STEVE_C) {
+  let r = '';
+  rows.forEach((row, y) => [...row].forEach((c, x) => { r += '<rect x="' + x + '" y="' + y + '" width="1" height="1" fill="' + colors[c] + '"/>'; }));
+  return '<svg class="px" viewBox="0 0 8 8" aria-hidden="true">' + r + '</svg>';
+}
+$('#r-avatar').innerHTML = pixelFace();
 function lookLabel(v) {
   if (!v) return { name: '不设置', sub: '保持游戏中的当前外观' };
   const i = v.indexOf('='), src = v.slice(0, i), c = v.slice(i + 1), l = looks.labels[c];
@@ -637,7 +651,8 @@ function renderLooks() {
   box.replaceChildren(...list.map((v, i) => {
     const b = el('button', 'look' + (v ? '' : ' none') + (v === appearanceWant ? ' sel' : '')); b.type = 'button'; b.style.setProperty('--i', i);
     const l = lookLabel(v), t = el('span', 'lt'); t.append(el('b', '', l.name), el('small', '', l.sub));
-    b.append(el('i', '', v ? glyph(l.name) : '—'), t); b.title = v || '不设置';
+    const ic = el('i', '', v ? glyph(l.name) : ''); if (!v) ic.innerHTML = pixelFace();
+    b.append(ic, t); b.title = v || '不设置';
     b.onclick = () => { appearanceWant = v; renderLooks(); };
     return b;
   }));
@@ -654,6 +669,27 @@ async function loadAppearances() {
   h.textContent = r.ok ? (r.offline ? '世界未运行，以下为游戏目录中的模型；启动托管时应用到 Bot' : looks.list.length ? '每次启动托管时应用到 Bot；需安装 YSM 才有可选模型' : '游戏中无可选模型（需安装 YSM 及其适配插件）') : '无法读取模型列表：' + r.error + '。仅在世界运行时可读取，已选项将保留';
   h.className = 'hint' + (r.ok ? '' : ' errc');
 }
+/** 导入 YSM 模型：.ysm 文件或整个模型文件夹，读成 base64 发给本机服务写入游戏目录。 */
+const IMPORT_MAX = 64 * 1024 * 1024;
+const b64 = (file) => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => fail(r.error); r.readAsDataURL(file); });
+async function importModel(list) {
+  const h = $('#h-import'), files = [...list];
+  if (!files.length) return;
+  if (!gameDir) { h.textContent = '请先在「连接配置」中选择游戏'; h.className = 'hint errc'; return; }
+  if (files.reduce((n, f) => n + f.size, 0) > IMPORT_MAX) { h.textContent = '模型超过 64 MB，无法导入'; h.className = 'hint errc'; return; }
+  h.textContent = '正在导入…'; h.className = 'hint';
+  let r;
+  try { r = await post('/api/appearances/import', { dir: gameDir, files: await Promise.all(files.map(async (f) => ({ path: f.webkitRelativePath || f.name, data: await b64(f) }))) }); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) { h.textContent = r.error; h.className = 'hint errc'; return; }
+  h.textContent = '已导入「' + (r.label?.name || r.model) + '」。世界运行中导入的模型，需重新打开世界后才会出现在列表中'; h.className = 'hint okc';
+  await loadAppearances();
+  const v = 'yes_steve_model:model=' + r.model;
+  if (looks.list.includes(v)) { appearanceWant = v; renderLooks(); }
+}
+$('#l-file').onclick = () => $('#l-file-in').click();
+$('#l-dir').onclick = () => $('#l-dir-in').click();
+for (const id of ['#l-file-in', '#l-dir-in']) $(id).onchange = (e) => { importModel(e.target.files); e.target.value = ''; };
 
 // ---- 连接配置：先选模式（单人局域网 / 服务器），再从本机找到的游戏目录里点一个 ----
 // 配置只存游戏目录和模式；两种模式各记一个选中的目录，来回切换不丢
@@ -683,6 +719,7 @@ async function loadGames() {
   games = r.ok ? r.games : []; gamesLoaded = true; renderGames();
 }
 function gameNote(g) {
+  if (g.supported === false) return ['err', '不支持的版本', g.unsupported];
   if (g.core === 'missing') return ['err', '未安装核心模组', '选中后可在「插件」中安装'];
   if (g.core === 'different') return ['warn', '核心模组为旧版本', '与当前安装包中的版本不一致，选中后可在「插件」中更新'];
   if (g.type === 'server') {
@@ -730,8 +767,6 @@ function syncRole() {
   else if (g && g.username && name && name !== g.username) {
     h.textContent = '游戏中的当前名称为 ' + g.username + '，保存后改为 ' + name + (g.online ? '；世界运行中，需退出并重新进入世界后生效' : '，下次打开世界时生效'); h.className = 'hint';
   } else { h.textContent = 'Bot 在游戏中显示的名称，保存时写入游戏配置'; h.className = 'hint'; }
-  const a = $('#r-avatar span'), t = glyph($('#c-nickname').value.trim() || name || '?');
-  if (a.textContent !== t) { a.textContent = t; const av = $('#r-avatar'); av.classList.remove('bump'); void av.offsetWidth; av.classList.add('bump'); }
 }
 $('#r-name').addEventListener('input', syncRole);
 $('#c-nickname').addEventListener('input', syncRole);
@@ -782,17 +817,18 @@ function updatePlug(d, p) {
   $('.pw', d).textContent = (p.what || []).join('；');
   $('.chips', d).replaceChildren(...p.parts.map(partChip));
   $('.meta', d).textContent = p.evidence ? '验证：' + p.evidence : ''; $('.meta', d).title = $('.meta', d).textContent;
-  const go = $('.go', d), un = $('.un', d), blocked = !!plug?.online;
+  const go = $('.go', d), un = $('.un', d), blocked = !!plug?.online, bad = !!plug?.unsupported;
   go.hidden = !p.canInstall; go.textContent = p.overall === 'none' ? '安装' : core ? '更新' : '修复'; go.className = 'small go' + (p.overall === 'none' ? ' primary' : '');
-  un.hidden = !p.canUninstall; go.disabled = un.disabled = blocked;
+  un.hidden = !p.canUninstall; go.disabled = blocked || bad; un.disabled = blocked;
   go.title = un.title = blocked ? '游戏运行中，无法修改。请先关闭游戏' : '';
+  if (bad) go.title = plug.unsupported;
 }
 function renderPlugins() {
   const box = $('#plugs'), w = $('#p-warn'), g = curGame();
   $('#p-where').textContent = g ? '安装到「' + g.name + '」（' + (g.type === 'server' ? '服务器' : '单人 / 局域网') + '）。安装后需重启' + (g.type === 'server' ? '服务器' : '游戏') + '才生效。' : '安装到「连接配置」中选择的游戏。';
   if (!plug) { w.hidden = true; return emptyIn(box, plugErr || '读取中…'); }
-  w.hidden = !plug.online && plug.type !== 'server';
-  w.textContent = plug.online ? (plug.type === 'server' ? '服务器运行中：请先关闭服务器，再安装或卸载。' : '世界运行中：请先退出世界并关闭游戏，再安装或卸载。')
+  w.hidden = !plug.unsupported && !plug.online && plug.type !== 'server';
+  w.textContent = plug.unsupported ? plug.unsupported + '。此游戏无法安装插件。' : plug.online ? (plug.type === 'server' ? '服务器运行中：请先关闭服务器，再安装或卸载。' : '世界运行中：请先退出世界并关闭游戏，再安装或卸载。')
     : '服务器模式：标注「客户端也需安装」的模组，加入服务器的玩家也需在自己的游戏中安装相同版本。';
   keyed(box, [plug.core, ...plug.plugins], (p) => p.id, plugCard, updatePlug);
 }
@@ -854,18 +890,13 @@ async function loadPersona(force) {
   persona.key = key;
   const r = await post('/api/persona', q), h = $('#h-persona');
   if (key !== persona.key) return;
-  persona = { ...persona, loaded: r.ok, exists: !!r.exists, file: r.file || '', sample: r.sample || persona.sample };
+  persona = { ...persona, loaded: r.ok, exists: !!r.exists, file: r.file || '' };
   $('#s-persona').value = r.ok ? r.text : ''; personaDirty = false;
-  $('#s-persona').disabled = !r.ok; $('#s-save').disabled = $('#s-sample').disabled = !r.ok;
+  $('#s-persona').disabled = !r.ok; $('#s-save').disabled = !r.ok;
   h.textContent = !r.ok ? r.error : r.exists ? '已有人设（悬停可查看文件位置）' : '尚未填写人设';
   h.title = r.file || ''; tabDots(); h.className = 'hint' + (r.ok ? '' : ' errc');
 }
 $('#s-persona').addEventListener('input', () => { personaDirty = true; tabDots(); });
-$('#s-sample').onclick = () => {
-  const t = $('#s-persona');
-  if (t.value.trim() && !confirm('使用示例替换当前人设？')) return;
-  t.value = persona.sample; personaDirty = true; t.focus();
-};
 $('#s-save').onclick = async () => {
   const r = await post('/api/persona', { ...personaQuery(), save: true, text: $('#s-persona').value }), h = $('#h-persona');
   if (r.ok) { personaDirty = false; persona.exists = true; h.textContent = '已保存，下次启动托管时生效'; h.title = r.file; h.className = 'hint okc'; tabDots(); }
@@ -959,15 +990,15 @@ const ENDED = { disconnected: '游戏已关闭，托管结束', stopped: '已停
 function guardGear() { const on = $('#c-guard').checked; for (const l of document.querySelectorAll('#c-guard-gear label')) l.classList.toggle('off', !on); for (const id of ['#c-guardRadius', '#c-guardLowHealth']) $(id).disabled = !on; }
 function onAgent(effort) {
   const a = cfg.agents[$('#c-agent').value];
-  $('#h-account').textContent = a.accountHint; $('#c-nickname').placeholder = a.defaultNickname;
+  $('#h-account').textContent = a.accountHint;
   // dsh 桌面版的 Key 在 ~/.dsh：新配置默认用它，省得朋友自己找
   if ($('#c-agent').value === 'dsh' && !$('#c-configDir').value.trim() && !(cur && cur.id) && (cfg.accounts.dsh || []).includes('~/.dsh')) $('#c-configDir').value = '~/.dsh';
   models = null; updateEfforts(effort); loadModels(false); checkMemory(); loadPersona(); syncRole();
 }
-/** Whether the memory directory holds 小克's persona; without it the agent talks like a help desk (7th playtest). */
+/** Which player profiles the memory directory holds; the persona itself is edited per Bot in the soul tab. */
 async function checkMemory() {
   const r = await post('/api/memory', { dir: $('#c-memoryDir').value.trim(), agent: $('#c-agent').value }), h = $('#h-mem');
-  h.textContent = r.ok ? r.text : r.error; h.className = 'hint ' + (r.ok ? (r.persona ? 'okc' : '') : 'errc');
+  h.textContent = r.ok ? r.text : r.error; h.className = 'hint ' + (r.ok ? (r.players?.length ? 'okc' : '') : 'errc');
 }
 function collect() {
   const o = { agent: $('#c-agent').value, effort: $('#c-effort').value, credential: { kind: 'login' } };

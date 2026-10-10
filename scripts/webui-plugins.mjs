@@ -10,7 +10,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { connectionFileOf, gameOnline, gameType } from './webui-games.mjs';
+import { connectionFileOf, gameOnline, gameSupport, gameType } from './webui-games.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ITEM_HANDLERS = path.join('config', 'mcbot-server-control', 'item-handlers.json');
@@ -113,7 +113,7 @@ export function loadCatalog(root = ROOT) {
     p.modId = p.jar ? ourModId(p) : ''; p.src = p.jar ? packageJar(root, p) : '';
     return p;
   });
-  return { minecraft: compat.platform?.minecraft || '', loader: compat.platform?.loader || '', core, plugins };
+  return { minecraft: compat.platform?.minecraft || '', loader: compat.platform?.loader || '', platform: compat.platform || null, core, plugins };
 }
 
 /** 一个插件要的所有模组本体：自己的，加上它引用的插件的（比如「森罗厨房的机器」要森罗厨房本体）。 */
@@ -171,7 +171,7 @@ export function inspectPlugins(gameDir, catalog = loadCatalog()) {
     const key = p.jar ? parts[0] : p.config ? parts[parts.length - 1] : parts[0];
     const overall = parts.every((x) => x.state === 'ok') ? 'ok' : !key || key.state === 'missing' ? 'none' : 'fix';
     return { id: p.id, kind: p.kind, name: p.name, nameEn: p.nameEn || '', what: p.what, evidence: p.evidence || '', overall, parts,
-      canInstall: overall !== 'ok', canUninstall: p.kind !== 'core' && p.kind !== 'builtin' && overall !== 'none' };
+      canInstall: overall !== 'ok', canUninstall: p.kind !== 'core' && overall !== 'none' };
   };
   const core = describe(catalog.core);
   // 所有插件都依赖核心：核心未安装或为旧版本时，插件多一项「核心模组」，不能显示为已安装
@@ -198,6 +198,9 @@ export function planPlugin(gameDir, id, action, { catalog = loadCatalog(), downl
   const target = id === catalog.core.id ? catalog.core : catalog.plugins.find((p) => p.id === id);
   if (!target) return { ok: false, error: '插件不存在' };
   if (!['install', 'uninstall'].includes(action)) return { ok: false, error: '仅支持安装或卸载' };
+  // 版本不在支持范围内的游戏不装：1.21.1 的模组放进别的版本会使游戏无法启动
+  const support = gameSupport(gameDir, catalog.platform);
+  if (action === 'install' && support.supported === false) return { ok: false, error: `${support.reason}。此游戏无法安装插件` };
   const status = inspectPlugins(gameDir, catalog);
   const info = target === catalog.core ? status.core : status.plugins.find((p) => p.id === id);
   const steps = [], notes = [], server = gameType(gameDir) === 'server';
@@ -226,7 +229,7 @@ export function planPlugin(gameDir, id, action, { catalog = loadCatalog(), downl
     if (cfg?.state === 'broken') return { ok: false, error: `${cfg.file} 无法读取，请先修复或删除该文件` };
     if (cfg && cfg.state !== 'ok') steps.push({ op: 'config', file: cfg.file, set: target.config.mods });
   } else {
-    if (!info.canUninstall) return { ok: false, error: target === catalog.core ? '核心模组不支持在此卸载' : target.kind === 'builtin' ? '此适配内置于核心模组，无法单独卸载' : '尚未安装' };
+    if (!info.canUninstall) return { ok: false, error: target === catalog.core ? '核心模组不支持在此卸载' : '尚未安装' };
     if (target.jar) removeFiles(info.parts[0].files, '卸载适配');
     const cfg = info.parts.find((x) => x.kind === 'config');
     if (cfg && cfg.state !== 'missing') {

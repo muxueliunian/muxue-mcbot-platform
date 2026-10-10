@@ -21,15 +21,15 @@ const APPEARANCE_RE = /^[a-z0-9_.-]+:[a-z0-9_/.-]+=[^"\\\u0000-\u001f\u007f]{1,1
 const LOG_TAIL_BYTES = 4096;
 
 export const AGENTS = Object.freeze({
-  claude: { label: 'Claude Code', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultNickname: '小克',
+  claude: { label: 'Claude Code', efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     // 模型列表从本机 CLI 读（agent-models.mjs）；读不到时只给别名，别名总是指向最新版
     fallbackModels: ['opus', 'sonnet', 'fable', 'haiku'],
     accountRe: /^\.claude(-[A-Za-z0-9_-]+)?$/, accountHint: 'Claude 的配置目录，例如 ~/.claude-b；留空则使用默认账号' },
   // Codex 每个模型支持的档位不同（有的到 ultra），配置页按模型目录收窄；这里是允许的全集
-  codex: { label: 'Codex', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultNickname: 'Codex',
+  codex: { label: 'Codex', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
     fallbackModels: [], accountRe: /^\.codex(-[A-Za-z0-9_-]+)?$/, accountHint: 'CODEX_HOME 目录；留空则使用默认账号' },
   // dsh 的思考强度只有 low、high、max（medium 会被当成 high）
-  dsh: { label: 'dsh（DeepSeek）', efforts: ['low', 'high', 'max'], defaultNickname: 'DeepSeek',
+  dsh: { label: 'dsh（DeepSeek）', efforts: ['low', 'high', 'max'],
     fallbackModels: [], accountRe: /^\.dsh$/,
     accountHint: 'DSH_HOME；留空则使用仓库中的 runtime/dsh/home，填写 ~/.dsh 则使用桌面版已配置的凭据' },
 });
@@ -226,18 +226,15 @@ export function profileConnection(profile) {
 }
 
 /**
- * 记忆目录里有没有小克的人设（xiaoke/persona.md）和哪些玩家档案；只看文件在不在，不读内容。
- * 留空时和驱动器一样用仓库里的 memory 目录。第七轮试玩就是留空、人设没读到，说话成了客服腔。
+ * 记忆目录里有哪些玩家档案（shared/players/<游戏名>.md）；只看文件在不在，不读内容。
+ * 人设在「灵魂设置」中按 Bot 编辑（见 webui-games.mjs 的 personaFile）。留空时和驱动器一样用默认位置。
  */
 export function inspectMemory(dir, agent = 'claude', root = ROOT) {
-  if (agent !== 'claude') return { ok: true, persona: false, text: '此 Agent 使用独立身份，人设在「灵魂设置」中填写；留空则使用 runtime 中该 Agent 的记忆目录' };
   let base = '';
-  try { base = dir ? checkPath(dir, '记忆目录') : path.join(root, 'memory'); } catch (e) { return { ok: false, error: e.message }; }
-  const persona = fs.existsSync(path.join(base, 'xiaoke', 'persona.md'));
+  try { base = dir ? checkPath(dir, '记忆目录') : agent === 'claude' ? path.join(root, 'memory') : path.join(root, 'runtime', `${agent}-memory`); } catch (e) { return { ok: false, error: e.message }; }
   let players = [];
   try { players = fs.readdirSync(path.join(base, 'shared', 'players')).filter((n) => /^[A-Za-z0-9_]{1,16}\.md$/.test(n)).map((n) => n.slice(0, -3)).sort(); } catch { /* 没有就空着 */ }
-  if (!persona) return { ok: false, persona, players, error: `${dir ? '此目录' : '留空时使用的 ' + base}中没有 xiaoke/persona.md，托管时不加载人设，回复会偏向客服语气；如需使用小克的人设，请填写包含人设的记忆目录` };
-  return { ok: true, persona, players, text: `已找到小克的人设${players.length ? '；玩家档案：' + players.join('、') : ''}` };
+  return { ok: true, players, text: players.length ? `玩家档案：${players.join('、')}` : `${dir ? '此目录' : '默认位置 ' + base}中没有玩家档案（shared/players）` };
 }
 
 /**

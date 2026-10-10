@@ -50,6 +50,43 @@ function expand(dir, kind, name) {
   return out;
 }
 
+/**
+ * 游戏目录的 Minecraft 和加载器版本：启动器实例读 mmc-pack.json，服务器读 libraries 里的 NeoForge，
+ * 版本隔离目录读版本 json。读不出来返回 null（不拦）。
+ */
+export function gameVersion(dir) {
+  const fromNeoForge = (v) => { const m = /^(\d+)\.(\d+)\./.exec(v); return m ? (m[1] >= 26 ? `${m[1]}.${m[2]}` : `1.${m[1]}${m[2] === '0' ? '' : '.' + m[2]}`) : ''; };
+  for (const pack of [path.join(dir, '..', 'mmc-pack.json'), path.join(dir, 'mmc-pack.json')]) {
+    const c = readJson(pack)?.components;
+    if (!Array.isArray(c)) continue;
+    const mc = c.find((x) => x.uid === 'net.minecraft')?.version || '';
+    const loader = [['net.neoforged', 'neoforge'], ['net.minecraftforge', 'forge'], ['net.fabricmc.fabric-loader', 'fabric'], ['org.quiltmc.quilt-loader', 'quilt']]
+      .map(([uid, name]) => ({ name, version: c.find((x) => x.uid === uid)?.version })).find((x) => x.version);
+    if (mc) return { minecraft: mc, loader: loader?.name || 'vanilla', loaderVersion: loader?.version || '' };
+  }
+  const neo = subdirs(path.join(dir, 'libraries', 'net', 'neoforged', 'neoforge')).at(-1);
+  if (neo) return { minecraft: fromNeoForge(neo), loader: 'neoforge', loaderVersion: neo };
+  const vjson = readJson(path.join(dir, path.basename(dir) + '.json'));
+  if (vjson) {
+    const text = JSON.stringify(vjson), neoLib = /net\.neoforged:neoforge:([\w.+-]+)/.exec(text)?.[1];
+    const mc = /--fml\.mcVersion","([\w.]+)"/.exec(text)?.[1] || (typeof vjson.inheritsFrom === 'string' ? vjson.inheritsFrom : '') || (neoLib ? fromNeoForge(neoLib) : '');
+    const loader = neoLib ? 'neoforge' : /net\.fabricmc:fabric-loader/.test(text) ? 'fabric' : /net\.minecraftforge/.test(text) ? 'forge' : 'vanilla';
+    if (mc) return { minecraft: mc, loader, loaderVersion: neoLib || '' };
+  }
+  return null;
+}
+const newer = (a, b) => { const x = String(a).split(/[.-]/).map(Number), y = String(b).split(/[.-]/).map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return true; };
+const LOADER_NAME = { neoforge: 'NeoForge', forge: 'Forge', fabric: 'Fabric', quilt: 'Quilt', vanilla: '原版' };
+/** 是否在支持范围内（compat.json 的 platform）。读不出版本时 supported 为 null，不拦。 */
+export function gameSupport(dir, platform = readJson(path.join(ROOT, 'compat.json'))?.platform) {
+  const v = gameVersion(dir);
+  if (!v || !platform) return { supported: null, version: v };
+  const want = `Minecraft ${platform.minecraft} + NeoForge ${platform.loaderMin} 及以上`;
+  const have = `Minecraft ${v.minecraft}${v.loader === 'vanilla' ? '（未安装模组加载器）' : ' + ' + LOADER_NAME[v.loader] + (v.loaderVersion ? ' ' + v.loaderVersion : '')}`;
+  const ok = v.minecraft === platform.minecraft && v.loader === platform.loader && (!v.loaderVersion || newer(v.loaderVersion, platform.loaderMin));
+  return { supported: ok, version: v, have, want, ...(ok ? {} : { reason: `不支持的版本：${have}，需 ${want}` }) };
+}
+
 /** 本机常见位置里的游戏目录，加上用户手动加的。只看文件夹在不在，不读存档。 */
 export function findGames(runtime, env = process.env) {
   const found = [];
@@ -111,7 +148,7 @@ export function referenceCoreJar(root = ROOT) {
 export const gameType = (dir) => (fs.existsSync(path.join(String(dir || ''), 'server.properties')) ? 'server' : 'lan');
 
 /** 一个游戏目录的状态：核心模组、Bot 名、连接文件（不带令牌）。 */
-export function inspectGame(game, refJar = referenceCoreJar()) {
+export function inspectGame(game, refJar = referenceCoreJar(), support = (dir) => { const r = gameSupport(dir); return { supported: r.supported, versionText: r.have || '', unsupported: r.reason || '' }; }) {
   const mods = path.join(game.dir, 'mods');
   let jars = [];
   try { jars = fs.readdirSync(mods).filter((n) => /^mcbot-server-control-.*\.jar$/i.test(n)); } catch { /* 没有 mods */ }
@@ -129,6 +166,7 @@ export function inspectGame(game, refJar = referenceCoreJar()) {
     username: (NAME_RE.test(server?.username || '') ? server.username : '') || (connOk ? conn.username : ''),
     nameConfigurable: !!server,
     connectionFile: connectionFileOf(game.dir), hasConnection: connOk, worldId: connOk ? String(conn.worldId || '') : '',
+    ...support(game.dir),
   };
 }
 
@@ -150,7 +188,7 @@ export async function gameOnline(connectionFile, fetchImpl = fetch, timeoutMs = 
 export async function listGames(runtime, { env = process.env, fetchImpl = fetch, refJar = referenceCoreJar() } = {}) {
   const games = findGames(runtime, env).map((g) => inspectGame(g, refJar));
   await Promise.all(games.map(async (g) => { g.online = g.hasConnection ? await gameOnline(g.connectionFile, fetchImpl) : false; }));
-  const rank = (g) => (g.core === 'missing' ? 2 : 0) + (g.online ? 0 : 1);
+  const rank = (g) => (g.supported === false ? 4 : 0) + (g.core === 'missing' ? 2 : 0) + (g.online ? 0 : 1);
   return games.sort((a, b) => rank(a) - rank(b));
 }
 
@@ -195,6 +233,51 @@ export function localAppearances(gameDir) {
   return choices.length ? [{ id: 'yes_steve_model:model', choices }] : [];
 }
 
+/** 导入 YSM 模型的上限：解码后合计 64 MB、最多 2000 个文件。 */
+export const MODEL_IMPORT_MAX = 64 * 1024 * 1024;
+const YSM_ADAPTER_RE = /^mcbot-yes-steve-model-.*\.jar$/i;
+/**
+ * 把网页选的 YSM 模型复制到 <游戏目录>/config/yes_steve_model/custom：
+ * 单个 .ysm 文件原样放入；模型文件夹整个放入（须含 ysm.json 或 main.json）。不覆盖同名模型；先写临时目录再改名。
+ * files：[{ path: '模型名/子目录/文件' 或 'x.ysm', data: base64 }]
+ */
+export function importYsmModel(gameDir, files) {
+  let mods = [];
+  try { mods = fs.readdirSync(path.join(gameDir, 'mods')); } catch { /* 没有 mods */ }
+  if (!mods.some((n) => YSM_ADAPTER_RE.test(n))) return { ok: false, error: '未安装 Yes Steve Model 插件：请先在「插件」中安装' };
+  if (!Array.isArray(files) || !files.length || files.length > 2000) return { ok: false, error: '请选择一个 .ysm 文件或一个模型文件夹' };
+  const items = [];
+  let total = 0;
+  for (const f of files) {
+    const parts = String(f?.path || '').split(/[\\/]/);
+    if (parts.some((x) => !x || x === '.' || x === '..' || /[\u0000-\u001f<>:"|?*]/.test(x)) || typeof f.data !== 'string') return { ok: false, error: '文件路径无效' };
+    const data = Buffer.from(f.data, 'base64');
+    total += data.length;
+    if (total > MODEL_IMPORT_MAX) return { ok: false, error: `模型超过 ${MODEL_IMPORT_MAX / 1024 / 1024} MB，无法导入` };
+    items.push({ parts, data });
+  }
+  const single = items.length === 1 && items[0].parts.length === 1 && /\.ysm$/i.test(items[0].parts[0]);
+  const name = items[0].parts[0];
+  if (!single) {
+    if (items.some((x) => x.parts.length < 2 || x.parts[0] !== name)) return { ok: false, error: '请选择一个 .ysm 文件或一个模型文件夹' };
+    if (!items.some((x) => x.parts.length === 2 && /^(ysm|main)\.json$/i.test(x.parts[1]))) return { ok: false, error: '此文件夹不是 YSM 模型：缺少 ysm.json 或 main.json' };
+  }
+  if (!MODEL_RE.test(name)) return { ok: false, error: '模型名仅可使用英文字母、数字、下划线、点和连字符' };
+  const custom = path.join(gameDir, 'config', 'yes_steve_model', 'custom'), dest = path.join(custom, name);
+  if (fs.existsSync(dest)) return { ok: false, error: `已有同名模型「${name}」：请先改名，或从游戏目录中移除旧模型` };
+  const tmp = path.join(custom, `.import-${process.pid}-${Date.now()}`);
+  try {
+    for (const x of items) {
+      const file = path.join(tmp, ...x.parts);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, x.data);
+    }
+    fs.renameSync(path.join(tmp, name), dest);
+  } catch (e) { return { ok: false, error: `无法写入模型（${e.code || e.message}）：请检查游戏目录是否可写` }; }
+  finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  return { ok: true, model: name, label: modelLabels(gameDir, [name])[name] };
+}
+
 /** YSM 模型的显示名：本机能读到模型文件夹就用 ysm.json 里的名字，否则用模型 id。 */
 export function modelLabels(gameDir, choices) {
   const out = {};
@@ -209,16 +292,13 @@ export function modelLabels(gameDir, choices) {
 }
 
 /**
- * 托管时带上的人设文件：和 companion.mjs 的 resolveMemory 一样。小克（Claude）用 <记忆目录>/xiaoke/persona.md，
- * 独立试玩身份（dsh、Codex）用 <记忆目录，默认 runtime/<agent>-memory>/<游戏名小写>/persona.md。
+ * 托管时带上的人设文件：<记忆目录>/<Bot 游戏名小写>/persona.md，和 start-server-play 传给驱动器的 --memory-agent 一致。
+ * 记忆目录留空时，Claude 用仓库的 memory，独立试玩身份（dsh、Codex）用 runtime/<agent>-memory。
  */
 export function personaFile({ agent, memoryDir = '', username = '' }, root = ROOT) {
-  const protocol = getAgentProtocol(agent);
-  if (protocol.identity === 'independent') {
-    if (!NAME_RE.test(username)) throw new Error('请先在「连接配置」中选择游戏；读取到 Bot 的游戏名后才能确定人设位置');
-    return path.join(memoryDir || path.join(root, 'runtime', `${agent}-memory`), username.toLowerCase(), 'persona.md');
-  }
-  return path.join(memoryDir || path.join(root, 'memory'), protocol.memoryAgent || 'xiaoke', 'persona.md');
+  if (!NAME_RE.test(username)) throw new Error('请先在「连接配置」中选择游戏；读取到 Bot 的游戏名后才能确定人设位置');
+  const independent = getAgentProtocol(agent).identity === 'independent';
+  return path.join(memoryDir || (independent ? path.join(root, 'runtime', `${agent}-memory`) : path.join(root, 'memory')), username.toLowerCase(), 'persona.md');
 }
 export function readPersona(opts, root = ROOT) {
   let file;
@@ -236,22 +316,3 @@ export function writePersona(opts, text, root = ROOT) {
   return { ok: true, file };
 }
 
-/** 人设示例：给第一次用的人一个能直接改的起点。说话方式写在这里，而不是写死在系统指令里。 */
-export const PERSONA_SAMPLE = `# 人设
-
-- 名字：（在这里写它叫什么，比如 小鲸）
-- 身份：玩家的 Minecraft 伙伴，像关系很好的朋友。
-- 性格：温和、容易开心，做事稳；关心玩家但不肉麻。
-
-## 说话方式
-- 像真人在游戏里打字聊天：简体中文，一次一两句短句，可以只回"嗯""好呀""等我一下"。
-- 对眼前的事即时反应："哇，好多煤""下雨了诶"。
-- 不说客服腔：不用"收到""好的，我这就……""有什么需要随时叫我"，不复述对方的话、不列清单。
-- 不把错误码、方块或物品 id、工具名、"接口""系统"这类词说给玩家，换成玩家听得懂的话，比如"这个椅子我还坐不了""只剩金苹果了，要吃吗"。
-- 不报整份背包，只说跟眼前的事有关的。
-- 做不到就直说，再给个别的办法。
-
-## 做事
-- 先确认再做大动作，不拆玩家的建筑。
-- 有危险先护着玩家，打不过就撤。
-`;

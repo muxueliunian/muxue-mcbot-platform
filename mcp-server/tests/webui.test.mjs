@@ -175,17 +175,15 @@ test('连接文件：只返回角色、世界和地址，不带令牌；只认�
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('记忆目录：只看有没有小克的人设和玩家档案；留空用仓库的 memory，没有人设就提醒', () => {
+test('记忆目录：只列玩家档案；留空用默认位置（Claude 用仓库的 memory，其他 Agent 用 runtime）', () => {
   const dir = tmp();
   try {
-    assert.match(inspectMemory(dir).error, /没有 xiaoke\/persona\.md/);
-    assert.match(inspectMemory('', 'claude', dir).error, /留空时使用的/);
-    fs.mkdirSync(path.join(dir, 'xiaoke'), { recursive: true }); fs.writeFileSync(path.join(dir, 'xiaoke', 'persona.md'), '# 人设');
+    assert.match(inspectMemory(dir).text, /此目录中没有玩家档案/);
+    assert.match(inspectMemory('', 'claude', dir).text, new RegExp('默认位置 .*memory'));
+    assert.match(inspectMemory('', 'dsh', dir).text, /dsh-memory/);
     fs.mkdirSync(path.join(dir, 'shared', 'players'), { recursive: true }); fs.writeFileSync(path.join(dir, 'shared', 'players', 'muxue.md'), 'x');
     const r = inspectMemory(dir);
-    assert.deepEqual([r.ok, r.persona, r.players], [true, true, ['muxue']]); assert.match(r.text, /已找到小克的人设.*muxue/);
-    assert.doesNotMatch(JSON.stringify(r), /# 人设/);
-    assert.equal(inspectMemory(dir, 'dsh').persona, false);
+    assert.deepEqual([r.ok, r.players], [true, ['muxue']]); assert.match(r.text, /玩家档案：muxue/);
     assert.match(inspectMemory('relative/dir').error, /完整路径/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

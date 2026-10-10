@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createModelCatalog } from './agent-models.mjs';
 import { AGENTS, MODES, SESSION_OPTIONS, accountDirs, appearanceChoices, applyToGame, createLauncher, deleteProfile, expandHome, inspectMemory, loadProfiles, normalizeProfile, profileConnection, profileName, saveProfile } from './webui-profiles.mjs';
-import { PERSONA_SAMPLE, addGameDir, connectionFileOf, findGames, gameOnline, gameType, listGames, localAppearances, modelLabels, readGameConfig, readPersona, removeGameDir, writePersona } from './webui-games.mjs';
+import { addGameDir, connectionFileOf, findGames, gameOnline, gameSupport, gameType, importYsmModel, listGames, localAppearances, MODEL_IMPORT_MAX, modelLabels, readGameConfig, readPersona, removeGameDir, writePersona } from './webui-games.mjs';
 import { createPluginJobs, inspectPlugins, loadCatalog, planPlugin } from './webui-plugins.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -100,9 +100,9 @@ export function requestControl(runtime, name, action, { waiting = false } = {}) 
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
-const readBody = (req) => new Promise((resolve, reject) => {
+const readBody = (req, limit = MAX_BODY_BYTES) => new Promise((resolve, reject) => {
   let size = 0; const chunks = [];
-  req.on('data', (c) => { size += c.length; if (size > MAX_BODY_BYTES) { reject(new Error('请求太大')); req.destroy(); } else chunks.push(c); });
+  req.on('data', (c) => { size += c.length; if (size > limit) { reject(new Error('请求太大')); req.destroy(); } else chunks.push(c); });
   req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('请求内容不是 JSON')); } });
   req.on('error', reject);
 });
@@ -117,7 +117,7 @@ function profilesView(runtime, launcher) {
     return { ...p, name, connection: conn, running: !!bot?.running, launch: name ? launcher.status(name) : null };
   });
   const agents = Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [k, { label: a.label, efforts: a.efforts, fallbackModels: a.fallbackModels,
-    defaultNickname: a.defaultNickname, accountHint: a.accountHint }]));
+    accountHint: a.accountHint }]));
   return { profiles, agents, modes: MODES, accounts: accountDirs(), sessionOptions: Object.keys(SESSION_OPTIONS) };
 }
 
@@ -154,7 +154,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     }
     if (!authed) return send(res, 403, { error: 'unauthorized' });
     if (req.method === 'POST' && !allowedOrigin(req.headers.origin)) return send(res, 403, { error: 'origin not allowed' });
-    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname === '/api/appearances' || url.pathname.startsWith('/api/plugins')) {
+    if (url.pathname.startsWith('/api/profiles') || url.pathname.startsWith('/api/games') || url.pathname.startsWith('/api/persona') || url.pathname === '/api/memory' || url.pathname === '/api/models' || url.pathname.startsWith('/api/appearances') || url.pathname.startsWith('/api/plugins')) {
       handleProfiles(req, res, url).catch((e) => send(res, 400, { ok: false, error: e.message }));
       return;
     }
@@ -188,7 +188,8 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
     if (req.method === 'GET' && p === '/api/plugins/job') return send(res, 200, { ok: true, job: pluginJobs.status() });
     if (req.method !== 'POST') return send(res, 404, { error: 'not found' });
     if (!/^application\/json\b/.test(req.headers['content-type'] || '')) return send(res, 415, { ok: false, error: '请求须为 JSON' });
-    const body = await readBody(req);
+    // 导入模型时文件以 base64 放在 JSON 里，单独放宽上限
+    const body = await readBody(req, p === '/api/appearances/import' ? Math.ceil(MODEL_IMPORT_MAX * 1.4) : MAX_BODY_BYTES);
     if (p === '/api/appearances') {
       // 按选中的游戏目录问：连接文件在目录里的固定位置
       const dir = path.normalize(expandHome(String(body.dir || '')));
@@ -200,6 +201,13 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       if (r.ok) r.labels = modelLabels(dir, r.sources.flatMap((s) => s.choices));
       return send(res, 200, r);
     }
+    if (p === '/api/appearances/import') {
+      // 和插件一样：只写入游戏列表中的目录
+      const dir = path.normalize(expandHome(String(body.dir || '')));
+      const game = isAbsPath(dir) && knownGames().find((g) => path.normalize(g.dir).toLowerCase() === dir.toLowerCase());
+      if (!game) return send(res, 200, { ok: false, error: '请先在「连接配置」中选择游戏' });
+      return send(res, 200, importYsmModel(game.dir, body.files));
+    }
     if (p.startsWith('/api/plugins')) {
       // 只改本机找到的游戏目录（列表里的），不接受随便一个路径
       const dir = path.normalize(expandHome(String(body.dir || '')));
@@ -207,7 +215,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       const game = knownGames().find((g) => path.normalize(g.dir).toLowerCase() === dir.toLowerCase());
       if (!game) return send(res, 200, { ok: false, error: '此目录不在游戏列表中，请先在「连接配置」中添加' });
       const catalog = pluginOpts.catalog || loadCatalog();
-      if (p === '/api/plugins') return send(res, 200, { ok: true, type: gameType(game.dir), online: await pluginOpts.online(game.dir), ...inspectPlugins(game.dir, catalog) });
+      if (p === '/api/plugins') return send(res, 200, { ok: true, type: gameType(game.dir), online: await pluginOpts.online(game.dir), unsupported: gameSupport(game.dir, catalog.platform).reason || '', ...inspectPlugins(game.dir, catalog) });
       if (p === '/api/plugins/plan') return send(res, 200, planPlugin(game.dir, String(body.id || ''), String(body.action || ''), { catalog, downloads: pluginOpts.downloads }));
       if (p === '/api/plugins/apply') { const r = pluginJobs.start(game.dir, String(body.id || ''), String(body.action || ''), catalog); return send(res, r.ok ? 200 : 409, r); }
       return send(res, 404, { error: 'not found' });
@@ -219,7 +227,7 @@ export function createWebServer({ runtime, token = crypto.randomBytes(24).toStri
       if (!AGENTS[opts.agent]) return send(res, 400, { ok: false, error: '不支持的 Agent' });
       if (opts.memoryDir && !isAbsPath(opts.memoryDir)) return send(res, 200, { ok: false, error: '记忆目录须为完整路径' });
       if (body.save) return send(res, 200, writePersona(opts, body.text));
-      return send(res, 200, { ...readPersona(opts), sample: PERSONA_SAMPLE });
+      return send(res, 200, readPersona(opts));
     }
     if (p === '/api/memory') return send(res, 200, inspectMemory(String(body.dir || ''), String(body.agent || 'claude')));
     if (p === '/api/profiles/save') {

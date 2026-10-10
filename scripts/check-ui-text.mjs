@@ -94,14 +94,12 @@ function compatStrings(file) {
 }
 
 const CJK = /[一-鿿]/;
-/** Bot 人设示例：内容本身就是说话方式的例子（“嗯”“好呀”），不按界面文案查。 */
-const EXEMPT = (file, text) => file.endsWith('webui-games.mjs') && text.startsWith('# 人设');
 
 export function collect(base = root) {
   const items = [];
   for (const rel of UI_FILES) {
     const src = fs.readFileSync(path.join(base, rel), 'utf8');
-    for (const s of rel.endsWith('.html') ? htmlStrings(src) : jsStrings(src)) if (CJK.test(s.text) && !EXEMPT(rel, s.text)) items.push({ file: rel, ...s });
+    for (const s of rel.endsWith('.html') ? htmlStrings(src) : jsStrings(src)) if (CJK.test(s.text)) items.push({ file: rel, ...s });
   }
   for (const s of compatStrings(path.join(base, 'compat.json'))) if (CJK.test(s.text)) items.push({ file: 'compat.json', ...s });
   return items;

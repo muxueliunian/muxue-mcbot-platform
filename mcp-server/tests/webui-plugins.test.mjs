@@ -6,6 +6,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { applyPlugin, inspectPlugins, loadCatalog, modsInToml, planPlugin, readZipEntries, scanMods } from '../../scripts/webui-plugins.mjs';
 import { createWebServer } from '../../scripts/webui.mjs';
+import { gameSupport, gameVersion } from '../../scripts/webui-games.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mcbot-plugins-'));
 const put = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
@@ -40,7 +41,7 @@ function fixture() {
       { id: 'kaleidoscope_cookery', name: '森罗厨房', kind: 'addon', project: 'mods/mcbot-kaleidoscope-cookery', jar: 'mcbot-kaleidoscope-cookery-0.1.0.jar', what: ['炒锅做菜'], evidence: '隔离服实测',
         requires: [{ modId: 'kaleidoscope_cookery', version: '1.6.0', side: 'both', license: 'CC', modrinth: { file: 'kc-1.6.0.jar', size: kc.length, url: 'https://cdn.modrinth.com/data/kc/kc-1.6.0.jar' } }] },
       { id: 'kaleidoscope_cookery_slots', name: '森罗厨房的机器', kind: 'config', config: { mods: { kaleidoscope_cookery: '1.6.0' } }, requires: [{ ref: 'kaleidoscope_cookery' }] },
-      { id: 'iron_furnaces', name: '铁炉', kind: 'builtin', project: 'mods/mcbot-server-control',
+      { id: 'iron_furnaces', name: '铁炉', kind: 'addon', project: 'mods/mcbot-iron-furnaces', jar: 'mcbot-iron-furnaces-0.1.0.jar',
         requires: [{ modId: 'ironfurnaces', version: '4.3.2', side: 'both', modrinth: { file: 'ironfurnaces-4.3.2.jar', size: furnace.length, url: 'https://cdn.modrinth.com/data/if/ironfurnaces-4.3.2.jar' } }] },
     ],
   };
@@ -48,6 +49,7 @@ function fixture() {
   const core = modJar('mcbot_server_control', '0.1.0', { extra: '# new build\n' }), adapter = modJar('mcbot_kaleidoscope_cookery', '0.1.0');
   put(path.join(root, 'mods', compat.core.jar), core);
   put(path.join(root, 'mods/mcbot-kaleidoscope-cookery/build/libs', 'mcbot-kaleidoscope-cookery-0.1.0.jar'), adapter);
+  put(path.join(root, 'mods', 'mcbot-iron-furnaces-0.1.0.jar'), modJar('mcbot_iron_furnaces', '0.1.0'));
   const files = { 'kc-1.6.0.jar': kc, 'ironfurnaces-4.3.2.jar': furnace };
   const fetched = [];
   const fetchImpl = async (url) => {
@@ -98,7 +100,7 @@ test('插件状态和计划：旧核心、版本不对的本体、没装的适�
     assert.ok(plan.notes.some((n) => /客户端也需安装/.test(n)) && plan.notes.some((n) => /重启服务器/.test(n)));
     put(path.join(f.downloads, 'kc-1.6.0.jar'), f.kc);
     assert.ok(!planPlugin(game, 'kaleidoscope_cookery', 'install', { catalog: f.catalog, downloads: f.downloads }).steps.some((x) => x.op === 'download'), '缓存里大小对上就不再下载');
-    assert.match(planPlugin(game, 'iron_furnaces', 'uninstall', { catalog: f.catalog }).error, /内置于核心/);
+    assert.match(planPlugin(game, 'iron_furnaces', 'uninstall', { catalog: f.catalog }).error, /尚未安装/);
     assert.match(planPlugin(game, 'nope', 'install', { catalog: f.catalog }).error, /插件不存在/);
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -190,6 +192,29 @@ test('下载写盘失败：返回安装失败，不让进程崩溃', async () =>
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test('游戏版本：实例读 mmc-pack.json、服务器读 libraries、版本隔离读版本 json；不支持的版本拒绝安装插件', () => {
+  const f = fixture();
+  try {
+    const pack = (dir, mc, neo) => put(path.join(dir, 'mmc-pack.json'), JSON.stringify({ components: [{ uid: 'net.minecraft', version: mc }, ...(neo ? [{ uid: 'net.neoforged', version: neo }] : [])] }));
+    const newInst = path.join(f.root, 'inst26', 'minecraft'), okInst = path.join(f.root, 'inst121', 'minecraft');
+    pack(path.dirname(newInst), '26.2', '26.2.0.15-beta'); pack(path.dirname(okInst), '1.21.1', '21.1.230');
+    put(path.join(newInst, 'mods', 'x.txt'), ''); put(path.join(okInst, 'mods', 'x.txt'), '');
+    const platform = { minecraft: '1.21.1', loader: 'neoforge', loaderMin: '21.1.217' };
+    assert.deepEqual(gameVersion(newInst), { minecraft: '26.2', loader: 'neoforge', loaderVersion: '26.2.0.15-beta' });
+    assert.match(gameSupport(newInst, platform).reason, /不支持的版本：Minecraft 26\.2/);
+    assert.equal(gameSupport(okInst, platform).supported, true);
+    const old = path.join(f.root, 'oldneo', 'minecraft'); pack(path.dirname(old), '1.21.1', '21.1.100');
+    assert.equal(gameSupport(old, platform).supported, false, 'NeoForge 低于下限');
+    const server = path.join(f.root, 'srv'); fs.mkdirSync(path.join(server, 'libraries/net/neoforged/neoforge/21.1.217'), { recursive: true });
+    assert.deepEqual(gameVersion(server), { minecraft: '1.21.1', loader: 'neoforge', loaderVersion: '21.1.217' });
+    const iso = path.join(f.root, '.minecraft', 'versions', 'Fab'); put(path.join(iso, 'Fab.json'), JSON.stringify({ inheritsFrom: '1.21.1', libraries: [{ name: 'net.fabricmc:fabric-loader:0.16.0' }] }));
+    assert.deepEqual(gameVersion(iso), { minecraft: '1.21.1', loader: 'fabric', loaderVersion: '' });
+    assert.equal(gameVersion(path.join(f.root, 'nothing')), null);
+    const catalog = { ...f.catalog, platform };
+    assert.match(planPlugin(newInst, 'iron_furnaces', 'install', { catalog, downloads: f.downloads }).error, /不支持的版本.*无法安装插件/);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test('WebUI 插件接口：只改游戏列表里的目录，安装在后台跑、网页轮询结果', async () => {
   const f = fixture(), game = path.join(f.root, 'inst'), runtime = path.join(f.root, 'runtime');
   put(path.join(game, 'mods', 'mcbot-server-control-0.1.0.jar'), f.core);
@@ -203,11 +228,11 @@ test('WebUI 插件接口：只改游戏列表里的目录，安装在后台跑�
     const s = await post('/api/plugins', { dir: game });
     assert.deepEqual([s.ok, s.type, s.online, s.core.overall], [true, 'lan', false, 'ok']);
     const plan = await post('/api/plugins/plan', { dir: game, id: 'iron_furnaces', action: 'install' });
-    assert.deepEqual(plan.steps.map((x) => x.op), ['download', 'add']);
+    assert.deepEqual(plan.steps.map((x) => [x.op, x.file]), [['add', 'mcbot-iron-furnaces-0.1.0.jar'], ['download', 'ironfurnaces-4.3.2.jar'], ['add', 'ironfurnaces-4.3.2.jar']]);
     assert.equal((await post('/api/plugins/apply', { dir: game, id: 'iron_furnaces', action: 'install' })).ok, true);
     let job;
     for (let i = 0; i < 50 && !job?.done; i++) { await new Promise((r) => setTimeout(r, 20)); job = (await (await fetch(`${base}/api/plugins/job`, { headers: { cookie } })).json()).job; }
     assert.equal(job.result.ok, true, job.result.error);
-    assert.ok(fs.existsSync(path.join(game, 'mods', 'ironfurnaces-4.3.2.jar')));
+    assert.ok(fs.existsSync(path.join(game, 'mods', 'ironfurnaces-4.3.2.jar')) && fs.existsSync(path.join(game, 'mods', 'mcbot-iron-furnaces-0.1.0.jar')));
   } finally { await web.close(); fs.rmSync(f.root, { recursive: true, force: true }); }
 });

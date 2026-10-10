@@ -23,7 +23,7 @@
 | machine-status | `{instanceId,sessionId,leaseId,x,y,z}` | 只读（8b，10-09）：不走过去、不打开界面读一台机器的内容和进度，给运行端的“放好就走、到时回来取”用，不占动作、不打断正在做的事。只认身体所在维度、水平 256 格内（OUT_OF_REACH）；区块没加载回 `state:"unloaded"`（没加载的机器不工作，时间也不走）；加载了回 `id`，以及 `supported`（这个方块的工作站适配实现了 `progress`，现在是原版熔炉、烟熏炉、高炉和酿造台）、`machine`、`inputs`、`results`、`fuel`、`working`、`ticksLeft`／`secondsLeft`（照这样一直工作还要多久）、`fuelTicks`（燃料还够烧多少 tick）、`stalled`（还有料但没在工作：没燃料或出口满了） |
 | act | `{instanceId,sessionId,leaseId,controlGeneration,operationId,name,args}` | 现有 Operation 字段，另含 controlGeneration；同 ID 同内容返回原结果，异内容拒绝。动作按原生字段比较，不哈希；结果缓存淘汰后同 ID 也不能重新执行 |
 | operation | `{instanceId,sessionId,leaseId,operationId}` | 对应当前租约的 Operation；不以查询续租 |
-| stop | `{instanceId,sessionId,leaseId,clearGuard?,guardRevision?}` | `{stopped:true,controlGeneration}`；取消当前操作、推进代次、角色保持在线，旧代次 act 拒绝；`guard-duty-fenced`支持`clearGuard:true`连同必填`guardRevision`在同一请求中清保护（停止本身从不因序号被拒，序号已被更新的设置超过时只停不清）；省略则保留保护意图 |
+| stop | `{instanceId,sessionId,leaseId,clearGuard?,guardRevision?,stepAside?}` | `{stopped:true,controlGeneration}`；取消当前操作、推进代次、角色保持在线，旧代次 act 拒绝；`guard-duty-fenced`支持`clearGuard:true`连同必填`guardRevision`在同一请求中清保护（停止本身从不因序号被拒，序号已被更新的设置超过时只停不清）；省略则保留保护意图；`step-aside-stop`支持`stepAside:true`（跟随让开，之前发现的目标继续有效，见[跟随让开、自卫失败、没武器](#跟随让开自卫失败没武器试玩反馈修正)） |
 | guard | `{instanceId,sessionId,leaseId,guardRevision,player?,expectedEntityId?,options?,off?}` | `guard-duty-fenced`保护配置；开启返回保护状态和`guardRevision`，关闭返回`{enabled:false,guardRevision}`；不占操作 ID 预算，见常驻保护一节 |
 | release | `{instanceId,sessionId,leaseId}` | `{released:true}`；仅停止并放弃这一份控制权，角色保留；旧 lease 不能影响新 lease |
 | revoke | `{instanceId,sessionId,leaseId,stopToken,leave?}` | `{stopped:true,revoked:true,left}`；宿主专用，仅撤销指定租约，角色默认保留；不能接管／移动，不续租。已释放的匹配旧租约可幂等确认，但绝不影响新租约。`leave:true`（宿主退出时用）同时让角色像玩家一样下线（原版存档），只在没有别的租约时生效，`left`说明这次是否真的下线；下次 claim 在原地重新上线 |
@@ -321,6 +321,18 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 - **能力`hunt`**（操作，同时一个）：`{type, count?, radius?, player?|center?, lowHealth?, survey?, timeoutMs?}`。在中心（默认 Bot 自己，或玩家、坐标）`radius`（1～16，默认 12）内找成年的该种生物，走过去用背包里最好的剑或斧（不在热栏就换进热栏），满蓄力一下一下砍，攻击走和自卫一样的原生攻击范围（只能伤到目标，不横扫），直到打死`count`只（1～16，默认 1）或附近没有了。永远不打：玩家、村民和商人、傀儡、有主人或拴着的、起了名字的、幼崽；苦力怕直接拒绝（`UNSUPPORTED`）。血量到`lowHealth`（默认 8）就停（`LOW_HEALTH`）。掉落只在走过时按原版拾取。`survey:true`只数（`total`、`huntable`、`babies`、`protected`）。结果：`killed`（只算自己砍过、随后死亡的）、`swings`、`damage`、走不到的个数和原因、背包变化。走路时可被常驻保护打断。运行端工具`hunt`，说明里要求只打玩家要求的。
 - **金苹果**：金苹果、附魔金苹果的效果都是有益的，不再按“带效果的食物”拒绝；仍是贵重食物，自动进食只在血量紧急线才吃，模型可以按玩家要求指定槽位吃；和原版一样饱腹时也能吃。
 - **验证**：隔离服`scripts/server-hunt-smoke.mjs` 8 项（2026-10-11）：只数不动；打 2 只成年羊、剩 1 只，剑从背包换到手上；起名字的和小羊没挨打；苦力怕拒绝；饱腹时吃附魔金苹果少一个、有伤害吸收。羊会走动，没有测会还手的怪，没有真实模型试玩。
+
+### 跟随让开、自卫失败、没武器（试玩反馈修正）
+
+玩家实测 Bot 一边跟随一边干活时的三个问题。只有离线测试，**未在真实游戏中验证**（没有隔离服实测，也没有真实模型试玩）。
+
+- **让开不再作废刚找到的目标（能力`step-aside-stop`）**：以前跟随为工具让开要停一次身体（代次加一），而`discover-resources`的 resourceRef、`discover-containers`的 containerRef 在运行端和服务端都按发现时的代次核验，于是跟随中“先找再做”的`gather-resources`、`approach-container`和存取箱子必定`WORLD_CHANGED`。现在`stop`可带`stepAside:true`：照常取消操作、代次加一，但服务端把这之前发出的资源目标和容器目标继续认作当前控制。规则是`ControlSession.carries(g)`：从代次 g 到当前只有 step-aside 停止。普通`stop`（包括`stop-action`）、带`clearGuard`的`stop`（同时带`stepAside`也按普通算）、`claim`、`revoke`、`release`、身体变化都会截断。会话、维度和服务端 120 秒期限照旧核验。运行端`ServerBody.carries`按同一规则记账，资源引用和容器引用的上下文比较改用`sameControl`（实例、会话、世界、维度相同，代次相同或被承接），本地 30 秒期限不变。只有`CompanionMode`为工具或反射让开时才发`stepAside`，服务端没声明能力时不发，行为同旧版。
+  - **玩家叫停照样作废**：①`stop-action`经`stopCurrent`同步清空本地引用（`gather.cancel()`、`tasks.cancel()`），再发不带`stepAside`的停止（带`clearGuard`），服务端截断承接；②让开的停止还在途中时到达的普通停止不合并进去，而是在它之后单独再停一次，所以照样截断；③`companion.stop`推进 epoch，途中的让开拿不到确认。即使有别的路径留下了本地引用，只要中间有过一次非让开的停止，运行端（`WORLD_CHANGED`）和服务端（`STALE_TARGET`）都会拒绝。
+- **自卫确定失败后跟随照常接上**：跟随中近身自卫要先让开（停一次），身体正被跟随占着又会再停一次（代次加二）。以前自卫`failed`（比如没有能核验的武器）时把跟随转成手动暂停，下一次后台观察发现代次变了、又不是让开状态，就判`WORLD_CHANGED`。现在`failed`、`cancelled`和成功一样让跟随自己接上，只有`unknown`（没人确认的结果）才停在暂停、并停用自卫。
+- **陪伴意图作废不再结束整个控制**：以前的升级链：`CompanionMode.fail`遇到`WORLD_CHANGED`／`CANCELLED`也按失控处理，调用`body.close()`（释放租约、`ServerBody`进入 closed）→ 下一次`RuntimeMonitor`读观察时`assertActive`报`LEASE_LOST`（“服务端控制权已结束；请显式重启接管，不得重放旧动作”）→ `disconnect`事件 → 带`--reconnect`的驱动器以 75 退出、重新接管，跟随和保护都没了。现在这两个码只结束跟随／等待（状态`stopped`并带码和原因），身体控制、租约和常驻保护都保留；失租约、过期、断线、回执无效、停止未确认等仍关闭身体。旧的跟随不会留下无主的移动：服务端只在 follow-companion 的代次仍是当前代次时驱动它。陪挖／陪捡的阻断收尾里，停止已确认后的代次异常也只结束意图。
+- **暂停、受阻时接住同会话的新代次**：手动暂停（模型`pause`、或让开转成的手动暂停）和`blocked`时，身体上没有我们的东西在跑，代次只是因为别的任务停过身体才前进。同一实例、会话、世界、维度的较新代次直接沿用（后台观察和`resume`都是）；`resume`仍重新核验玩家身份。换会话、世界、维度照旧作废意图。玩家叫停不经过这里：`stop-action`直接清掉意图。
+- **没武器时腾手空手打**：保护（`GuardCombat`）和`defend-self`都按这个顺序：背包里最好的可核验原版剑／斧 → 空着的热栏格 → 把手上那格的东西用原生 SWAP 挪进背包主区（9～35）第一个空格，空手打。挪开的东西不会被拿来打，未知 Mod 物品照旧不用。热栏和背包主区都满时照旧放弃：保护对这只怪暂时不打，观察的`guard.unarmed`为`NO_FREE_HAND`，运行端发一条`guard`事件说明；`defend-self`报`UNSAFE_WEAPON`，原因写明“热栏和背包主区都满，空不出手”。`defend-self`挪的是选中格，选中格组件不完整时换别的热栏格再选中，挪动走`swap-inventory`并核对两格的结果。
+- **验证范围**：运行端`npm test`（Node 24.21）新增`companion-step-aside.test.mjs`（跟随中发现后采集／走近箱子能开始、叫停后仍拒绝、非让开停止仍拒绝、让开途中到达的停止单独执行、跟随＋自卫失败后恢复且不断开、手动暂停接住新代次、`WORLD_CHANGED`只结束跟随），`survival-defense.test.mjs`腾手三项，`companion-guard-duty.test.mjs`空手原因一项。Java 用例补在`ControlSessionTest`（承接链）、`ResourcePickupTest`（资源目标）、`GuardCombatTest`（腾手顺序、放弃和原因）。
 
 ### 试玩反馈修正（2026-10-08）
 

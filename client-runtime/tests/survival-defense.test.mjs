@@ -104,6 +104,42 @@ test('offhand-only axe is outside main inventory scope and does not hide a valid
   assert.equal(writes[0].args.expectedItem, 'minecraft:air'); assert.equal(writes[0].args.slot, 0);
 });
 
+test('no weapon and a full hotbar: the held stack goes into an empty main inventory slot and the bare hand defends', async () => {
+  // The trial hotbar: enchanted golden apples, bow, arrows, logs and the like, no sword or axe, room in the backpack.
+  const f = fixture();
+  const hotbar = ['minecraft:enchanted_golden_apple', 'minecraft:bow', 'minecraft:arrow', 'minecraft:oak_log', 'minecraft:golden_apple', 'minecraft:torch', 'minecraft:bread', 'minecraft:cobblestone', 'example:mod_gadget'];
+  hotbar.forEach((id, slot) => { f.state.inventory[slot] = { slot, id, count: 3, components: {}, maxStackSize: 64 }; });
+  for (let slot = 9; slot < 20; slot++) f.state.inventory[slot] = { slot, id: 'minecraft:dirt', count: 64, components: {}, maxStackSize: 64 };
+  const op = await f.tasks.defend({ policy });
+  assert.equal(op.status, 'succeeded', op.summary);
+  const writes = f.calls.filter(call => typeof call === 'object');
+  assert.deepEqual(writes.map(call => call.name), ['swap-inventory', 'defend-entity']);
+  assert.deepEqual({ source: writes[0].args.sourceSlot, hotbar: writes[0].args.hotbarSlot }, { source: 20, hotbar: 0 }, 'the selected slot is emptied into the first empty main inventory slot');
+  assert.equal(writes[0].args.expectedSource.id, 'minecraft:air'); assert.equal(writes[0].args.expectedTarget.id, 'minecraft:enchanted_golden_apple');
+  assert.deepEqual({ item: writes[1].args.expectedItem, slot: writes[1].args.slot }, { item: 'minecraft:air', slot: 0 }, 'the bare hand attacks, nothing that was held is swung');
+  assert.equal(f.state.inventory[20].id, 'minecraft:enchanted_golden_apple', 'the moved stack is kept, not dropped');
+  assert.equal(new Set(writes.map(call => call.token)).size, 1, 'one task token for the whole defense');
+});
+
+test('no weapon, hotbar and main inventory full: the refusal stays and says why, nothing is moved or swung', async () => {
+  const f = fixture(); f.state.inventory = f.state.inventory.map(item => ({ ...item, id: 'example:mod_gadget', count: 1 }));
+  const op = await f.tasks.defend({ policy });
+  assert.equal(op.status, 'failed'); assert.equal(op.result.code, 'UNSAFE_WEAPON');
+  assert.match(op.summary, /空不出手/); assert.match(op.summary, /不使用未知Mod物品/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('a held stack whose components cannot be verified is not moved; another hotbar slot is emptied and selected', async () => {
+  const f = fixture();
+  for (let slot = 0; slot < 9; slot++) f.state.inventory[slot] = { slot, id: 'minecraft:oak_log', count: 8, components: {}, maxStackSize: 64 };
+  f.state.inventory[0] = { slot: 0, id: 'example:mod_gadget', count: 1, componentsComplete: false, components: {} };
+  const op = await f.tasks.defend({ policy });
+  assert.equal(op.status, 'succeeded', op.summary);
+  const writes = f.calls.filter(call => typeof call === 'object');
+  assert.deepEqual(writes.map(call => call.name), ['swap-inventory', 'select-slot', 'defend-entity']);
+  assert.equal(writes[0].args.hotbarSlot, 1); assert.equal(writes[1].args.slot, 1); assert.equal(writes[2].args.expectedItem, 'minecraft:air');
+});
+
 test('low health and ignited creeper use finite safety-checked retreat rather than attack', async () => {
   for (const change of ['health', 'explosion']) {
     const f = fixture(); if (change === 'health') f.state.health = 8; else f.state.threats.nearby[0].explosionPreparing = true;

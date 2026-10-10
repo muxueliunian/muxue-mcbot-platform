@@ -100,6 +100,8 @@ export interface GuardDutyState {
   /** Whether the duty can fight for the player right now; reason says why not (PLAYER_AWAY, TOO_FAR, BUSY, NO_CONTROL). */
   covering: boolean; reason?: string; returning?: boolean; busyMs: number;
   state: string; target?: string; targetId?: string; hits: number; kills: number; shots: number; retreats: number; damage: number;
+  /** NO_FREE_HAND: the last foe was given up because no verified weapon was there and the hand could not be emptied (hotbar and main inventory full). */
+  unarmed?: string;
 }
 export type GuardDutyRequest = { player: string; expectedEntityId: string; options?: GuardOptions } | { off: true };
 export interface ActionArguments {
@@ -157,7 +159,21 @@ export interface Operation {
   operationId: string; sessionId: string; name: string; status: OperationStatus; summary: string; result?: unknown; controlGeneration?: number;
   operationBudget?: OperationBudget;
 }
-export interface StopOptions { clearGuard?: boolean }
+export interface StopOptions {
+  clearGuard?: boolean;
+  /** A follow/wait stepping aside for a tool or reflex (capability step-aside-stop): targets found before it stay valid. Never together with clearGuard. */
+  stepAside?: boolean;
+}
+type ControlContext = { instanceId?: string; sessionId?: string; worldId?: string; dimension?: string; controlGeneration?: number };
+/**
+ * A reference (resourceRef, containerRef) taken in `then` still belongs to the control observed in `now`: same instance,
+ * session, world and dimension, and the same control generation or one the body still carries (Body.carries).
+ */
+export function sameControl(body: Pick<Body, 'carries'>, then: ControlContext, now: ControlContext): boolean {
+  if (then.instanceId !== now.instanceId || then.sessionId !== now.sessionId || then.worldId !== now.worldId || then.dimension !== now.dimension) return false;
+  if (then.controlGeneration === now.controlGeneration) return true;
+  return then.controlGeneration !== undefined && now.controlGeneration !== undefined && body.carries?.(then.controlGeneration) === true && then.controlGeneration < now.controlGeneration;
+}
 export interface Body {
   readonly hello: BodyHello;
   observe(block?: Position): Promise<Observation>;
@@ -178,6 +194,8 @@ export interface Body {
   pendingOperations(): readonly Operation[];
   isBusy?(): boolean;
   stop(options?: StopOptions): Promise<{ stopped: true }>;
+  /** ServerBody: whether targets found in that control generation still hold, i.e. only step-aside stops came since (ControlSession.carries on the server). */
+  carries?(generation: number): boolean;
   close(): Promise<void>;
 }
 export class BodyError extends Error {

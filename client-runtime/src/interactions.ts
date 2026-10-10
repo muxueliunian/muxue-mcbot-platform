@@ -47,14 +47,17 @@ export async function useItem(body: Body, request: UseItemRequest, taskToken?: s
   return body.act('use-item', { interaction: request.interaction, slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components!, ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}) }, taskToken);
 }
 
-/** Put on a piece of armour from anywhere in the main inventory; the server decides which armour slot it fits. */
-export async function equipItem(body: Body, request: { item: string; slot?: number }, taskToken?: string): Promise<Operation> {
+/**
+ * Put on a piece of armour from anywhere in the main inventory; the server decides which armour slot it fits.
+ * With hand 'offhand' any item goes into the off hand instead; the server refuses what cannot go there.
+ */
+export async function equipItem(body: Body, request: { item: string; slot?: number; hand?: 'offhand' }, taskToken?: string): Promise<Operation> {
   if (!body.hello.capabilities.includes('equip-item')) throw new BodyError('UNSUPPORTED', '身体没有声明穿装备的能力');
   const state = await body.observe();
   const chosen = state.inventory.find(stack => stack.id === request.item && stack.count > 0 && stack.slot >= 0 && stack.slot <= 35 && (request.slot === undefined || stack.slot === request.slot));
   if (!chosen) throw new BodyError('MISSING_ITEM', `背包里没有 ${request.item}（已经穿在身上的不算）`);
   if (chosen.componentsComplete === false || !chosen.components) throw new BodyError('INCOMPLETE_GUARD', '这个物品的组件读不完整，不能安全穿戴');
-  return body.act('equip-item', { slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components }, taskToken);
+  return body.act('equip-item', { slot: chosen.slot, expectedItem: chosen.id, expectedCount: chosen.count, expectedComponents: chosen.components, ...(request.hand ? { hand: request.hand } : {}) }, taskToken);
 }
 
 function hotbarStack(inventory: Array<{ slot: number; id: string; count: number; components?: Record<string, unknown>; componentsComplete?: boolean }>, selectedSlot: number | undefined, item: string) {

@@ -19,6 +19,8 @@ import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.SweepAttackEvent;
 import net.minecraft.world.inventory.*;
 import net.minecraft.world.item.*;
+import net.minecraft.world.item.enchantment.EnchantmentEffectComponents;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.*;
@@ -650,38 +652,45 @@ final class SurvivalActions {
      * into the off hand, the way a
      * player does in their own inventory: shift-click it into an empty armour slot, or pick it up, click the worn piece
      * (they swap) and put the old piece back where the new one was. Vanilla decides what fits where.
+     * With hand:"offhand" any item goes into the off hand the same way (a player puts it down there by clicking the
+     * empty slot); the item it replaces comes back to the slot it came from. A replaced piece with binding curse is refused.
      */
     private void equip(ControlSession.Operation operation) {
         worldAction();JsonObject args=operation.args;int slot=integer(args,"slot");
         if(slot<0||slot>35)throw error("INVALID_ARGUMENT","Equip takes a main inventory slot 0..35");
+        boolean offhandAsked=args.has("hand");
+        if(offhandAsked&&!OffhandEquip.HAND.equals(string(args,"hand")))throw error("INVALID_ARGUMENT","hand takes only \"offhand\"");
         AbstractContainerMenu menu=player.inventoryMenu;
         if(player.containerMenu!=menu||!menu.getCarried().isEmpty()||!menu.stillValid(player))throw error("BUSY","Equipping needs the own inventory with an empty cursor; close other menus first");
         ItemStack stack=player.getInventory().getItem(slot);
         expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
-        net.minecraft.world.entity.EquipmentSlot part=player.getEquipmentSlotForItem(stack);
+        net.minecraft.world.entity.EquipmentSlot part=OffhandEquip.target(offhandAsked,player.getEquipmentSlotForItem(stack));
         boolean offhand=part==net.minecraft.world.entity.EquipmentSlot.OFFHAND;
-        if(stack.isEmpty()||(!offhand&&part.getType()!=net.minecraft.world.entity.EquipmentSlot.Type.HUMANOID_ARMOR))throw error("UNSUPPORTED","Item is not worn in an armour slot or held in the off hand");
+        if(!OffhandEquip.supported(offhandAsked,part,stack.isEmpty()))throw error("UNSUPPORTED","Item is not worn in an armour slot or held in the off hand");
         int from=NativeWorkstation.menuSlot(menu,player.getInventory(),slot),worn=NativeWorkstation.menuSlot(menu,player.getInventory(),offhand?net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND:36+part.getIndex());
         if(from<0||worn<0)throw error("UNSUPPORTED","Own inventory menu has no matching slots");
         Slot armour=menu.getSlot(worn);ItemStack old=armour.getItem().copy();
-        if(!armour.mayPlace(stack)||(!old.isEmpty()&&!armour.mayPickup(player)))throw error("FORBIDDEN","The worn piece cannot be taken off (curse of binding) or the item does not fit");
+        // A plain slot in the off hand has no curse check of its own, so a bound piece it would give up is refused here.
+        if(!armour.mayPlace(stack)||(!old.isEmpty()&&!armour.mayPickup(player))||(offhandAsked&&!old.isEmpty()&&EnchantmentHelper.has(old,EnchantmentEffectComponents.PREVENT_ARMOR_CHANGE)))throw error("FORBIDDEN","The worn piece cannot be taken off (curse of binding) or the item does not fit");
         JsonObject wanted=stackValue(stack),previous=old.isEmpty()?null:stackValue(old);guard(operation);
         nativeEffects.sent();
-        if(old.isEmpty())NativeWorkstation.click(player,menu,from,0,ClickType.QUICK_MOVE);
+        if(old.isEmpty()&&!offhandAsked)NativeWorkstation.click(player,menu,from,0,ClickType.QUICK_MOVE);
         else{
             NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
             NativeWorkstation.click(player,menu,worn,0,ClickType.PICKUP);
-            NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
+            // Swapped: the old piece is in the cursor and goes back. Empty slot: the cursor is empty unless a click was refused.
+            if(!old.isEmpty()||!menu.getCarried().isEmpty())NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
         }
         JsonObject now=stackValue(armour.getItem());
         JsonObject result=obj("part",part.getName(),"slot",slot,"wearing",now,"inventory",observedInventory());
+        if(offhandAsked)result.addProperty("hand",OffhandEquip.HAND);
         if(previous!=null)result.add("tookOff",previous);
         if(!menu.getCarried().isEmpty()){
             // Something refused the last click: the cursor still holds a piece. Put it back in its slot rather than lose it.
             NativeWorkstation.click(player,menu,from,0,ClickType.PICKUP);
             operation.finish("unknown","Armour swap did not complete; inspect the inventory before trying again",obj("part",part.getName(),"inventory",observedInventory(),"carried",stackValue(menu.getCarried())));
         }
-        else if(now.equals(wanted)&&(previous==null||stackValue(player.getInventory().getItem(slot)).equals(previous)))operation.finish("succeeded","Armour worn",result);
+        else if(now.equals(wanted)&&(previous==null||stackValue(player.getInventory().getItem(slot)).equals(previous)))operation.finish("succeeded",offhandAsked?"Held in the off hand":"Armour worn",result);
         else if(now.equals(previous==null?stackValue(ItemStack.EMPTY):previous))operation.finish("failed","FORBIDDEN: Native inventory click did not move the armour",obj("code","FORBIDDEN","part",part.getName(),"inventory",observedInventory()));
         else operation.finish("unknown","Armour slot changed in an unexpected way; inspect before trying again",result);
     }

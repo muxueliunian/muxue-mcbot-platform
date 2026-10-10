@@ -447,7 +447,7 @@ export class ServerBody implements Body {
       'defend-entity': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, entityId: z.string().uuid(), expectedDimension: identifier, maxDistance: z.number().finite().min(1).max(3), minHealth: z.number().finite().min(1).max(20), maxAttacks: z.number().int().min(1).max(3), timeoutMs: z.number().int().min(500).max(5000) }).strict(),
       'retreat-from-entity': z.object({ entityId: z.string().uuid(), expectedDimension: identifier, distance: z.number().finite().min(1.5).max(6).optional(), timeoutMs: z.number().int().min(500).max(5000).optional() }).strict(),
       'pillar-up': z.object({ ...guardedStack, expectedCount: z.number().int().positive() }).strict(),
-      'equip-item': z.object({ slot: z.number().int().min(0).max(35), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components }).strict(),
+      'equip-item': z.object({ slot: z.number().int().min(0).max(35), expectedItem: identifier, expectedCount: z.number().int().positive(), expectedComponents: components, hand: z.literal('offhand').optional() }).strict(),
       'sleep-in-bed': z.object({ player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }).strict(),
       'wake-up': z.object({}).strict(),
       'sit': z.object({ x: z.number().int().optional(), y: z.number().int().optional(), z: z.number().int().optional(), timeoutMs: z.number().int().min(500).max(120000).optional() }).strict().refine(args => (args.x === undefined) === (args.y === undefined) && (args.y === undefined) === (args.z === undefined)),

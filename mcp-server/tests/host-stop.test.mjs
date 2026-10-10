@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { isAddressedStop, runtimeFiles } from '../../scripts/companion.mjs';
+import { isAddressedStop, runtimeFiles, stopFollowup } from '../../scripts/companion.mjs';
 import { createServerBodyControl } from '../../scripts/server-body-control.mjs';
 import { EventStore } from '../dist/event-store.js';
 
@@ -52,6 +52,20 @@ test('结构化正文优先，不剥离正文冒号，也不从显示文本补�
     assert.equal(isAddressedStop({ type: 'chat', username: 'tester', message, text: 'tester: 小克，停下' }, CLAUDE), false);
   }
   assert.equal(isAddressedStop({ type: 'whisper', message: '小克别挖了', text: '误导性的显示文本' }, CLAUDE), true);
+});
+
+test('stopFollowup：叫停的玩家在10分钟内不点名也算新指令；别人、超时、没叫停过都不算', () => {
+  const lastStopAt = 1_000_000, windowMs = 10 * 60 * 1000;
+  const chat = { type: 'chat', username: '玩家甲', message: '好了，继续吧' };
+  const state = { lastStopBy: '玩家甲', lastStopAt, now: lastStopAt + 60_000 };
+  assert.equal(stopFollowup(chat, state), true, '同一玩家窗口内');
+  assert.equal(stopFollowup(chat, { ...state, now: lastStopAt + windowMs }), true, '正好 10 分钟');
+  assert.equal(stopFollowup(chat, { ...state, now: lastStopAt + windowMs + 1 }), false, '超过 10 分钟');
+  assert.equal(stopFollowup({ ...chat, username: '玩家乙' }, state), false, '不是叫停的人');
+  assert.equal(stopFollowup({ type: 'chat', message: '好了' }, state), false, '没有发言者');
+  assert.equal(stopFollowup(chat, { ...state, lastStopBy: '' }), false, '没记录叫停的人');
+  assert.equal(stopFollowup(chat, { ...state, lastStopAt: 0 }), false, '从没叫停过');
+  assert.equal(stopFollowup(chat, { lastStopBy: '玩家甲', lastStopAt: 0, now: 1 }), false, '叫停时间为 0');
 });
 
 test('发言者不是称呼：只移除已知发言者或有session/seq的旧journal前缀一次', () => {

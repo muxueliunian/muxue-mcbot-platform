@@ -73,3 +73,23 @@ test('equip-item refuses what is only worn already or missing, and is absent wit
   const without = await setup(t, { capabilities: [] });
   assert.ok(!(await without.c.listTools()).tools.some(item => item.name === 'equip-item'));
 });
+
+const torch = { slot: 5, id: 'minecraft:torch', count: 16, components: {}, maxStackSize: 64 };
+
+test('equip-item hand offhand publishes the flag and sends any inventory item to the server with it', async t => {
+  const { c, acts } = await setup(t, { capabilities: ['equip-item'], inventory: [torch, worn] });
+  const tool = (await c.listTools()).tools.find(item => item.name === 'equip-item');
+  assert.ok(tool.inputSchema.properties.hand, 'the schema accepts hand');
+  assert.match(tool.description, /hand:"offhand"/);
+  assert.equal(JSON.parse(await equip(c, { item: 'minecraft:torch', hand: 'offhand' })).status, 'succeeded');
+  assert.deepEqual(acts()[0], { ...acts()[0], name: 'equip-item', args: { slot: 5, expectedItem: 'minecraft:torch', expectedCount: 16, expectedComponents: {}, hand: 'offhand' } });
+});
+
+test('equip-item without hand sends no flag, and any other hand value is refused before an act', async t => {
+  const { c, acts } = await setup(t, { capabilities: ['equip-item'], inventory: [torch, worn] });
+  await equip(c, { item: 'minecraft:torch', hand: 'mainhand' });
+  assert.equal(acts().length, 0, 'a refused hand value sends nothing');
+  await equip(c, { item: 'minecraft:torch' });
+  assert.equal(acts().length, 1);
+  assert.ok(!('hand' in acts()[0].args), 'no hand key without the argument');
+});

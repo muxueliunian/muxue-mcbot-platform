@@ -41,7 +41,9 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * and only a click that gives the wanted state (facing, half, axis, hinge...) is used; afterwards the state is checked.
  * Properties the neighbours decide (stair corners, fence connections, waterlogging...) are not compared. The body
  * clicks while sneaking, so a chest or door it builds against is never opened. It walks to a spot within reach
- * (never inside a block still to be placed) and does not climb: what cannot be reached from any floor is reported.
+ * (never inside a block still to be placed); out of reach it pillars up on spare blocks, clicks against a
+ * temporary block where a spot has nothing to click on, steps onto floors it built, and digs all of that back afterwards.
+ * It builds no scaffold corridors: what still cannot be reached is reported.
  * Materials come from the inventory (plain stacks); missing ones fail the build before anything changes.
  */
 final class BuildTask implements GuardDuty.Pausable {

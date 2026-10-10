@@ -31,7 +31,8 @@ final class ModAdapters {
     record Loaded(List<ContainerAdapter> containers,List<ItemInteraction> interactions,List<String> problems,List<PickupSink> pickupSinks) {
         Loaded(List<ContainerAdapter> containers,List<ItemInteraction> interactions,List<String> problems) {this(containers,interactions,problems,List.of());}
     }
-    private static final List<ContainerAdapter> BUILTIN_CONTAINERS=List.of(IronFurnaceAdapter.INSTANCE);
+    // The core only knows vanilla storage; every other mod's containers (e.g. Iron Furnaces) come from add-on mods.
+    private static final List<ContainerAdapter> BUILTIN_CONTAINERS=List.of();
     private static final List<ItemInteraction> BUILTIN_INTERACTIONS=List.of(ItemInteractions.COMPOSTER);
     // Before a server starts only the built-ins are known; installed containers are resolved lazily then.
     private static volatile Loaded loaded=null;

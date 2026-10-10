@@ -1,9 +1,9 @@
-package com.mcbot.servercontrol;
+package com.mcbot.addon.ironfurnaces;
 
 import java.util.*;
 import net.neoforged.neoforge.items.SlotItemHandler;
 
-final class IronFurnaceAdapterTest {
+public final class IronFurnaceAdapterTest {
     private static int checks;
     private static void check(boolean ok,String message) {checks++;if(!ok)throw new AssertionError(message);}
     private static List<IronFurnaceAdapter.NativeSlot> slots(Object machine,Object inventory) {
@@ -12,7 +12,7 @@ final class IronFurnaceAdapterTest {
         for(int i=19;i<55;i++) result.add(new IronFurnaceAdapter.NativeSlot(placeholder,i<46?i-19+9:i-46,0,SlotItemHandler.class.getName(),inventory));
         return result;
     }
-    static void run() {
+    public static void main(String[] args) {
         check(IronFurnaceAdapter.supportedIdentity("4.3.2","ironfurnaces:iron_furnace",IronFurnaceAdapter.BLOCK),"only pinned iron furnace identity accepted");
         check(!IronFurnaceAdapter.supportedIdentity("4.3.3","ironfurnaces:iron_furnace",IronFurnaceAdapter.BLOCK),"untested mod version rejected");
         check(!IronFurnaceAdapter.supportedIdentity("4.3.2","ironfurnaces:gold_furnace",IronFurnaceAdapter.BLOCK),"same namespace other furnace rejected");
@@ -39,11 +39,6 @@ final class IronFurnaceAdapterTest {
         check(IronFurnaceAdapter.verifiedContract(slots,inventory,41)==null,"wrong native player hotbar index rejected");
         slots=slots(machine,inventory);slots.set(46,new IronFurnaceAdapter.NativeSlot(other,0,0,SlotItemHandler.class.getName(),other));
         check(IronFurnaceAdapter.verifiedContract(slots,inventory,41)==null,"foreign handler rejected even with correct index");
-        check(SurvivalActions.slotClickAllowed(true,false,true),"empty active item-handler destination allows carried deposit despite no extraction permission");
-        check(!SurvivalActions.slotClickAllowed(true,false,false),"protected occupied source remains rejected");
-        check(!SurvivalActions.slotClickAllowed(false,true,false),"hidden occupied machine slot cannot be extracted");
-        check(!SurvivalActions.slotClickAllowed(false,false,true),"hidden empty machine slot cannot receive carried items");
-        check(SurvivalActions.slotClickAllowed(true,true,false),"ordinary pickup source remains allowed");
         System.out.println("IronFurnaceAdapterTest: "+checks+" checks passed");
     }
 }

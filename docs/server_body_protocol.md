@@ -173,7 +173,7 @@ guard只阻止后续驾驶，不能回滚普通物理已经发生的碰撞拾取
 
 原生菜单白名单为 ChestMenu、HopperMenu、DispenserMenu、ShulkerBoxMenu、AbstractFurnaceMenu；对应当前方块白名单为普通箱子／陷阱箱、木桶、漏斗、发射器／投掷器、潜影盒、熔炉／高炉／烟熏炉。其它 GUI、工作台、交易或内容 Mod 特殊菜单不宣称通用支持；继承白名单类仍需后续具体 Mod 验证。
 
-内容Mod窄Adapter `IronFurnaceAdapter` 显式限定 Iron Furnaces4.3.2／MC1.21.1／NeoForge21.1.217 的`ironfurnaces:iron_furnace`、确切方块／实体／菜单类及55槽契约，只接受普通未点燃炉与普通菜单。机器库存19槽核对真实实体，玩家SlotItemHandler经InvWrapper核对实际Inventory与原索引；隐藏工厂／升级槽不成为任务来源。原生交互仍由Mod useWithoutItem→openMenu完成，不直接替它打开GUI；高级炉等级、Factory／发电、运行中的lit/type变化、GUI设置不自动支持。实际支持证据见[D验收](archive/server_content_D_validation.md)。
+内容Mod窄Adapter `IronFurnaceAdapter`（独立附属模组 `mcbot-iron-furnaces`，不在核心里；没装它时核心不认识铁炉）显式限定 Iron Furnaces4.3.2／MC1.21.1／NeoForge21.1.217 的`ironfurnaces:iron_furnace`、确切方块／实体／菜单类及55槽契约，只接受普通未点燃炉与普通菜单。机器库存19槽核对真实实体，玩家SlotItemHandler经InvWrapper核对实际Inventory与原索引；隐藏工厂／升级槽不成为任务来源。原生交互仍由Mod useWithoutItem→openMenu完成，不直接替它打开GUI；高级炉等级、Factory／发电、运行中的lit/type变化、GUI设置不自动支持。实际支持证据见[D验收](archive/server_content_D_validation.md)。
 
 ## Node 与宿主约定
 

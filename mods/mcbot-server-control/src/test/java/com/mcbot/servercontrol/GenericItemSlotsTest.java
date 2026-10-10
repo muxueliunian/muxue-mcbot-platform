@@ -104,8 +104,8 @@ final class GenericItemSlotsTest {
         String off=GenericItemSlots.refusal("othermod",null,enabled);
         check(off!=null&&off.contains("off for mod othermod")&&off.contains(GenericItemSlots.FILE),"a mod not enabled is refused with where to enable it");
         check(GenericItemSlots.refusal("examplemod",null,enabled)==null,"an enabled mod without a dedicated adapter may use generic access");
-        String dedicated=GenericItemSlots.refusal("ironfurnaces",IronFurnaceAdapter.INSTANCE.id(),Set.of("ironfurnaces"));
-        check(dedicated!=null&&dedicated.contains(IronFurnaceAdapter.INSTANCE.id()),"a dedicated adapter wins even when its mod is enabled for generic access");
+        String dedicated=GenericItemSlots.refusal("examplemod","examplemod:machine",Set.of("examplemod"));
+        check(dedicated!=null&&dedicated.contains("examplemod:machine"),"a dedicated adapter wins even when its mod is enabled for generic access");
         check(GenericItemSlots.refusal("minecraft",null,Set.of("minecraft"))!=null,"vanilla blocks never use generic access");
 
         // Sides: omitted is the unsided handler, the six faces by name, anything else is refused.

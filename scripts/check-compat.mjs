@@ -56,7 +56,7 @@ export function checkCompat(compat) {
   for (const adapter of compat.adapters) {
     if (ids.has(adapter.id)) problems.push(`适配 id 重复：${adapter.id}`);
     ids.add(adapter.id);
-    if (!['addon', 'builtin', 'config'].includes(adapter.kind)) problems.push(`${adapter.id}：未知的 kind ${adapter.kind}`);
+    if (!['addon', 'config'].includes(adapter.kind)) problems.push(`${adapter.id}：未知的 kind ${adapter.kind}`);
     if (adapter.kind === 'addon' && jarName(adapter.project) !== adapter.jar) problems.push(`${adapter.id}：清单 jar ${adapter.jar}，构建出来是 ${jarName(adapter.project)}`);
     const sources = adapter.project ? javaSources(path.join(root, adapter.project, 'src/main/java')) : '';
     for (const need of adapter.requires ?? []) {

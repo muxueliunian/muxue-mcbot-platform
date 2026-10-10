@@ -50,7 +50,7 @@ dig／place／open 必须携完整 expectedProperties；place 另携当前物品
 
 原生菜单支持 ChestMenu、HopperMenu、DispenserMenu、ShulkerBoxMenu、AbstractFurnaceMenu；方块入口对应箱子／陷阱箱、木桶、漏斗、发射器／投掷器、潜影盒和熔炉／高炉／烟熏炉。open 要求一个空快捷栏槽，避免物品使用回退。工作台、交易与特殊 Mod GUI 尚不宣称通用支持。
 
-`IronFurnaceAdapter` 是第一个明确版本的内容Mod适配：仅Iron Furnaces4.3.2的普通未点燃iron_furnace及确切55槽菜单契约，不通配所有命名空间或机器等级。真实库存身份/InvWrapper索引、active和mayPickup字段使相同Node任务接口可以复用；不运行工厂／发电／升级GUI。安装Mod的普通玩家客户端仍需对应内容Mod，ServerBody不额外启动客户端。实际范围与证据见[D记录](../../docs/archive/server_content_D_validation.md)。
+Iron Furnaces 的适配（`ironfurnaces:iron_furnace`）已拆成独立附属模组 [mcbot-iron-furnaces](../mcbot-iron-furnaces/README.md)，核心只管原版；它是第一个明确版本的内容Mod适配：仅Iron Furnaces4.3.2的普通未点燃iron_furnace及确切55槽菜单契约，不通配所有命名空间或机器等级。真实库存身份/InvWrapper索引、active和mayPickup字段使相同Node任务接口可以复用；不运行工厂／发电／升级GUI。安装Mod的普通玩家客户端仍需对应内容Mod，ServerBody不额外启动客户端。实际范围与证据见[D记录](../../docs/archive/server_content_D_validation.md)。
 
 select-slot核对`{slot,expectedItem,expectedCount,expectedComponents,expectedMaxStackSize?}`后选0–8快捷栏。drop-item另携明确count（1–64），只能从当前选槽丢且不得超过栈数量；可选expectedMaxStackSize在每次原生写入前比较实际上限。走原版DROP_ITEM，分别报告requestedCount、removedCount、droppedCount，不把事件取消或未生成实体的库存减少冒充交付。Node的count／stacks任务最多解析256个，单栈容器来源与空快捷栏要求仍在；已有足量实际栈的give-item按最多64个分批drop，不静默截断，也不跨栈凑数。
 

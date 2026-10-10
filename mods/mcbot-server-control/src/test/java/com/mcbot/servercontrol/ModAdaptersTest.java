@@ -98,11 +98,11 @@ final class ModAdaptersTest {
             public boolean block(BlockState s){return false;} public boolean menu(AbstractContainerMenu m){return false;} public Container storage(AbstractContainerMenu m,Inventory i){return null;}
         };
         problems=new ArrayList<>();
-        var combined=ModAdapters.combine(List.of(new FakeContainer("ironfurnaces:iron_furnace",true)),
-            List.of(new FakeContainer("ironfurnaces:iron_furnace",true),new FakeContainer("example:absent",false),brokenId,brokenInstall,new FakeContainer("example:chest",true)),
+        var combined=ModAdapters.combine(List.of(new FakeContainer("example:builtin",true)),
+            List.of(new FakeContainer("example:builtin",true),new FakeContainer("example:absent",false),brokenId,brokenInstall,new FakeContainer("example:chest",true)),
             List.of(ItemInteractions.COMPOSTER),List.of(new FakeInteraction("minecraft:composter/add","block"),new FakeInteraction("examplecook:pot/add_oil","block")),
             List.of(new FakeInteraction("examplecook:pot/add_oil","block"),new FakeInteraction("example:backpack/open","item")),problems);
-        check(combined.containers().stream().map(ContainerAdapter::id).toList().equals(List.of("ironfurnaces:iron_furnace","example:chest")),"installed containers only, built-in kept on duplicate");
+        check(combined.containers().stream().map(ContainerAdapter::id).toList().equals(List.of("example:builtin","example:chest")),"installed containers only, built-in kept on duplicate");
         check(combined.interactions().size()==3&&combined.interactions().getFirst()==ItemInteractions.COMPOSTER,"built-in composter wins over a JSON redefinition; add-on duplicate dropped");
         check(problems.stream().filter(p->p.startsWith("duplicate")).count()==3&&problems.stream().anyMatch(p->p.contains("broken id")),"every skipped adapter is reported");
 

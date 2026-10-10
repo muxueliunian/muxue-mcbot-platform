@@ -89,7 +89,7 @@
 
 交付计划里已经定了以后要支持更新的 1.21.x NeoForge 和 Fabric。这次的约束：
 
-1. **核心不碰加载器**：除了下面登记的“加载器文件”，模组源码里不准出现 `net.neoforged`。构建时有检查（`loaderNeutralCheck`），违反就失败。目前 ServerBody 的绝大部分本来就只用原版类，加载器相关的集中在：入口和事件注册（`McbotServerControl`）、事件处理参数（`ServerController`、`SurvivalActions`、`ValidationProtection`、`RespawnValidationFixture`）、Iron Furnaces 的槽位类（`IronFurnaceAdapter`，本来就是 NeoForge 版模组专用）。
+1. **核心不碰加载器**：除了下面登记的“加载器文件”，模组源码里不准出现 `net.neoforged`。构建时有检查（`loaderNeutralCheck`），违反就失败。目前 ServerBody 的绝大部分本来就只用原版类，加载器相关的集中在：入口和事件注册（`McbotServerControl`）、事件处理参数（`ServerController`、`SurvivalActions`、`ValidationProtection`、`RespawnValidationFixture`）。Iron Furnaces 的适配（`IronFurnaceAdapter`）原先也在核心里，现已移到独立附属模组 `mcbot-iron-furnaces`，不再受这条检查约束。
 2. **加载器服务 `LoaderPlatform`**：模组版本（NeoForge 的 `ModList`／Fabric 的 `FabricLoader`）、燃烧时间（NeoForge 的 `getBurnTime`／Fabric 的 `FuelRegistry`）、以后 8b 的物品能力（NeoForge `IItemHandler`／Fabric `Storage<ItemVariant>`，后者自带事务）。核心只调这个接口。
 3. **标签用 `c:` 命名空间**：`c:ores`、`c:stones` 在 NeoForge 和 Fabric 上是同一个标签，代码里直接用 `TagKey.create`，不用 NeoForge 的 `Tags` 类。
 4. **映射**：NeoForge 用 Mojang 官方名＋Parchment；Fabric Loom 也可以用 `officialMojangMappings()`，所以同一份核心源码两边都能编译。

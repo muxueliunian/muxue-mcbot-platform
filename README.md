@@ -33,7 +33,7 @@
 - 建筑：按蓝图逐格放，够不着就垫高，能上楼板和屋顶，两层木屋一次盖对约 94%
 - 种地：收熟的作物、捡掉落、原地补种，可以播种和用骨粉（模组作物按 `#minecraft:crops` 认）；用水桶倒水舀水、用锄头在水边开新地；喂动物繁殖
 - 手持物品右键方块（`interact-block`）和对空使用（`use-item`），按登记的交互放行，内置的只有原版堆肥桶
-- 内容 Mod：内置 Iron Furnaces 普通铁炉；两个示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）、[Yes Steve Model](mods/mcbot-yes-steve-model/README.md)（在 WebUI 里选模型、播模型动画）。服主还能按 Mod 打开通用物品槽适配，让 Bot 不开界面放料、取成品（森罗厨房的油壶、石磨、竹筛、茶壶实测过）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）。支持的 Mod、确切版本和官方下载地址统一写在 [compat.json](compat.json)
+- 内容 Mod：Iron Furnaces 普通铁炉（独立附属模组 [mcbot-iron-furnaces](mods/mcbot-iron-furnaces/README.md)）；示例附属模组：[森罗厨房](mods/mcbot-kaleidoscope-cookery/README.md)（炒锅做菜）、[Sophisticated Backpacks](mods/mcbot-sophisticated-backpacks/README.md)（打开背包、放置的背包当容器、拾取升级记账）、[Yes Steve Model](mods/mcbot-yes-steve-model/README.md)（在 WebUI 里选模型、播模型动画）。服主还能按 Mod 打开通用物品槽适配，让 Bot 不开界面放料、取成品（森罗厨房的油壶、石磨、竹筛、茶壶实测过）。别的 Mod 可以写附属模组或 JSON 声明来适配（[Mod 适配接口](docs/mod_adapters.md)）。支持的 Mod、确切版本和官方下载地址统一写在 [compat.json](compat.json)
 
 Agent：Claude Code、Codex、DeepSeek Harness（dsh，可直接用桌面版自带的；2026-10-06 隔离服真实模型实测通过）。
 
@@ -45,7 +45,7 @@ Agent：Claude Code、Codex、DeepSeek Harness（dsh，可直接用桌面版自�
 
 - `client-runtime/`：Body、MCP 工具、任务和陪伴状态
 - `mods/mcbot-server-control/`：服务端身体：假玩家、控制租约、原生交互、Mod 适配
-- `mods/mcbot-kaleidoscope-cookery/`、`mods/mcbot-sophisticated-backpacks/`、`mods/mcbot-yes-steve-model/`：示例附属模组
+- `mods/mcbot-iron-furnaces/`、`mods/mcbot-kaleidoscope-cookery/`、`mods/mcbot-sophisticated-backpacks/`、`mods/mcbot-yes-steve-model/`：示例附属模组
 - `scripts/companion.mjs`、`scripts/agents/`：Agent 会话和事件驱动；`scripts/start-server-play.mjs`：启动托管（只要 Node）
 - `compat.json`：支持的 MC、NeoForge、Agent 和 Mod 清单；`scripts/package.mjs`：打 Windows 绿色版（[说明](docs/dev.md#打包绿色版)）
 - `mcp-server/`、`bot-scripts/`：旧 Mineflayer 实现，用来对照迁移，协议测试玩家也用它

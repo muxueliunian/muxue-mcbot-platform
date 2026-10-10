@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Real stdio MCP -> ServerBody interaction proof. RCON only prepares/reads this backed-up fixture.
+// The Iron Furnaces parts need ironfurnaces 4.3.2 and the mcbot-iron-furnaces add-on jar in the fixture server's mods.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';

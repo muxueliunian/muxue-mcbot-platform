@@ -1,0 +1,34 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="Apache-2.0"
+[[mods]]
+modId="mcbot_iron_furnaces"
+version="${mod_version}"
+displayName="MCBOT × Iron Furnaces"
+authors="muxue"
+description='''MCBOT add-on: lets the bot use the plain Iron Furnaces iron furnace (put in ingredients and fuel, take out the product). Verified only against Iron Furnaces 4.3.2; other versions stay unsupported. Contains no Iron Furnaces code or assets.'''
+displayTest="IGNORE_ALL_VERSION"
+[[dependencies.mcbot_iron_furnaces]]
+modId="mcbot_server_control"
+type="required"
+versionRange="[0.1.0,)"
+ordering="AFTER"
+side="BOTH"
+[[dependencies.mcbot_iron_furnaces]]
+modId="ironfurnaces"
+type="optional"
+versionRange="*"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_iron_furnaces]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.217,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.mcbot_iron_furnaces]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"

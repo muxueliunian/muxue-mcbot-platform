@@ -91,9 +91,10 @@
       "id": "iron_furnaces",
       "name": "铁炉",
       "nameEn": "Iron Furnaces",
-      "kind": "builtin",
-      "project": "mods/mcbot-server-control",
-      "what": ["使用铁炉（iron_furnace）烧炼"],
+      "kind": "addon",
+      "project": "mods/mcbot-iron-furnaces",
+      "jar": "mcbot-iron-furnaces-0.1.0.jar",
+      "what": ["Iron Furnaces 模组中的铁熔炉（烧炼速度高于原版熔炉）：放入原料和燃料、取出成品；金、钻石等其他等级的熔炉暂不支持"],
       "evidence": "隔离服实测",
       "requires": [
         { "modId": "ironfurnaces", "version": "4.3.2", "side": "both", "license": "Apache-2.0",

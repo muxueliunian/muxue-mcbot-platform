@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// R5 Mod 适配入口的隔离服实测：内置的 Iron Furnaces 适配改走统一入口后的回归，加上服主用 JSON 声明的一条交互（给重生锚充能）。
-// 不启停服务器、不调用模型、不计算哈希。需要：隔离服 mods 里有 ironfurnaces 4.3.2，
+// R5 Mod 适配入口的隔离服实测：Iron Furnaces 适配（独立附属模组 mcbot-iron-furnaces）走统一入口的回归，加上服主用 JSON 声明的一条交互（给重生锚充能）。
+// 不启停服务器、不调用模型、不计算哈希。需要：隔离服 mods 里有 ironfurnaces 4.3.2 和 mcbot-iron-furnaces-0.1.0.jar，
 // config/mcbot-server-control/interactions/ 里有 anchor.json（合法）和 broken.json（故意写错），见 docs/mod_adapters.md。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -32,7 +32,7 @@ const runtime = path.join(dir, 'runtime'); await fs.mkdir(runtime, { recursive: 
 const secrets = [connection.token, props['rcon.password']].filter(Boolean);
 const redact = text => { let value = String(text); for (const secret of secrets) value = value.replaceAll(secret, '[redacted]'); return value; };
 const report = { started: new Date().toISOString(), serverDir, checks: [], calls: [], cleanup: [],
-  limitations: ['没有使用真实模型和测试玩家。', '只有内置的 Iron Furnaces 适配和一条 JSON 交互；没有真正的附属模组。'] };
+  limitations: ['没有使用真实模型和测试玩家。', '只有 Iron Furnaces 附属模组的适配和一条 JSON 交互。'] };
 const save = () => fs.writeFile(path.join(dir, 'report.json'), redact(JSON.stringify(report, null, 2)) + '\n');
 function check(name, passed, detail) { report.checks.push({ name, passed: !!passed, ...(detail === undefined ? {} : { detail }) }); assert(passed, name + (detail ? ' ' + redact(JSON.stringify(detail)).slice(0, 1500) : '')); console.log('PASS ' + name); }
 const command = async text => (await rcon([text], { serverDir, timeoutMs: 5000 }))[0];
@@ -68,7 +68,7 @@ const at = ([x, y, z]) => `${x} ${y} ${z}`, xyz = ([x, y, z]) => ({ x, y, z });
 let forced = [];
 try {
   const h = await hello();
-  check('服务端声明 Iron Furnaces 容器适配', JSON.stringify(h.adapters) === '["ironfurnaces:iron_furnace"]', { adapters: h.adapters });
+  check('服务端声明 Iron Furnaces 容器适配', Array.isArray(h.adapters) && h.adapters.includes('ironfurnaces:iron_furnace'), { adapters: h.adapters });
   check('JSON 声明的重生锚交互和内置堆肥桶都登记了，写错的文件被跳过', h.interactions.includes('minecraft:composter/add') && h.interactions.includes('minecraft:respawn_anchor/charge') && !h.interactions.includes('example:broken'), { interactions: h.interactions });
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'client-runtime/dist/main.js'), '--body', 'server', '--connection-file', path.join(serverDir, 'config/mcbot-server-control/connection.json'),
     '--username', 'Claude', '--world-id', connection.worldId, '--runtime-dir', runtime, '--controller-id', randomUUID()], cwd: root, stderr: 'pipe' });

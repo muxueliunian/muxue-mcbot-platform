@@ -239,7 +239,7 @@ public final class ControlSessionTest {
         ExactNbtTest.run();
         InteractionObservationTest.run();
         ApproachSafetyTest.run();
-        IronFurnaceAdapterTest.run();
+        SlotClickRulesTest.run();
         FollowCompanionTest.run();
         ResourcePickupTest.run();
         CompanionMiningTest.run();

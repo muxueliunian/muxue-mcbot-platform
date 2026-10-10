@@ -43,7 +43,7 @@ tasks.register('controlTest', JavaExec) {
 // Only these loader files may use NeoForge classes; everything else stays vanilla-only so a Fabric build can share it
 // (docs/workstation_design.md, "加载器和版本").
 def loaderFiles = ['McbotServerControl.java', 'NeoForgePlatform.java', 'ServerController.java', 'SurvivalActions.java',
-                   'ValidationProtection.java', 'RespawnValidationFixture.java', 'IronFurnaceAdapter.java']
+                   'ValidationProtection.java', 'RespawnValidationFixture.java']
 tasks.register('loaderNeutralCheck') {
     def sources = fileTree('src/main/java') { include '**/*.java' }
     inputs.files sources

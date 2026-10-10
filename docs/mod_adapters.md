@@ -24,7 +24,7 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
   - 所有变化都在声明范围内：`succeeded`。
   - 什么都没变：`failed`。
   - 其余情况：`unknown`，AI 被要求先重新观察，不要重放。
-- **id 不能重复**：容器、交互和拾取适配的 id 共用一个命名空间。先登记的优先，顺序是内置 → JSON → 附属模组，重复的会被跳过并记日志；附属模组之间重复登记，会在模组加载时直接报错。
+- **id 不能重复**：容器、交互和拾取适配的 id 共用一个命名空间。先登记的优先，顺序是内置（目前只有原版堆肥桶交互）→ JSON → 附属模组，重复的会被跳过并记日志；附属模组之间重复登记，会在模组加载时直接报错。
 - **登记有截止时间**：服务器启动后，附属模组就不能再登记了。
 
 ## JSON 声明
@@ -79,7 +79,7 @@ Bot 默认只会用原版的箱子、木桶、漏斗、发射器、潜影盒、�
 
 没有这个文件就什么都不开；写错一处（不认识的键、版本不是字符串等）整个文件跳过并记日志。开了的 Mod 列在 `hello.itemHandlerMods`，启动日志的 `MCBOT adapters: ...` 也会列出来；运行端只在有开了的 Mod 时才给 AI 发布 `machine-items` 工具。
 
-分派顺序：原版方块只走内置规则（`open-container`、工作站工具）；有专门适配的方块（`ContainerAdapter`，比如 Iron Furnaces，或附属模组登记的 `WorkstationAdapter`）用专门适配，即使它的 Mod 也开了通用适配；剩下的方块，它的 Mod 开了才用通用适配，没开就拒绝。
+分派顺序：原版方块只走内置规则（`open-container`、工作站工具）；有专门适配的方块（附属模组登记的 `ContainerAdapter`，比如 Iron Furnaces 的铁炉；或 `WorkstationAdapter`）用专门适配，即使它的 Mod 也开了通用适配；剩下的方块，它的 Mod 开了才用通用适配，没开就拒绝。
 
 和其他适配一样的安全规则：Bot 要看得见、够得着这个方块；动手前像右键方块一样问服务器（出生点保护、世界边界、NeoForge 的右键方块事件，保护类模组靠取消这个事件拦人），不让用就拒绝，内容也不读。放入、取出按物品槽自己的规则来（`isItemValid`、先模拟再真放／真取），回执写实际移动的数量，部分成功不算成功；物品槽抛异常时，还没真动东西就拒绝，真动时出错记为 `unknown`。
 
@@ -140,15 +140,16 @@ public final class McbotExampleCook {
 
 参考例子：
 
-- 内置的 Iron Furnaces 适配（`IronFurnaceAdapter`）：一个完整的 `ContainerAdapter`，用反射访问 Iron Furnaces，锁定 4.3.2 版。
+- [mcbot-iron-furnaces](../mods/mcbot-iron-furnaces/README.md)：独立的附属模组（原先内置在核心里，现已剥离）。一个完整的 `ContainerAdapter`（`IronFurnaceAdapter`），用反射访问 Iron Furnaces，锁定 4.3.2 版。
 - [mcbot-kaleidoscope-cookery](../mods/mcbot-kaleidoscope-cookery/README.md)：独立的附属模组。用森罗厨房的炒锅做菜，包括放油、加料、翻炒、出锅四个交互。
 - [mcbot-sophisticated-backpacks](../mods/mcbot-sophisticated-backpacks/README.md)：独立的附属模组。打开手里的背包（对空使用）、把放在地上的背包当容器（物品处理器型存储）、拾取升级的记账（`PickupSink`）。
 - [mcbot-yes-steve-model](../mods/mcbot-yes-steve-model/README.md)：独立的附属模组。YSM 的模型（`AppearanceSource`）和动画（`EmoteSource`），只执行 YSM 自己的服务端指令。
 
 ## 测试
 
-- 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`IronFurnaceAdapterTest`、`GenericItemSlotsTest`（通用物品槽适配：配置、分派、方向面、放入取出、出错）。
-- 隔离服：`scripts/server-adapter-smoke.mjs`。测试服要临时装上 Iron Furnaces 4.3.2，并在 `interactions/` 里放一份正确的重生锚声明和一份故意写错的声明。
+- 离线：`ModAdaptersTest`（登记、合并、出错时的处理、JSON 格式）、`ItemInteractionsTest`、`GenericItemSlotsTest`（通用物品槽适配：配置、分派、方向面、放入取出、出错）。
+- 铁炉附属模组的离线测试 `IronFurnaceAdapterTest` 在 `mods/mcbot-iron-furnaces`，由它自己的 `gradlew build` 运行。
+- 隔离服：`scripts/server-adapter-smoke.mjs`。测试服要临时装上 Iron Furnaces 4.3.2 和 `mcbot-iron-furnaces` 附属模组，并在 `interactions/` 里放一份正确的重生锚声明和一份故意写错的声明。
 - 示例附属模组：`scripts/server-cooking-smoke.mjs`（森罗厨房）、`scripts/server-backpack-smoke.mjs`（SB，开服前先运行 `scripts/server-backpack-fixture.mjs`）、`scripts/server-emote-smoke.mjs`（YSM，也测内置手势和场景提示）。
 
 ## 和其他 Mod 一起用时要注意

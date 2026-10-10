@@ -1,4 +1,4 @@
-package com.mcbot.servercontrol;
+package com.mcbot.addon.ironfurnaces;
 
 import com.mcbot.servercontrol.api.ContainerAdapter;
 import com.mcbot.servercontrol.api.McbotApi;
@@ -15,20 +15,22 @@ import net.minecraft.world.inventory.*;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
-/** Version-pinned optional adapter; no compile-time dependency on Iron Furnaces. */
+/** Version-pinned container adapter for Iron Furnaces; no compile-time dependency on Iron Furnaces (reached by name and reflection). */
 final class IronFurnaceAdapter {
     static final String VERSION="4.3.2",ID="ironfurnaces:iron_furnace";
     static final String BLOCK="ironfurnaces.blocks.furnaces.BlockIronFurnace";
     static final String ENTITY="ironfurnaces.tileentity.furnaces.BlockIronFurnaceTile";
     static final String MENU="ironfurnaces.container.furnaces.BlockIronFurnaceContainer";
     static final int MACHINE_SLOTS=19,TOTAL_SLOTS=55;
+    /** Who owns a menu slot: a player-inventory slot with its native index, or unknown. */
+    record Source(String source,Integer playerSlot) {}
     record NativeSlot(Object backing,int index,int size,String className,Object wrappedInventory) {}
     private static final List<String> SLOT_CLASSES=List.of("SlotIronFurnaceInput","SlotIronFurnaceFuel","SlotIronFurnace",
         "SlotIronFurnaceAugmentRed","SlotIronFurnaceAugmentGreen","SlotIronFurnaceAugmentBlue","SlotIronFurnaceInputGenerator",
         "SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory","SlotIronFurnaceInputFactory",
         "SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory","SlotIronFurnaceOutputFactory");
     private IronFurnaceAdapter() {}
-    /** Built-in adapter, dispatched through {@link ModAdapters} like any add-on adapter. */
+    /** Registered with MCBOT by {@link McbotIronFurnaces}. */
     static final ContainerAdapter INSTANCE=new ContainerAdapter() {
         public String id() {return ID;}
         public boolean installed() {return IronFurnaceAdapter.installed();}
@@ -97,13 +99,13 @@ final class IronFurnaceAdapter {
         return storage;
     }
     static String machineSlotClass(int index) {return "ironfurnaces.container.slots."+SLOT_CLASSES.get(index);}
-    static MenuSlotSources.Source handlerSource(Object wrappedInventory,Object inventory,int nativeIndex,int inventorySize) {
+    static Source handlerSource(Object wrappedInventory,Object inventory,int nativeIndex,int inventorySize) {
         return wrappedInventory==inventory&&nativeIndex>=0&&nativeIndex<inventorySize?
-            new MenuSlotSources.Source("player",nativeIndex):new MenuSlotSources.Source("unknown",null);
+            new Source("player",nativeIndex):new Source("unknown",null);
     }
-    static MenuSlotSources.Source playerSource(Slot slot,Inventory inventory) {
+    static Source playerSource(Slot slot,Inventory inventory) {
         if(slot.getClass()==SlotItemHandler.class&&slot instanceof SlotItemHandler handler&&handler.getItemHandler() instanceof InvWrapper wrapper)
             return handlerSource(wrapper.getInv(),inventory,slot.getContainerSlot(),inventory.getContainerSize());
-        return new MenuSlotSources.Source("unknown",null);
+        return new Source("unknown",null);
     }
 }

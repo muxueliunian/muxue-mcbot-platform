@@ -11,6 +11,7 @@ import zlib from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { connectionFileOf, gameOnline, gameSupport, gameType } from './webui-games.mjs';
+import { gameRunState, javaProcesses, runMessage } from './game-processes.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ITEM_HANDLERS = path.join('config', 'mcbot-server-control', 'item-handlers.json');
@@ -319,10 +320,13 @@ function editItemHandlers(gameDir, step) {
  * 再放新文件、改配置；中途出错就把放进去的拿掉、移走的放回来。
  */
 export async function applyPlugin(gameDir, id, action, { catalog = loadCatalog(), downloads = path.join(ROOT, 'runtime', 'mod-downloads'), fetchImpl = fetch,
-  online = (dir) => gameOnline(connectionFileOf(dir)), progress = () => {}, now = new Date() } = {}) {
+  online = (dir) => gameOnline(connectionFileOf(dir)), listProcesses = javaProcesses, progress = () => {}, now = new Date() } = {}) {
   const plan = planPlugin(gameDir, id, action, { catalog, downloads });
   if (!plan.ok || plan.nothing) return plan;
-  if (await online(gameDir)) return { ok: false, error: gameType(gameDir) === 'server' ? '服务器运行中：请先关闭服务器再操作' : '世界运行中：请先退出世界并关闭游戏再操作' };
+  // 游戏在启动、加载模组或世界里都不改文件；下载要等一阵，所以放文件前还要再查一次
+  const running = async () => runMessage((await gameRunState(gameDir, { online, listProcesses })).state, gameType(gameDir));
+  const busy = await running();
+  if (busy) return { ok: false, error: busy };
   const total = plan.downloadBytes || 0;
   let done = 0;
   for (const s of plan.steps.filter((x) => x.op === 'download')) {
@@ -332,6 +336,8 @@ export async function applyPlugin(gameDir, id, action, { catalog = loadCatalog()
       : e.code ? `${s.file} 无法写入下载缓存（${e.code}）：请检查 ${downloads} 是否可写` : e.message }; }
     done += s.size;
   }
+  const busyAgain = await running();
+  if (busyAgain) return { ok: false, error: busyAgain };
   progress({ phase: 'files' });
   const mods = path.join(gameDir, 'mods'), backup = path.join(gameDir, 'mcbot-backups', stamp(now));
   const moved = [], added = [], configs = [];

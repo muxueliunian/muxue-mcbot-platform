@@ -824,10 +824,10 @@ function updatePlug(d, p) {
   $('.pw', d).textContent = (p.what || []).join('；');
   $('.chips', d).replaceChildren(...p.parts.map(partChip));
   $('.meta', d).textContent = p.evidence ? '验证：' + p.evidence : ''; $('.meta', d).title = $('.meta', d).textContent;
-  const go = $('.go', d), un = $('.un', d), blocked = !!plug?.online, bad = !!plug?.unsupported;
+  const go = $('.go', d), un = $('.un', d), blocked = (plug?.running || 'off') !== 'off', bad = !!plug?.unsupported;
   go.hidden = !p.canInstall; go.textContent = p.overall === 'none' ? '安装' : core ? '更新' : '修复'; go.className = 'small go' + (p.overall === 'none' ? ' primary' : '');
   un.hidden = !p.canUninstall; go.disabled = blocked || bad; un.disabled = blocked;
-  go.title = un.title = blocked ? '游戏运行中，无法修改。请先关闭游戏' : '';
+  go.title = un.title = blocked ? plug.runMessage : '';
   if (bad) go.title = plug.unsupported;
   // 「给 AI 使用」：每个已安装的插件一个，默认开启；关闭后 AI 看不到此插件的工具，玩家照常使用
   const ai = $('.ai', d), on = !(plug?.aiOff || []).includes(p.id);
@@ -852,8 +852,9 @@ function renderPlugins() {
   const box = $('#plugs'), w = $('#p-warn'), g = curGame();
   $('#p-where').textContent = g ? '安装到「' + g.name + '」（' + (g.type === 'server' ? '服务器' : '单人 / 局域网') + '）。安装后需重启' + (g.type === 'server' ? '服务器' : '游戏') + '才生效；「给 AI 使用」开关在下次启动托管时生效。' : '安装到「连接配置」中选择的游戏。';
   if (!plug) { w.hidden = true; return emptyIn(box, plugErr || '读取中…'); }
-  w.hidden = !plug.unsupported && !plug.online && plug.type !== 'server';
-  w.textContent = plug.unsupported ? plug.unsupported + '。此游戏无法安装插件。' : plug.online ? (plug.type === 'server' ? '服务器运行中：请先关闭服务器，再安装或卸载。' : '世界运行中：请先退出世界并关闭游戏，再安装或卸载。')
+  const busy = (plug.running || 'off') !== 'off';
+  w.hidden = !plug.unsupported && !busy && plug.type !== 'server';
+  w.textContent = plug.unsupported ? plug.unsupported + '。此游戏无法安装插件。' : busy ? plug.runMessage + '。'
     : '服务器模式：标注「客户端也需安装」的模组，加入服务器的玩家也需在自己的游戏中安装相同版本。';
   keyed(box, [plug.core, ...plug.plugins], (p) => p.id, plugCard, updatePlug);
 }

@@ -59,7 +59,7 @@ const guardDutySchema = z.object({
   enabled: z.literal(true), player: z.string(), entityId: z.string().uuid(), options: z.record(z.unknown()).optional(),
   covering: z.boolean(), reason: z.string().optional(), returning: z.boolean().optional(), busyMs: z.number().nonnegative(),
   state: z.string(), target: z.string().optional(), targetId: z.string().optional(),
-  hits: z.number(), kills: z.number(), shots: z.number(), retreats: z.number(), damage: z.number(),
+  hits: z.number(), kills: z.number(), shots: z.number(), retreats: z.number(), damage: z.number(), unarmed: z.string().optional(),
 });
 const operationSchema = z.object({
   operationId: identifier, sessionId: identifier, name: z.string(), controlGeneration: generation,
@@ -153,7 +153,7 @@ export class ServerBody implements Body {
   private async connect(): Promise<void> {
     // The single plugin filter: everything below (and every tool registered from this.hello) sees the filtered hello.
     const hello = applyPluginPolicy(await this.readHello(), this.options.plugins);
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks', 'step-aside-stop'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -177,7 +177,7 @@ export class ServerBody implements Body {
     }
     if (claim.instanceId !== hello.instanceId) throw new BodyError('WRONG_INSTANCE', '接管回执不属于当前服务实例');
     this.lease = { protocol: 2, backend: 'server', worldId: hello.worldId, username: hello.username, instanceId: claim.instanceId, sessionId: claim.sessionId, leaseId: claim.leaseId, stopToken: claim.stopToken, controllerId, chatCursor: claim.chatCursor };
-    this.controlGeneration = claim.controlGeneration;
+    this.controlGeneration = claim.controlGeneration; this.carryFloor = claim.controlGeneration;
     this.hello = { ...this.hello, connected: true, sessionId: claim.sessionId };
     this.state = 'active';
     await this.observe();
@@ -484,20 +484,27 @@ export class ServerBody implements Body {
   }
   pendingOperations(): readonly Operation[] { return [...this.operations.values()].filter(op => op.status === 'running' && !this.internalOperations.has(op.operationId)); }
   isBusy(): boolean { return !!(this.taskOwner || this.exclusive || this.stopping); }
+  /** Oldest generation whose targets still hold: only step-aside stops since (mirrors ControlSession.carries). */
+  private carryFloor = 0;
+  private stoppingAside = false;
+  carries(generation: number): boolean { return this.state === 'active' && generation >= this.carryFloor && generation <= this.controlGeneration; }
   stop(options: StopOptions = {}): Promise<{ stopped: true }> {
-    // A stronger stop arriving during an ordinary stop must also clear protection.
-    if (this.stopping) return options.clearGuard ? this.stopping.then(() => this.stop(options)) : this.stopping;
+    // A stronger stop arriving during an ordinary stop must also clear protection; any other stop arriving during a
+    // step-aside must cut the carried targets too, so it runs on its own instead of sharing the step-aside.
+    if (this.stopping) return options.clearGuard || (this.stoppingAside && !options.stepAside) ? this.stopping.then(() => this.stop(options)) : this.stopping;
     this.assertActive();
     const oldGeneration = this.controlGeneration;
     const clearGuard = options.clearGuard === true && this.hello.capabilities.includes('guard-duty-fenced');
+    const stepAside = options.stepAside === true && !options.clearGuard && this.hello.capabilities.includes('step-aside-stop');
     const guardRevision = clearGuard ? ++this.guardRevision : undefined;
     this.revision++;
     const stopping = async (): Promise<{ stopped: true }> => {
       try {
-        const reply = z.object({ stopped: z.literal(true), controlGeneration: generation }).parse(await this.rpc('stop', { ...this.identity(), ...(clearGuard ? { clearGuard: true, guardRevision } : {}) }));
+        const reply = z.object({ stopped: z.literal(true), controlGeneration: generation }).parse(await this.rpc('stop', { ...this.identity(), ...(clearGuard ? { clearGuard: true, guardRevision } : {}), ...(stepAside ? { stepAside: true } : {}) }));
         this.assertActive();
         if (reply.controlGeneration !== oldGeneration + 1) throw new BodyError('STALE_CONTROL', '停止回执代次异常，控制已终止');
         this.controlGeneration = reply.controlGeneration;
+        if (!stepAside) this.carryFloor = reply.controlGeneration;
         // Fence reads begun after stop was sent but before its new generation was confirmed.
         this.revision++;
         for (const op of this.operations.values()) if (op.status === 'running') this.remember({ ...op, status: 'cancelled', summary: '用户已停止动作' });
@@ -510,7 +517,8 @@ export class ServerBody implements Body {
         this.lose(terminal); throw terminal;
       }
     };
-    this.stopping = stopping().finally(() => { this.stopping = undefined; });
+    this.stoppingAside = stepAside;
+    this.stopping = stopping().finally(() => { this.stopping = undefined; this.stoppingAside = false; });
     return this.stopping;
   }
   async close(): Promise<void> {

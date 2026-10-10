@@ -17,7 +17,9 @@ type Intent = { action: 'follow' | 'wait'; player?: string; expectedEntityId?: s
 /** What the server's guard reports inside the running follow result. */
 export interface GuardState { state: string; target?: string; targetId?: string; hits: number; kills: number; shots: number; retreats: number; damage: number;
   /** Guard duty only: who is protected, whether the duty can fight for them right now and why not. */
-  player?: string; covering?: boolean; reason?: string }
+  player?: string; covering?: boolean; reason?: string;
+  /** NO_FREE_HAND: a foe was given up because no verified weapon was there and the hand could not be emptied. */
+  unarmed?: string }
 export interface CompanionState {
   state: 'idle' | 'following' | 'waiting' | 'paused' | 'blocked' | 'stopped';
   intent?: 'follow' | 'wait'; player?: string; distance?: number; operationId?: string;
@@ -32,7 +34,14 @@ export interface CompanionState {
 /** Held while a tool or reflex uses the body; release lets the follow/wait pick up again once nothing else is running, hold keeps it paused for good (until resume). */
 export interface YieldLease { release(): Promise<void>; hold(): void }
 export interface CompanionRequest { action: 'follow' | 'wait' | 'pause' | 'resume' | 'stop' | 'guard'; player?: string; distance?: number; wander?: boolean; guard?: GuardOptions | boolean; pickup?: PickupOptions; mining?: MiningOptions; say?: string }
-const terminalControl = new Set(['CANCELLED', 'WORLD_CHANGED', 'WRONG_INSTANCE', 'STALE_CONTROL', 'LEASE_LOST', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED', 'HOST_LOST', 'CLOSED']);
+/** Control itself is gone or cannot be trusted: the body is closed. */
+const controlLost = new Set(['WRONG_INSTANCE', 'STALE_CONTROL', 'LEASE_LOST', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED', 'HOST_LOST', 'CLOSED']);
+/**
+ * Only the follow/wait is over: the session, world, dimension or generation it was bound to moved on, or its follow was
+ * cancelled. The body stays under control and keeps its guard duty; nothing of the old follow can still move it, since
+ * the server drives a follow only while its generation is current.
+ */
+const intentEnded = new Set(['CANCELLED', 'WORLD_CHANGED']);
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 
 /** Owns the same Body task lock as finite tasks. Motion is maintained by the game, not a model loop. */
@@ -77,7 +86,7 @@ export class CompanionMode {
   private dutyView(): Pick<CompanionState, 'guardEnabled' | 'guard'> {
     if (!this.duty) return { guardEnabled: false, guard: undefined };
     const live = this.dutyState;
-    return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}) }
+    return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}), ...(live.unarmed ? { unarmed: live.unarmed } : {}) }
       : { state: 'idle', hits: 0, kills: 0, shots: 0, retreats: 0, damage: 0, player: this.duty.player } };
   }
   private clearDutyState(): void {
@@ -261,7 +270,6 @@ export class CompanionMode {
       if (!internal && this.suspendedFor) this.holdPause();
       return this.snapshot();
     }
-    const suspendedBefore = this.suspendedFor;
     const epoch = ++this.epoch;
     const owner = this.beginChange();
     let acquired = false;
@@ -269,17 +277,17 @@ export class CompanionMode {
       // Acquire before any awaits; this serializes with finite task and atomic action starts.
       this.acquire(); acquired = true;
       if (request.action !== 'pause') { this.suspendedFor = undefined; this.awaitingPlayer = false; if (request.action !== 'guard') this.leases.clear(); }
-      if (this.childActive) { this.gather.cancel(); this.childActive = false; }
-      const wasSuspended = request.action === 'resume' && !!suspendedBefore;
+      // Stepping aside for a tool keeps what the model just found (resourceRef／containerRef): the child is ours, the references are not.
+      if (this.childActive) { this.gather.cancel({ keepReferences: !!internal }); this.childActive = false; }
       if (this.intent && request.action !== 'resume') {
-        await this.body.stop(); this.check(epoch);
+        await this.body.stop(internal ? { stepAside: true } : undefined); this.check(epoch);
         this.gather.stopped();
         if (request.action === 'follow' || request.action === 'wait') this.intent = undefined;
         if (request.action === 'guard') this.intent!.guard = guard;
       }
-      // Work done while stepping aside may have stopped the body (a cancelled task): the same session and world with a later generation is still ours.
-      const initial = await this.observe(epoch, request.action === 'resume' && !wasSuspended ? this.intent!.context : undefined);
-      if (wasSuspended || request.action === 'guard') {
+      // Work done while stepping aside or paused may have stopped the body (a cancelled task): the same session and world with a later generation is still ours.
+      const initial = await this.observe(epoch);
+      if (request.action === 'resume' || request.action === 'guard') {
         const next = contextOf(initial);
         if (!this.adoptable(next, this.intent!.context, request.action === 'guard')) throw new BodyError('WORLD_CHANGED', '陪伴会话／世界／维度改变或控制代次不连续；旧意图已废弃');
         this.intent!.context = next;
@@ -401,6 +409,7 @@ export class CompanionMode {
   private noteGuard(guard: GuardState, player: string): void {
     const before = this.lastGuard; this.lastGuard = structuredClone(guard);
     const busy = (state?: string) => !!state && state !== 'idle';
+    if (guard.unarmed && guard.unarmed !== before?.unarmed) this.events.add('guard', `没有能用的剑或斧，热栏和背包也都满了，空不出手，这只先不打了（${guard.unarmed}）；背包腾出一格就能空手打。`);
     if (guard.state === 'retreating' && before?.state !== 'retreating') this.events.add('guard', `血量低（打不过），正在往 ${player} 那边撤，回血后再上。`);
     else if (guard.state === 'evading' && before?.state !== 'evading') this.events.add('guard', '苦力怕要炸了，先躲开。');
     if (busy(guard.state) && !this.fight) {
@@ -425,12 +434,12 @@ export class CompanionMode {
     const epoch = this.epoch, intent = this.intent, id = this.value.operationId;
     try {
       const suspended = this.value.state === 'paused' && !!this.suspendedFor;
+      // Paused (stepping aside or by hand) or blocked: nothing of ours runs on the body, so a later generation of the same session is still ours.
+      const idle = this.value.state === 'paused' || this.value.state === 'blocked';
       const sameContext = isDeepStrictEqual(contextOf(state), intent.context);
-      if (!state.connected || state.health <= 0 || !(sameContext || (suspended && this.adoptable(contextOf(state), intent.context)))) throw new BodyError('WORLD_CHANGED', '陪伴会话或控制代次改变；旧意图已废弃');
-      if (suspended) {
-        if (!sameContext) intent.context = contextOf(state);
-        await this.autoResume(state); return;
-      }
+      if (!state.connected || state.health <= 0 || !(sameContext || (idle && this.adoptable(contextOf(state), intent.context)))) throw new BodyError('WORLD_CHANGED', '陪伴会话或控制代次改变；旧意图已废弃');
+      if (idle && !sameContext) intent.context = contextOf(state);
+      if (suspended) { await this.autoResume(state); return; }
       if (this.pickup && !['paused', 'blocked'].includes(this.value.state)) this.ingestPickup(state);
       if (this.mining && !['paused', 'blocked'].includes(this.value.state)) this.ingestMining(state);
       if (this.childActive) return;
@@ -564,13 +573,13 @@ export class CompanionMode {
       if (this.pickup) { this.pickup.generations.add(state.controlGeneration!); try { this.ingestPickup(state); } catch { this.pickup.state.countStatus = 'partial-or-unknown'; } }
       if (this.mining) { this.mining.generations.add(state.controlGeneration!); try { this.ingestMining(state); } catch { this.mining.state.countStatus = 'partial-or-unknown'; } }
       this.fail(error, operation);
-    } catch (stopError) { if (blockedEpoch === this.epoch) { this.stopUnconfirmed = !stopConfirmed; this.fail(stopError as Error, undefined, true); } }
+    } catch (stopError) { if (blockedEpoch === this.epoch) { this.stopUnconfirmed = !stopConfirmed; this.fail(stopError as Error, undefined, !stopConfirmed); } }
     finally { this.finishChange(owner); }
   }
-  /** Lease/process loss is terminal; no persisted or automatic resume. */
-  fail(error: Error, operation?: Operation, controlLost = false): void {
+  /** Lease/process loss is terminal and closes the body; a discarded intent (WORLD_CHANGED, CANCELLED) only ends the follow/wait. No persisted or automatic resume. */
+  fail(error: Error, operation?: Operation, controlLostNow = false): void {
     const code = error instanceof BodyError ? error.code : 'INVALID_RESPONSE';
-    if (['idle', 'stopped'].includes(this.value.state) && !this.intent && !this.token && !this.duty) { if (controlLost) ++this.dutyRevision; return; }
+    if (['idle', 'stopped'].includes(this.value.state) && !this.intent && !this.token && !this.duty) { if (controlLostNow) ++this.dutyRevision; return; }
     ++this.epoch; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     this.observationRevision++;
     if (this.childActive) { this.gather.cancel(); this.childActive = false; }
@@ -582,15 +591,18 @@ export class CompanionMode {
       this.mining.state.lastCode = code;
       if (['PICKUP_GAP', 'PICKUP_UNKNOWN', 'UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'LEASE_EXPIRED', 'INVALID_RESPONSE', 'TRANSPORT_LOST', 'STOP_UNCONFIRMED'].includes(code)) this.mining.state.countStatus = 'partial-or-unknown';
     }
-    const terminal = controlLost || terminalControl.has(code);
-    if (terminal) { ++this.dutyRevision; this.intent = undefined; this.clearDutyState(); }
+    const lost = controlLostNow || controlLost.has(code), terminal = lost || intentEnded.has(code);
+    if (terminal) this.intent = undefined;
+    if (lost) { ++this.dutyRevision; this.clearDutyState(); }
     if (!this.stopUnconfirmed) this.release(); this.terminal = operation;
     this.publish({ ...this.base(terminal ? 'stopped' : 'blocked'), ...(operation ? { operationId: operation.operationId } : {}), code, reason: error.message }, false);
     const failureState = this.snapshot();
     if (operation) this.events.notifyCompanionOperation(operation, failureState);
     else this.events.add('companion', JSON.stringify(failureState));
-    // An untrusted running receipt or lost context cannot leave an unowned movement behind.
-    if (terminal) { this.pickup = undefined; void this.body.close().catch(() => {}); }
+    if (terminal) this.pickup = undefined;
+    // An untrusted running receipt or lost control cannot leave an unowned movement behind. A discarded follow/wait is not
+    // that: closing here used to end the whole body (the next read said LEASE_LOST and the host disconnected).
+    if (lost) void this.body.close().catch(() => {});
   }
   /** Explicit stop clears intent synchronously and keeps the lock until in-flight work is fenced. */
   stop(reason?: string, options: StopOptions = {}): Promise<{ stopped: true }> {
@@ -650,7 +662,7 @@ export class CompanionMode {
     this.publish(this.base('paused'));
   }
   private bodyIdle(): boolean { return this.body.isBusy?.() !== true && this.body.pendingOperations().length === 0 && this.busyProbe?.() !== true; }
-  /** Same instance, session, world and dimension; the control generation may only have moved on (a cancelled task stops the body). */
+  /** Same instance, session, world and dimension; the control generation may only have moved on (a cancelled task or a step-aside stops the body). */
   private adoptable(next: Context, old: Context, exactlyNext = false): boolean {
     if (old.instanceId !== next.instanceId || old.sessionId !== next.sessionId || old.worldId !== next.worldId || old.dimension !== next.dimension) return false;
     return exactlyNext ? next.controlGeneration === (old.controlGeneration ?? -1) + 1 : (next.controlGeneration ?? -1) >= (old.controlGeneration ?? -1);

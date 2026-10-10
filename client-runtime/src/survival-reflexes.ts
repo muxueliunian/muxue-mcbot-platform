@@ -192,14 +192,15 @@ export class SurvivalReflexes {
         this.events.notifyOperation(operation); this.defenseEvent = { entityId: threat?.entityId ?? entityId, at: Date.now(), summary: operation.summary };
       }
       // A definite failure (nothing in reach, a refusal, a retreat with no way out) changed nothing it does not report:
-      // keep defending, only leave that one target alone for a moment. Only an unknown outcome switches defense off.
+      // keep defending, only leave that one target alone for a moment, and let the follow pick up again as after a win.
+      // Only an unknown outcome switches defense off and keeps the follow paused.
       if (operation.status === 'failed') {
         this.lastReason = operation.summary;
         const failedOn = threat?.entityId ?? entityId;
         if (failedOn && (operation.result as { code?: string } | undefined)?.code !== 'NO_THREAT') this.cooling.set(failedOn, Date.now() + 3000);
       }
       else if (operation.status !== 'succeeded' && operation.status !== 'cancelled') { this.armed = false; this.revision++; this.phase = 'blocked'; this.lastReason = operation.summary; }
-      else resumable = operation.status === 'succeeded';
+      resumable = ['succeeded', 'failed', 'cancelled'].includes(operation.status);
       return operation;
     } catch (error) {
       if (error instanceof BodyError && error.code === 'CANCELLED') resumable = true;

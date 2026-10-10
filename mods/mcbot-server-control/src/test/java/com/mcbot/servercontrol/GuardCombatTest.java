@@ -48,8 +48,32 @@ final class GuardCombatTest {
     static final Vec3 COMPANION=new Vec3(-2,64,0);
     static void run() {
         interruptedExecution();
-        options();geometry();melee();preference();bow();retreat();creeper();noPath();friendlyFire();
+        options();geometry();melee();preference();bow();retreat();creeper();noPath();friendlyFire();arming();unarmed();
         System.out.println("GuardCombatTest: "+checks+" checks passed");
+    }
+    /** No melee weapon: hold a weapon, keep a bare or armed hand, take an empty hotbar slot, else stow what is held into the main inventory; full everywhere gives up. */
+    private static void arming() {
+        java.util.function.IntPredicate none=i->false;
+        check(GuardCombat.arming(0,false,false,14,false,none).equals(new GuardCombat.Arming(GuardCombat.Arm.HOLD,14)),"a verified weapon anywhere is held first");
+        check(GuardCombat.arming(2,true,false,5,true,none).equals(new GuardCombat.Arming(GuardCombat.Arm.HOLD,5))&&GuardCombat.arming(2,true,false,2,false,none).equals(new GuardCombat.Arming(GuardCombat.Arm.READY,2)),"a better weapon replaces the held one; the best one already held is kept");
+        check(GuardCombat.arming(3,false,true,-1,false,none).equals(new GuardCombat.Arming(GuardCombat.Arm.READY,3)),"an empty hand fights as it is");
+        check(GuardCombat.arming(3,false,false,-1,false,i->i==6||i==20).equals(new GuardCombat.Arming(GuardCombat.Arm.HOLD,6)),"a free hotbar slot is selected before anything is moved");
+        // The trial: a hotbar of golden apples, bow, arrows and logs, no sword or axe, room in the main inventory.
+        GuardCombat.Arming stow=GuardCombat.arming(0,false,false,-1,false,i->i==17||i==30);
+        check(stow.equals(new GuardCombat.Arming(GuardCombat.Arm.STOW,17)),"hotbar full and no weapon: the held stack goes to the first empty main inventory slot, the bare hand fights");
+        check(GuardCombat.arming(0,false,false,-1,false,none).equals(new GuardCombat.Arming(GuardCombat.Arm.NONE,-1)),"hotbar and main inventory full: nothing is held, the fight is given up");
+        check(GuardCombat.arming(0,false,false,-1,false,i->i==40).arm()==GuardCombat.Arm.NONE,"armour and off-hand slots are not somewhere to stow the held stack");
+    }
+    /** When the hand cannot be emptied the guard gives that foe up and says why; once it can fight again the reason goes. */
+    private static void unarmed() {
+        FakeView view=new FakeView();GuardCombat guard=guard(view);
+        Object zombie=new Object();view.foes.add(foe(zombie,"minecraft:zombie",2,3));
+        view.weapon=false;
+        check(!guard.tick(COMPANION)&&view.attacks==0&&"idle".equals(guard.state()),"no free hand: no swing with whatever is held");
+        check("NO_FREE_HAND".equals(guard.json().get("unarmed").getAsString()),"the observation says why: "+guard.json());
+        view.tick();check(!guard.tick(COMPANION)&&view.attacks==0,"that foe is left alone for a while instead of retrying every tick");
+        view.time+=60_000;view.weapon=true;
+        check(guard.tick(COMPANION)&&view.attacks==1&&!guard.json().has("unarmed"),"with a hand free again it fights and the reason is cleared");
     }
     private static void options() {
         GuardCombat.Options defaults=GuardCombat.Options.parse(JsonParser.parseString("true"));

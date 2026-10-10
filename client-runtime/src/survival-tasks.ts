@@ -192,8 +192,14 @@ export class SurvivalTasks {
         && noEnchantments(item);
       const weapons = state.inventory!.filter(safeWeapon).sort((a, b) => Number(empty(a)) - Number(empty(b)) || Number(b.slot === state.selectedSlot) - Number(a.slot === state.selectedSlot)
         || Number(b.id.endsWith('_axe')) - Number(a.id.endsWith('_axe')) || Number(b.id.endsWith('_sword')) - Number(a.id.endsWith('_sword')) || a.slot - b.slot);
-      const weapon = weapons.find(item => item.slot <= 8 || !empty(item));
-      if (!weapon) throw new BodyError('UNSAFE_WEAPON', '没有完整可核验的原版武器或空手热栏，不使用未知Mod物品');
+      let weapon = weapons.find(item => item.slot <= 8 || !empty(item));
+      if (!weapon) {
+        // No verified weapon and a full hotbar: move one hotbar stack into the main inventory and fight bare-handed. What is moved is never swung.
+        const freed = await this.freeHand(task, state);
+        state = await this.state(task); request.check?.();
+        weapon = this.stack(state, freed);
+        if (!empty(weapon)) throw new BodyError('UNKNOWN', '腾手后的热栏格没有确认变空，未出手');
+      }
       const target = weapon.slot <= 8 ? weapon.slot : state.inventory!.find(item => item.slot <= 8 && empty(item))?.slot ?? state.selectedSlot;
       const hotbar = empty(weapon) ? weapon.slot : await this.prepare(task, state, weapon.slot, target);
       if (empty(weapon) && state.selectedSlot !== hotbar) await this.step(task, 'select-slot', { slot: hotbar, expectedItem: weapon.id, expectedCount: weapon.count, expectedComponents: weapon.components!, ...(weapon.maxStackSize !== undefined ? { expectedMaxStackSize: weapon.maxStackSize } : {}) });
@@ -275,6 +281,26 @@ export class SurvivalTasks {
     const stack = this.stack(state, slot), foods = state.foods.filter(food => food.slot === slot);
     if (foods.length !== 1 || !edible(foods[0]) || foods[0].id !== stack.id || foods[0].count !== stack.count) throw new BodyError('UNSAFE_FOOD', '实际食物副作用／实现未知或源栈改变，不可使用');
     return foods[0];
+  }
+  /**
+   * Empty one hotbar slot (the selected one first) by a native swap with an empty main inventory slot 9..35, the same
+   * swap-inventory used to bring items into the hotbar. Returns the emptied hotbar slot. Both inventories full: the old refusal.
+   */
+  private async freeHand(task: Active, state: SurvivalState): Promise<number> {
+    const room = state.inventory!.find(item => item.slot >= 9 && item.slot <= 35 && empty(item) && complete(item));
+    if (!room) throw new BodyError('UNSAFE_WEAPON', '没有完整可核验的原版武器，热栏和背包主区都满，空不出手；不使用未知Mod物品，未出手');
+    if (!this.body.hello.capabilities.includes('swap-inventory')) throw new BodyError('UNSAFE_WEAPON', '没有完整可核验的原版武器或空手热栏，身体也不能整理背包腾出手；不使用未知Mod物品');
+    const hotbar = state.inventory!.filter(item => validSlot(item.slot, 8) && complete(item) && !empty(item)).sort((a, b) => Number(b.slot === state.selectedSlot) - Number(a.slot === state.selectedSlot) || a.slot - b.slot)[0];
+    if (!hotbar) throw new BodyError('UNSAFE_WEAPON', '热栏物品缺少完整组件，不能核验地挪开；不使用未知Mod物品，未出手');
+    const beforeRoom = this.value(this.stack(state, room.slot)), beforeHeld = this.value(this.stack(state, hotbar.slot));
+    task.progress.stage = 'freeing-hand'; task.progress.sourceSlot = room.slot; task.progress.hotbarSlot = hotbar.slot; task.progress.item = hotbar.id;
+    await this.step(task, 'swap-inventory', { sourceSlot: room.slot, hotbarSlot: hotbar.slot, expectedSource: beforeRoom, expectedTarget: beforeHeld });
+    task.progress.swapped = true;
+    const after = await this.state(task);
+    try {
+      if (!isDeepStrictEqual(this.value(this.stack(after, room.slot)), beforeHeld) || !isDeepStrictEqual(this.value(this.stack(after, hotbar.slot)), beforeRoom)) throw new BodyError('UNKNOWN', '腾手交换后热栏／背包映射未完整确认，未出手');
+    } catch (error) { throw new BodyError('UNKNOWN', (error as Error).message); }
+    return hotbar.slot;
   }
   private async prepare(task: Active, initial: SurvivalState, sourceSlot: number, targetSlot?: number): Promise<number> {
     let state = initial, source = this.stack(state, sourceSlot);

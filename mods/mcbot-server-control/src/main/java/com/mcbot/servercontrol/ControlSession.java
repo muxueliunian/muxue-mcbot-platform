@@ -59,6 +59,8 @@ final class ControlSession {
     final String instanceId=UUID.randomUUID().toString(), worldId, username;
     private String sessionId, leaseId, stopToken, controllerId;
     private long expiresAt, generation, guardRevision;
+    /** Oldest generation whose targets still hold: only step-aside stops (stepAside:true) since then. */
+    private long carryFloor;
     private final LinkedHashMap<String,Operation> history=new LinkedHashMap<>();
     private final Set<String> seenIds=new HashSet<>();
     private final ArrayDeque<Retired> retired=new ArrayDeque<>();
@@ -67,6 +69,11 @@ final class ControlSession {
     }
     String sessionId() { return sessionId; }
     long generation() { return generation; }
+    /**
+     * Targets issued in `issued` still belong to this control: the same generation, or only step-aside stops since
+     * (a follow stepping aside for a tool the model asked for). Any other stop, a claim or a revoke cuts the chain.
+     */
+    boolean carries(long issued) { return issued>=carryFloor&&issued<=generation; }
     void bodyChanged() {
         revokeCurrent("Body died, changed dimension, or was removed");
         sessionId=UUID.randomUUID().toString();
@@ -92,7 +99,7 @@ final class ControlSession {
     }
     private void cancel(String reason) {
         // Withdraw authority before cleanup can reenter a native hook.
-        generation++;
+        generation++;carryFloor=generation;
         for(Operation o:history.values()) o.finish("cancelled",reason,o.result);
         try { game.stop(); }
         catch(RuntimeException ignored) { /* Metadata and the next physical guard remain authoritative. */ }
@@ -196,7 +203,10 @@ final class ControlSession {
             case "stop": {
                 // The stop itself always happens; protection is cleared unless a later guard setting already arrived.
                 boolean clear=p.has("clearGuard")&&bool(p,"clearGuard")&&acceptGuardRevision(p);
-                try { cancel("Stopped by controller"); } finally { if(clear)game.clearDuty(); }
+                // A follow stepping aside for a tool keeps the targets the model just found; a stop that also clears protection never does.
+                boolean stepAside=p.has("stepAside")&&bool(p,"stepAside")&&!clear;
+                long floor=carryFloor;
+                try { cancel("Stopped by controller"); } finally { if(clear)game.clearDuty(); if(stepAside)carryFloor=floor; }
                 requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
             }
             case "observe", "nearby-blocks", "nearby-resources", "look-around", "survival-state", "assess-tool", "machine-status": {

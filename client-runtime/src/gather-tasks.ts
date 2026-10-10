@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { BodyError, type Body, type Observation, type Operation, type ItemValue, type Position, type NearbyResources, type ActionName, type ActionArguments, type GroundItem, type CompanionGuard } from './body.js';
+import { BodyError, sameControl, type Body, type Observation, type Operation, type ItemValue, type Position, type NearbyResources, type ActionName, type ActionArguments, type GroundItem, type CompanionGuard } from './body.js';
 import type { EventJournal } from './events.js';
 import { selectFood, type SurvivalTasks } from './survival-tasks.js';
 import { pillarBlockCount, pillarDown, pillarUp, type PillarBlock, type PillarHost, type PillarPurpose } from './pillar.js';
@@ -76,7 +76,8 @@ export class GatherTasks {
   useSurvival(tasks: SurvivalTasks, policy: () => SurvivalPolicy & { armed: boolean; revision: number }): void { this.survival = tasks; this.survivalPolicy = policy; }
   operation(id: string): Operation | undefined { const op = this.operations.get(id); return op && structuredClone(op); }
   assertIdle(): void { if (this.active) throw new BodyError('BUSY', '有限采集任务正在运行，请先完成或叫停'); }
-  cancel(): void { ++this.epoch; this.references.clear(); if (this.active) { this.active.cancelled = true; this.active.stopPending = true; } }
+  /** keepReferences: a follow stepping aside cancels its own child pickup/mining, not what the model found (resourceRef). */
+  cancel(options: { keepReferences?: boolean } = {}): void { ++this.epoch; if (!options.keepReferences) this.references.clear(); if (this.active) { this.active.cancelled = true; this.active.stopPending = true; } }
   /** Only release the shared write token after the independent body stop was confirmed. */
   stopped(): void {
     if (!this.active?.cancelled) return;
@@ -250,7 +251,8 @@ export class GatherTasks {
         else {
           const ref = this.references.get(request.resourceRef ?? '');
           if (!ref || ref.expires <= this.now()) throw new BodyError('STALE_REFERENCE', '资源引用过期，请重新观察授权区域');
-          if (!isDeepStrictEqual(ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
+          // A follow stepping aside for this very call moved the generation on (step-aside stop): the reference still holds.
+          if (!sameControl(this.body, ref.context, task.context)) throw new BodyError('WORLD_CHANGED', '资源引用不属于当前身体会话');
           task.center = ref.scan.center; task.radius = ref.radius; candidates = structuredClone(ref.scan.candidates);
           // A whole tree reaches past the scan radius (a slanted trunk, long branches): its drops are inside the goal too.
           if (ref.wholeTree) task.radius = Math.max(task.radius, ...candidates.map(candidate => Math.ceil(Math.hypot(candidate.position.x + 0.5 - task!.center.x, candidate.position.z + 0.5 - task!.center.z)) + 1));

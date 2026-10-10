@@ -68,7 +68,7 @@ final class GuardCombat {
         /** One walking tick toward a safer spot, staying within the leash; throws when there is no way. */
         boolean retreat(Vec3 destination,Vec3 companion,double leash);
         void stopMoving();
-        /** Best verified melee weapon (or a bare hand) selected; false when nothing safe can be held. */
+        /** Best verified melee weapon (or a bare hand, after stowing what is held) selected; false when nothing safe can be held. */
         boolean armMelee();
         boolean cooledDown();
         /** Confirmed damage of one native attack on exactly this foe. */
@@ -93,6 +93,8 @@ final class GuardCombat {
     private String state="idle";
     private final Map<Object,Long> noPath=new HashMap<>();
     private boolean retreating;
+    /** Why the last melee could not start: the hand could not be emptied (NO_FREE_HAND); cleared once a hand is ready. */
+    private String unarmed;
     private long engagedAt,lastHitAt;
     private int hits,kills,shots,retreats;
     private double damage;
@@ -102,6 +104,7 @@ final class GuardCombat {
     JsonObject json() {
         JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"options",options.json());
         if(target!=null){result.addProperty("target",target.type());result.addProperty("targetId",target.id());}
+        if(unarmed!=null)result.addProperty("unarmed",unarmed);
         return result;
     }
     /** True when the guard drove the body this tick; false leaves the tick to the ordinary follow. */
@@ -154,7 +157,8 @@ final class GuardCombat {
         requireDrive(permission);view.cancelDraw();
         if(melee) {
             view.stopMoving();
-            if(!view.armMelee()){noPath.put(chosen.identity(),now);settle();return false;}
+            if(!view.armMelee()){unarmed="NO_FREE_HAND";noPath.put(chosen.identity(),now);settle();return false;}
+            unarmed=null;
             requireDrive(permission);
             if(view.cooledDown()) {
                 view.lowerShield();
@@ -253,6 +257,21 @@ final class GuardCombat {
         for(var enchantment:stack.getEnchantments().keySet())if(!enchantment.unwrapKey().map(key->key.location().getNamespace().equals("minecraft")).orElse(false))return false;
         return !stack.isDamageableItem()||stack.getMaxDamage()-stack.getDamageValue()>4;
     }
+    /** How to get a hand ready for melee: hold that slot, keep what is held, or stow the held stack into that main inventory slot; none when every slot is full. */
+    enum Arm {HOLD,READY,STOW,NONE}
+    record Arming(Arm arm,int slot) {}
+    /**
+     * Prefers the best verified weapon (bestWeapon, -1 when none; better: it beats the held one), then an empty hotbar
+     * slot, then moving the held stack into an empty main inventory slot (9..35) so the bare hand fights. An unverified
+     * or modded stack is never swung, only moved aside.
+     */
+    static Arming arming(int selected,boolean heldWeapon,boolean heldEmpty,int bestWeapon,boolean better,java.util.function.IntPredicate empty) {
+        if(bestWeapon>=0&&(!heldWeapon||better))return new Arming(Arm.HOLD,bestWeapon);
+        if(heldWeapon||heldEmpty)return new Arming(Arm.READY,selected);
+        for(int i=0;i<9;i++)if(empty.test(i))return new Arming(Arm.HOLD,i);
+        for(int i=9;i<36;i++)if(empty.test(i))return new Arming(Arm.STOW,i);
+        return new Arming(Arm.NONE,-1);
+    }
     static boolean meleeWeapon(ItemStack stack){return verified(stack,SwordItem.class,Known.WEAPON)||verified(stack,AxeItem.class,Known.WEAPON);}
     /** Lower is better: swords before axes (faster swings), better material first. */
     static int weaponRank(ItemStack stack) {
@@ -345,10 +364,25 @@ final class GuardCombat {
             public boolean armMelee() {
                 ItemStack held=body.getMainHandItem();
                 int slot=best(GuardCombat::meleeWeapon,Comparator.comparingInt(GuardCombat::weaponRank));
-                if(slot>=0&&(!meleeWeapon(held)||weaponRank(body.getInventory().getItem(slot))<weaponRank(held)))return hold(slot);
-                if(meleeWeapon(held)||held.isEmpty())return true;
-                for(int i=0;i<9;i++)if(body.getInventory().getItem(i).isEmpty())return hold(i);
-                return false;
+                boolean heldWeapon=meleeWeapon(held);
+                Arming plan=arming(body.getInventory().selected,heldWeapon,held.isEmpty(),slot,slot>=0&&heldWeapon&&weaponRank(body.getInventory().getItem(slot))<weaponRank(held),i->body.getInventory().getItem(i).isEmpty());
+                return switch(plan.arm()) {
+                    case HOLD -> hold(plan.slot());
+                    case READY -> true;
+                    case STOW -> stow(plan.slot());
+                    case NONE -> false;
+                };
+            }
+            /** Move the held stack into the empty main inventory slot `slot` (the same native SWAP as hold()), leaving the hand bare. */
+            boolean stow(int slot) {
+                var permission=execution.capture();requireDrive(permission);
+                if(body.containerMenu!=body.inventoryMenu||!body.inventoryMenu.getCarried().isEmpty()||!body.getInventory().getItem(slot).isEmpty())return false;
+                int menu=NativeWorkstation.menuSlot(body.inventoryMenu,body.getInventory(),slot);
+                if(menu<0)return false;
+                if(body.isUsingItem())body.stopUsingItem();
+                NativeWorkstation.click(body,body.inventoryMenu,menu,body.getInventory().selected,ClickType.SWAP);
+                requireDrive(permission);
+                return body.getMainHandItem().isEmpty();
             }
             public boolean cooledDown(){return body.getAttackStrengthScale(0.5f)>=1f;}
             public float attack(Foe foe) {

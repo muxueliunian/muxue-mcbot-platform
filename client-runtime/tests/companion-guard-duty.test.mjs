@@ -149,6 +149,22 @@ test('fights reported by the duty wake the model once; a duty the server dropped
   assert.match(guardEvents().at(-1), /保护已经停了/);
 });
 
+test('a foe given up because no hand could be emptied is reported once, with the reason', async t => {
+  const f = await fixture(t);
+  await f.mode.request({ action: 'guard', player: 'Alex', guard: true });
+  const guardEvents = () => f.events.since(0, ['guard']).map(event => event.text);
+  f.setDuty({ state: 'idle', unarmed: 'NO_FREE_HAND' });
+  await f.monitor.tick(); await f.monitor.tick();
+  assert.equal(guardEvents().length, 1); assert.match(guardEvents()[0], /空不出手.*NO_FREE_HAND/);
+  assert.equal(f.mode.snapshot().guard.unarmed, 'NO_FREE_HAND', 'the reason stays readable in get-companion-mode');
+  f.setDuty({ unarmed: undefined });
+  await f.monitor.tick();
+  assert.equal('unarmed' in f.mode.snapshot().guard, false);
+  f.setDuty({ unarmed: 'NO_FREE_HAND' });
+  await f.monitor.tick();
+  assert.equal(guardEvents().length, 2, 'a new give-up after a fight that could start is reported again');
+});
+
 async function mcp(t, f) {
   const server = createMcpServer(f.body, f.events, { companion: f.mode });
   const [left, right] = InMemoryTransport.createLinkedPair(), client = new Client({ name: 'guard-lifecycle', version: '1' });

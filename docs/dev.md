@@ -27,6 +27,8 @@ Set-Location ../mcbot-yes-steve-model   # 附属模组编译时要用核心的 j
 ./gradlew.bat build
 ```
 
+`mcp-server`的不少测试直接加载`dist/`：`npm test`会先构建，单独用`node --test tests/xxx.test.mjs`跑某个文件前要先`npm run build`，否则报找不到模块，那是没构建，不是测试原本就失败。
+
 支持范围的清单是根目录的`compat.json`（网站、README、WebUI模组页都读它）；改了模组里锁的版本或jar版本号，要同步改清单，`node scripts/check-compat.mjs`核对，`mcp-server`的`npm test`也会跑。
 
 Linux 上跑 Gradle 要用 UTF-8 locale（`LC_ALL=C.UTF-8 bash ./gradlew build`），否则 `HostingRulesTest` 里带中文的存档路径会报 `InvalidPathException`（10-10 云端复验时遇到，Windows 不受影响）。

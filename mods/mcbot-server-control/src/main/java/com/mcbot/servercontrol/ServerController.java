@@ -309,8 +309,8 @@ final class ServerController implements ControlSession.Game {
     }
     /** True when the duty drove the body this tick. */
     private boolean tickDuty(BodyPlayer body) {
-        // Sitting keeps the protection: a hostile creature close by gets the body up (nothing sits it back down afterwards).
-        if(player.isPassenger()&&NativeSeat.standForFight(NativeSeat.seated(player),true,hostileNear())) player.stopRiding();
+        // Sitting keeps the protection: when the guard would fight, the body gets up first (nothing sits it back down afterwards).
+        if(player.isPassenger()&&NativeSeat.standForFight(NativeSeat.seated(player),true,duty.wouldFight())) player.stopRiding();
         GuardDuty current=duty;
         boolean drove;
         try { drove=current.tick(dutyMayInterrupt(),active==null); }
@@ -736,9 +736,6 @@ final class ServerController implements ControlSession.Game {
         player.stopInput();
         JsonObject result=NativeSeat.sitDown(player,seat,this::look,()->{});
         finish("succeeded","Sitting on the seat",result);
-    }
-    private boolean hostileNear() {
-        return !player.serverLevel().getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class,player.getBoundingBox().inflate(8),e->e!=player&&e.isAlive()&&ThreatSense.vanillaHostile(e)&&player.hasLineOfSight(e)).isEmpty(); // one behind a wall or underground is no reason to get up
     }
     private void beginRetreat(ControlSession.Operation operation) {
         requireWalkable();bounded(operation.args,"distance",4,1.5,6);

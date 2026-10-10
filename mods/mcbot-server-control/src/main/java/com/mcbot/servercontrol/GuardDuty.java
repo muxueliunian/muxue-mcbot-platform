@@ -49,6 +49,8 @@ final class GuardDuty {
     /** What the duty needs from the fight: the {@link GuardCombat} methods, so tests can stand in for it. */
     interface Combat {
         boolean tick(Vec3 companion);
+        /** Whether a foe the fight would take on is around the player now; nothing moves. */
+        boolean foesNear(Vec3 companion);
         void stop();
         JsonObject json();
     }
@@ -102,6 +104,15 @@ final class GuardDuty {
         driving=false;
         return false;
     }
+    /**
+     * Whether the duty would fight now, by its own rules (control, the player in range, a foe within the guard radius
+     * around the player). A seated body stands up on this, so sitting never has a range of its own.
+     */
+    boolean wouldFight() {
+        if(stopped||!view.mayDrive())return false;
+        Vec3 companion=view.companion();
+        return companion!=null&&view.position().distanceTo(companion)<=ENGAGE_RANGE&&combat.foesNear(companion);
+    }
     private boolean uncovered(String why) {
         if(fighting)lastBreak=why;
         release();covering=false;reason=why;return false;
@@ -144,6 +155,7 @@ final class GuardDuty {
         GuardCombat fight=GuardCombat.create(body,mayDrive,server,player,options);
         Combat combat=new Combat() {
             public boolean tick(Vec3 companion){return fight.tick(companion);}
+            public boolean foesNear(Vec3 companion){return fight.foesNear(companion);}
             public void stop(){fight.stop();}
             public JsonObject json(){return fight.json();}
         };

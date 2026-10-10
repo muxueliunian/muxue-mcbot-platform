@@ -25,6 +25,7 @@ final class GuardDutyTest {
         final FakeView view;boolean foe;int ticks,stops;
         FakeCombat(FakeView view){this.view=view;}
         public boolean tick(Vec3 companion){ticks++;if(foe)view.feet=view.feet.add(1,0,0);return foe;}
+        public boolean foesNear(Vec3 companion){return foe;}
         public void stop(){stops++;}
         public JsonObject json(){return obj("state",foe?"fighting":"idle","hits",0,"kills",0,"shots",0,"retreats",0,"damage",0);}
     }
@@ -35,6 +36,7 @@ final class GuardDutyTest {
         handOver();
         interruptedTick();
         taskPause();
+        wouldFight();
         System.out.println("GuardDutyTest: "+checks+" checks passed");
     }
     /** A running task: the duty waits while it cannot stand aside, fights when it can, never walks back, and the fight time is what extends the task. */
@@ -55,6 +57,17 @@ final class GuardDutyTest {
         combat.foe=false;view.time+=500;
         check(!duty.tick(true,false)&&!duty.driving()&&view.walks==0,"after the fight the body goes back to the task, not to a spot");
         check(duty.busyMs()==3500,"the fight time the task is extended by: "+duty.busyMs());
+    }
+    /** What gets a seated body up: the duty's own rules, so sitting has no range of its own. */
+    private static void wouldFight() {
+        FakeView view=new FakeView();FakeCombat combat=new FakeCombat(view);GuardDuty duty=duty(view,combat);
+        check(!duty.wouldFight(),"no foe around the player: stay seated");
+        combat.foe=true;check(duty.wouldFight(),"a foe the guard would fight: get up");
+        view.companion=new Vec3(GuardDuty.ENGAGE_RANGE+1,64,0);check(!duty.wouldFight(),"the player is beyond the guard's reach: the guard would not fight, so stay");
+        view.companion=new Vec3(3,64,0);view.mayDrive=false;check(!duty.wouldFight(),"no control: stay");
+        view.mayDrive=true;view.companion=null;check(!duty.wouldFight(),"player away: stay");
+        view.companion=new Vec3(3,64,0);duty.stop();check(!duty.wouldFight(),"duty off: stay");
+        check(combat.ticks==0,"asking never fights");
     }
     private static void idleFight() {
         FakeView view=new FakeView();FakeCombat combat=new FakeCombat(view);GuardDuty duty=duty(view,combat);
@@ -104,6 +117,7 @@ final class GuardDutyTest {
             FakeView view=new FakeView();GuardDuty[] current={null};boolean[] interrupt={true};int[] stops={0};
             GuardDuty.Combat combat=new GuardDuty.Combat(){
                 public boolean tick(Vec3 companion){if(interrupt[0]){interrupt[0]=false;if(off)current[0].stop();else current[0].interrupt();}return true;}
+                public boolean foesNear(Vec3 companion){return true;}
                 public void stop(){stops[0]++;}
                 public JsonObject json(){return obj("state","idle");}
             };

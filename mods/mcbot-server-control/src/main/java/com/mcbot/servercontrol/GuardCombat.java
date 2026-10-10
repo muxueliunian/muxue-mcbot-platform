@@ -162,6 +162,8 @@ final class GuardCombat {
         if(unarmed!=null)result.addProperty("unarmed",unarmed);
         return result;
     }
+    /** Whether anything around the player is a foe this guard would fight: the same search, centre and radius as a tick. */
+    boolean foesNear(Vec3 companion){return !view.foes(companion,options.radius()).isEmpty();}
     /** True when the guard drove the body this tick; false leaves the tick to the ordinary follow. */
     boolean tick(Vec3 companion) {
         var permission=execution.capture();

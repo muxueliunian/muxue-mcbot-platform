@@ -45,7 +45,7 @@ final class NativeSeat {
      * Protection keeps its duty while seated; a hostile creature close by is the only thing that makes the body get up.
      * Nothing sits it back down afterwards.
      */
-    static boolean standForFight(boolean seated,boolean dutyHeld,boolean hostileNear) {return seated&&dutyHeld&&hostileNear;}
+    static boolean standForFight(boolean seated,boolean dutyHeld,boolean guardWouldFight) {return seated&&dutyHeld&&guardWouldFight;}
 
     /** The hotbar slot to click with: the selected one when it is empty, else the first empty one, else -1. */
     static int handSlot(boolean[] hotbarEmpty,int selected) {

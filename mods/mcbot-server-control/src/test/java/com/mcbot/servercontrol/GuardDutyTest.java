@@ -42,6 +42,10 @@ final class GuardDutyTest {
         GuardDuty.Grace grace=new GuardDuty.Grace(1000);
         check(grace.grant(400)==400&&grace.grant(500)==500&&grace.grant(300)==100&&grace.grant(50)==0,"fights extend a task by at most its own time limit");
         check(new GuardDuty.Grace(1000).grant(-5)==0,"no negative extension");
+        check(GuardDuty.bodyFree(false,false,false,true,true,false),"the fight's own bow draw or raised shield does not make the body busy (it would be lowered the next tick)");
+        check(!GuardDuty.bodyFree(false,false,false,true,false,false),"an item someone else is using (a meal) keeps the body");
+        check(!GuardDuty.bodyFree(true,false,false,false,true,false)&&!GuardDuty.bodyFree(false,true,false,false,true,false)&&!GuardDuty.bodyFree(false,false,true,false,true,false)&&!GuardDuty.bodyFree(false,false,false,false,true,true),"eating, a native write, sleep and an open menu keep the body even mid-fight");
+        check(GuardDuty.bodyFree(false,false,false,false,false,false),"an idle body is free");
         FakeView view=new FakeView();FakeCombat combat=new FakeCombat(view);GuardDuty duty=duty(view,combat);
         combat.foe=true;
         check(!duty.tick(false,false)&&combat.ticks==0,"a task that cannot stand aside keeps the body: the fight is not even looked at");

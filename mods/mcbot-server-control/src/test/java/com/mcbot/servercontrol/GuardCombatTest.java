@@ -91,6 +91,17 @@ final class GuardCombatTest {
         check(Math.abs(GuardCombat.arrowHeight(Math.toRadians(-pitch),15))<0.05,"the chosen pitch crosses the target height");
         check(GuardCombat.arrowPitch(20,4)<GuardCombat.arrowPitch(20,0),"a higher target needs a higher aim");
         check(Double.isNaN(GuardCombat.arrowPitch(10,60)),"an unreachable height has no pitch");
+        // The 3D flight the bow checks for blocks agrees with the pitch solver: aimed at a point, it passes through it.
+        for(double[] c:new double[][]{{15,0},{24,3},{8,-2},{20,-4}}) {
+            float yaw=37f;double h=c[0],dy=c[1];
+            net.minecraft.world.phys.Vec3 from=new net.minecraft.world.phys.Vec3(1,64,-2);
+            net.minecraft.world.phys.Vec3 target=from.add(-Math.sin(Math.toRadians(yaw))*h,dy,Math.cos(Math.toRadians(yaw))*h);
+            java.util.List<net.minecraft.world.phys.Vec3> path=GuardCombat.arrowPath(from,yaw,(float)GuardCombat.arrowPitch(h,dy),100);
+            check(Math.abs(path.get(1).distanceTo(from)-3)<1e-6,"a full-power arrow covers 3 blocks in its first tick");
+            double closest=Double.MAX_VALUE;for(int i=1;i<path.size();i++)closest=Math.min(closest,GuardCombat.segmentDistance(target,path.get(i-1),path.get(i)));
+            check(closest<0.1,"the arrow's flight passes through the aimed point ("+h+" out, "+dy+" up): "+closest);
+        }
+        check(GuardCombat.AIM_HEIGHTS[0]==0.5&&GuardCombat.AIM_HEIGHTS[GuardCombat.AIM_HEIGHTS.length-1]>0.9,"the middle first, the head last");
         check(Math.abs(GuardCombat.segmentDistance(new Vec3(5,1,0),Vec3.ZERO,new Vec3(10,0,0))-1)<1e-9,"distance to the middle of the path");
         check(Math.abs(GuardCombat.segmentDistance(new Vec3(12,0,0),Vec3.ZERO,new Vec3(10,0,0))-2)<1e-9,"past the end of the path counts from its end");
         Vec3 feet=new Vec3(0,64,0);

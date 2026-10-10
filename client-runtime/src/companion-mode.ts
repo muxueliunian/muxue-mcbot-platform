@@ -19,7 +19,9 @@ export interface GuardState { state: string; target?: string; targetId?: string;
   /** Guard duty only: who is protected, whether the duty can fight for them right now and why not. */
   player?: string; covering?: boolean; reason?: string;
   /** NO_FREE_HAND: a foe was given up because no verified weapon was there and the hand could not be emptied. */
-  unarmed?: string }
+  unarmed?: string;
+  /** Diagnosis only (guard duty): see GuardDutyState. */
+  draws?: number; lastEnd?: string; lastDrop?: string; lastBreak?: string }
 export interface CompanionState {
   state: 'idle' | 'following' | 'waiting' | 'paused' | 'blocked' | 'stopped';
   intent?: 'follow' | 'wait'; player?: string; distance?: number; operationId?: string;
@@ -97,7 +99,7 @@ export class CompanionMode {
   private dutyView(): Pick<CompanionState, 'guardEnabled' | 'guard'> {
     if (!this.duty) return { guardEnabled: false, guard: undefined };
     const live = this.dutyState;
-    return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}), ...(live.unarmed ? { unarmed: live.unarmed } : {}) }
+    return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}), ...(live.unarmed ? { unarmed: live.unarmed } : {}), ...(live.draws !== undefined ? { draws: live.draws } : {}), ...(live.lastEnd ? { lastEnd: live.lastEnd } : {}), ...(live.lastDrop ? { lastDrop: live.lastDrop } : {}), ...(live.lastBreak ? { lastBreak: live.lastBreak } : {}) }
       : { state: 'idle', hits: 0, kills: 0, shots: 0, retreats: 0, damage: 0, player: this.duty.player } };
   }
   private clearDutyState(): void {

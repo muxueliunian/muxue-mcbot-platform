@@ -65,6 +65,7 @@ const guardDutySchema = z.object({
   covering: z.boolean(), reason: z.string().optional(), returning: z.boolean().optional(), busyMs: z.number().nonnegative(),
   state: z.string(), target: z.string().optional(), targetId: z.string().optional(),
   hits: z.number(), kills: z.number(), shots: z.number(), retreats: z.number(), damage: z.number(), unarmed: z.string().optional(),
+  draws: z.number().optional(), lastEnd: z.string().optional(), lastDrop: z.string().optional(), lastBreak: z.string().optional(),
 });
 const operationSchema = z.object({
   operationId: identifier, sessionId: identifier, name: z.string(), controlGeneration: generation,

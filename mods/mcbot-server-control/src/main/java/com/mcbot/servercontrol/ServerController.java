@@ -285,7 +285,7 @@ final class ServerController implements ControlSession.Game {
      * done). Eating, digging, an open menu, a scaffold, a bed, a gesture or a retreat keep the body until they end.
      */
     private boolean dutyMayInterrupt() {
-        if(survival!=null&&survival.busy()||nativeWriteInProgress()||player.isSleeping()||player.isUsingItem()||player.containerMenu!=player.inventoryMenu) return false;
+        if(!GuardDuty.bodyFree(survival!=null&&survival.busy(),nativeWriteInProgress(),player.isSleeping(),player.isUsingItem(),dutyDrove,player.containerMenu!=player.inventoryMenu)) return false;
         if(active==null) return true;
         if(companion!=null) return !companion.ownGuard();
         GuardDuty.Pausable task=pausable();

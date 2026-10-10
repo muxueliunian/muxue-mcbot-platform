@@ -595,7 +595,7 @@ export class CompanionMode {
   /** Explicit stop clears intent synchronously and keeps the lock until in-flight work is fenced. */
   stop(reason?: string, options: StopOptions = {}): Promise<{ stopped: true }> {
     if (this.stopping) return options.clearGuard ? this.stopping.then(() => this.stop(reason, options)) : this.stopping;
-    if (options.clearGuard) ++this.dutyRevision;
+    const dutyRevision = options.clearGuard ? ++this.dutyRevision : undefined;
     ++this.epoch; this.intent = undefined; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     const owner = this.beginChange();
     const token = this.token, miningState = this.mining ? { ...this.miningState(), active: false, disabledReason: 'STOPPED' } : undefined;
@@ -608,7 +608,8 @@ export class CompanionMode {
       try {
         const result = await this.body.stop(options);
         if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '身体停止未确认；保留陪伴写锁');
-        if (options.clearGuard) this.clearDutyState();
+        // A guard setting made after this stop was sent wins on the server too; keep its local state.
+        if (dutyRevision === this.dutyRevision) this.clearDutyState();
         this.gather.stopped(); this.stopUnconfirmed = false; this.release(token); return result;
       } catch (error) { this.stopUnconfirmed = true; throw error; }
     })().finally(() => { if (this.stopping === stopping) this.stopping = undefined; this.finishChange(owner); });

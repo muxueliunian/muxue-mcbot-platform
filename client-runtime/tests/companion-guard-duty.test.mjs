@@ -23,23 +23,24 @@ async function fixture(t, fenced = true) {
   ] });
   let duty = null, guardRevision = 0;
   const hello = mock.handlers.hello;
-  mock.handlers.hello = () => ({ ...hello(), capabilities: ['send-chat', 'look-at', 'move-to-position', 'follow-companion', 'nearby-blocks', 'companion-guard', 'guard-duty', ...(fenced ? ['guard-duty-fenced'] : [])] });
+  mock.handlers.hello = () => ({ ...hello(), capabilities: ['send-chat', 'look-at', 'move-to-position', 'follow-companion', 'nearby-blocks', 'companion-guard', fenced ? 'guard-duty-fenced' : 'guard-duty'] });
+  // Like ControlSession: settings and clearing stops apply in revision order; a clearing stop itself is never refused.
   const acceptRevision = params => {
-    if (!Number.isSafeInteger(params.guardRevision) || params.guardRevision <= guardRevision) throw Object.assign(new Error('superseded'), { code: 'CANCELLED' });
-    guardRevision = params.guardRevision;
+    if (!Number.isSafeInteger(params.guardRevision) || params.guardRevision < 1) throw Object.assign(new Error('bad revision'), { code: 'INVALID_ARGUMENT' });
+    if (params.guardRevision <= guardRevision) return false;
+    guardRevision = params.guardRevision; return true;
   };
   mock.handlers.guard = params => {
-    if (params.controlGeneration !== observe(params).controlGeneration) throw Object.assign(new Error('stale'), { code: 'STALE_CONTROL' });
-    acceptRevision(params);
+    if (!acceptRevision(params)) throw Object.assign(new Error('superseded'), { code: 'CANCELLED' });
     if (params.off) { duty = null; return { enabled: false, guardRevision }; }
     duty = { enabled: true, player: params.player, entityId: params.expectedEntityId, options: params.options, covering: true, ...idle };
     return { ...duty, guardRevision };
   };
   const stop = mock.handlers.stop;
   mock.handlers.stop = params => {
-    if (params.clearGuard) acceptRevision(params);
+    const clear = params.clearGuard === true && acceptRevision(params);
     const result = stop(params);
-    if (params.clearGuard) duty = null;
+    if (clear) duty = null;
     return result;
   };
   const observe = mock.handlers.observe;
@@ -263,4 +264,32 @@ test('an older guard-duty server uses the existing guarded-follow path', async t
   assert.equal(f.guardCalls().length, 0);
   assert.deepEqual(f.follows()[0].guard, {});
   await assert.rejects(f.body.setGuard({ off: true }), { code: 'UNSUPPORTED' });
+});
+
+test('companion-mode stop during an in-flight ordinary stop still ends the follow and protection', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  await f.follow();
+  assert.equal(f.duty().player, 'Alex');
+  let entered = false; const stop = f.mock.handlers.stop;
+  f.mock.handlers.stop = async p => { entered = true; await delayed.wait; return stop(p); };
+  const ordinary = f.body.stop();
+  await until(() => entered);
+  const ended = call('companion-mode', { action: 'stop' });
+  await until(() => f.guardCalls().some(p => p.off));
+  delayed.release(); await ordinary;
+  assert.equal((await ended).error, false);
+  assert.equal(f.duty(), null); assert.equal(f.mode.snapshot().guardEnabled, false);
+});
+
+test('an off overtaken at the server by an ordinary stop still turns protection off', async t => {
+  const f = await fixture(t), call = await mcp(t, f), delayed = gate();
+  await call('companion-mode', startGuard);
+  let entered = false; const guard = f.mock.handlers.guard;
+  f.mock.handlers.guard = async p => { if (p.off) { entered = true; await delayed.wait; } return guard(p); };
+  const off = call('companion-mode', { action: 'guard', guard: false });
+  await until(() => entered);
+  await f.body.stop();
+  delayed.release();
+  assert.equal((await off).error, false);
+  assert.equal(f.duty(), null); assert.equal(f.mode.snapshot().guardEnabled, false);
 });

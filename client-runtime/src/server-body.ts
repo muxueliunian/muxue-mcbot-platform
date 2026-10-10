@@ -147,7 +147,7 @@ export class ServerBody implements Body {
   }
   private async connect(): Promise<void> {
     const hello = await this.readHello();
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty', 'guard-duty-fenced'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -261,19 +261,16 @@ export class ServerBody implements Body {
   async setGuard(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }> {
     this.assertActive();
     if (!this.hello.capabilities.includes('guard-duty-fenced')) throw new BodyError('UNSUPPORTED', '身体不支持带撤销屏障的常驻保护（guard-duty-fenced）');
-    if (this.stopping) throw new BodyError('BUSY', '正在停止，请等待确认后更改保护');
-    const guardRevision = ++this.guardRevision, revision = this.revision;
+    // Settings and clearing stops share one revision sequence; the server applies only the latest it has seen.
+    const guardRevision = ++this.guardRevision;
     try {
-      const raw = await this.rpc('guard', { ...this.identity(), controlGeneration: this.controlGeneration, guardRevision, ...request });
+      const raw = await this.rpc('guard', { ...this.identity(), guardRevision, ...request });
       this.assertActive();
       if (guardRevision !== this.guardRevision) throw new BodyError('CANCELLED', '保护请求已被更新的设置或停止取代');
       const reply = z.union([guardDutySchema, z.object({ enabled: z.literal(false) })]).parse(raw);
       if (z.object({ guardRevision: generation }).parse(raw).guardRevision !== guardRevision) throw new BodyError('INVALID_RESPONSE', '保护回执序号不匹配');
       return reply;
-    } catch (error) {
-      if (error instanceof BodyError && error.code === 'STALE_CONTROL' && revision !== this.revision) throw new BodyError('CANCELLED', '停止前的保护请求已被服务端拒绝');
-      throw this.invalidate(error);
-    }
+    } catch (error) { throw this.invalidate(error); }
   }
   acquireTask(taskToken: string): void {
     this.assertActive();

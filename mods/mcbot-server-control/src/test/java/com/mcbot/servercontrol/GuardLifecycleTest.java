@@ -21,10 +21,10 @@ final class GuardLifecycleTest {
         Fixture(){claim();}
         void claim(){lease=session.call("claim",obj("instanceId",session.instanceId,"worldId","world","username","Bot","controllerId","review"));}
         JsonObject auth(){return obj("instanceId",session.instanceId,"sessionId",session.sessionId(),"leaseId",lease.get("leaseId").getAsString());}
-        JsonObject guard(long revision,boolean off){JsonObject p=auth();p.addProperty("controlGeneration",session.generation());p.addProperty("guardRevision",revision);if(off)p.addProperty("off",true);return p;}
+        JsonObject guard(long revision,boolean off){JsonObject p=auth();p.addProperty("guardRevision",revision);if(off)p.addProperty("off",true);return p;}
         public boolean connected(){return connected;}
         public void ensureBody(){}
-        public JsonObject hello(){return obj("capabilities",List.of("guard-duty","guard-duty-fenced"));}
+        public JsonObject hello(){return obj("capabilities",List.of("guard-duty-fenced"));}
         public JsonObject observe(JsonObject p){return obj();}
         public JsonObject watch(){return obj();}
         public long chatCursor(){return 0;}
@@ -48,19 +48,26 @@ final class GuardLifecycleTest {
         errorCode("CANCELLED",()->f.session.call("guard",lateOn));
         check(f.execution==null&&f.stops==stops,"off fences late setup without stopping an unrelated task");
         errorCode("CANCELLED",()->f.session.call("guard",f.guard(3,false)));
-        JsonObject missing=f.auth();missing.addProperty("controlGeneration",f.session.generation());
-        errorCode("INVALID_ARGUMENT",()->f.session.call("guard",missing));
+        errorCode("INVALID_ARGUMENT",()->f.session.call("guard",f.auth()));
         JsonObject invalid=f.guard(4,false);invalid.addProperty("guardRevision",1.5);
         errorCode("INVALID_ARGUMENT",()->f.session.call("guard",invalid));
         f.open(4);JsonObject beforeStop=f.guard(5,false);
         JsonObject clear=f.auth();clear.addProperty("clearGuard",true);clear.addProperty("guardRevision",6);
         JsonObject stopped=f.session.call("stop",clear);
         check(stopped.get("stopped").getAsBoolean()&&f.execution==null,"stop clears protection before acknowledging");
-        errorCode("STALE_CONTROL",()->f.session.call("guard",beforeStop));
-        errorCode("CANCELLED",()->f.session.call("guard",f.guard(5,false)));
+        errorCode("CANCELLED",()->f.session.call("guard",beforeStop));
         BooleanSupplier fresh=f.open(7);
         check(fresh.getAsBoolean(),"a fresh explicit command after stop can protect again");
         check(stopped.getAsJsonObject("operationBudget").get("used").getAsInt()==0,"guard configuration and clearing use no operation IDs");
+        // A clearing stop overtaken by a later setting still stops, and leaves that later setting in place.
+        JsonObject staleClear=f.auth();staleClear.addProperty("clearGuard",true);staleClear.addProperty("guardRevision",7);
+        long generation=f.session.generation();
+        check(f.session.call("stop",staleClear).get("stopped").getAsBoolean()&&f.session.generation()==generation+1,"a clearing stop is never refused");
+        check(f.execution!=null&&f.execution.capture().getAsBoolean(),"an overtaken clear does not undo the later setting");
+        // An ordinary stop keeps the intent, so a setting issued before it but arriving after it still applies; off too.
+        JsonObject lateOff=f.guard(8,true);f.session.call("stop",f.auth());
+        f.session.call("guard",lateOff);
+        check(f.execution==null,"off is ordered by revision alone, not by control generation");
     }
     private static void nativeCallbacks(){
         Fixture f=new Fixture();BooleanSupplier attack=f.open(1);f.nativeWriting=true;

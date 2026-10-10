@@ -79,11 +79,12 @@ final class ControlSession {
         String owner=leaseId,bodySession=sessionId;
         return ()->{expire();return owner!=null&&owner.equals(leaseId)&&Objects.equals(bodySession,sessionId)&&game.connected();};
     }
-    private void acceptGuardRevision(JsonObject params) {
+    /** Guard settings apply in the order the controller issued them: false when a later setting already arrived. */
+    private boolean acceptGuardRevision(JsonObject params) {
         double requested=number(params,"guardRevision");
         if(requested<1||requested!=Math.rint(requested)||requested>9_007_199_254_740_991d)throw error("INVALID_ARGUMENT","Invalid guardRevision");
-        if(requested<=guardRevision)throw error("CANCELLED","Guard request was superseded by a newer setting or stop");
-        guardRevision=(long)requested;
+        if(requested<=guardRevision)return false;
+        guardRevision=(long)requested;return true;
     }
     boolean mayDrive(Operation operation) {
         expire();
@@ -193,8 +194,8 @@ final class ControlSession {
             case "heartbeat": expiresAt=clock.getAsLong()+TTL_MS; return withOperationBudget(obj("ttlMs",TTL_MS,"controlGeneration",generation));
             case "release": revokeCurrent("Controller released control");requireNativeStopped(); return obj("released",true);
             case "stop": {
-                boolean clear=p.has("clearGuard")&&bool(p,"clearGuard");
-                if(clear)acceptGuardRevision(p);
+                // The stop itself always happens; protection is cleared unless a later guard setting already arrived.
+                boolean clear=p.has("clearGuard")&&bool(p,"clearGuard")&&acceptGuardRevision(p);
                 try { cancel("Stopped by controller"); } finally { if(clear)game.clearDuty(); }
                 requireNativeStopped(); return withOperationBudget(obj("stopped",true,"controlGeneration",generation));
             }
@@ -218,10 +219,9 @@ final class ControlSession {
                 if(!stopToken.equals(string(p,"stopToken"))) throw error("FORBIDDEN","Wrong host stop token");
                 return game.watch();
             case "guard": {
-                if(!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree("guard-duty"))) throw error("UNSUPPORTED","Guard duty is not available");
-                if(Protocol.generation(p)!=generation)throw error("STALE_CONTROL","Control generation changed before guard configuration");
+                if(!game.hello().getAsJsonArray("capabilities").contains(JSON.toJsonTree("guard-duty-fenced"))) throw error("UNSUPPORTED","Guard duty is not available");
                 boolean off=p.has("off")&&bool(p,"off");
-                acceptGuardRevision(p);
+                if(!acceptGuardRevision(p))throw error("CANCELLED","Guard request was superseded by a newer setting or stop");
                 // Off withdraws intent immediately, but cannot acknowledge completion inside a native write.
                 if(!off)requireNativeStopped();
                 JsonObject result=game.guard(p);

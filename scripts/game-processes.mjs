@@ -2,7 +2,7 @@
 // - 世界开着：控制模组的连接文件能问通 hello（gameOnline，由调用方传入）。
 // - 进程：游戏还在启动、加载模组或停在主菜单时连接文件还不存在，所以再看 Windows 上有没有
 //   java/javaw 进程的命令行带着这个游戏目录（启动器传 --gameDir；服务器没有这个参数，就看命令行里是否出现完整目录）。
-// - 查不了进程（没有 pwsh、超时、输出不是 JSON）时状态是 unknown，调用方按「可能还在运行」处理，不当作没在运行。
+// - 查不了进程（pwsh 和 powershell.exe 都不能用、超时、输出不是 JSON）时状态是 unknown，调用方按「可能还在运行」处理，不当作没在运行。
 import { execFile } from 'node:child_process';
 
 /** 比较用的目录写法：去掉引号和结尾斜杠，统一斜杠，小写（Windows 路径不分大小写）。 */
@@ -29,12 +29,21 @@ export function commandLineUsesDir(cmd, gameDir) {
   return false;
 }
 
-const PS_LIST = "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('javaw.exe','java.exe') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
+// 输出按 UTF-8：控制台默认是系统代码页（中文系统是 GBK），带中文的游戏目录会被 Node 读成乱码而对不上。
+const PS_LIST = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('javaw.exe','java.exe') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
 
-/** 列出 java/javaw 进程（pid 和命令行）。查不了就 reject。 */
-export function javaProcesses({ timeoutMs = 8000 } = {}) {
+/** 列出 java/javaw 进程（pid 和命令行）。先用 pwsh；没装 PowerShell 7 的电脑（Windows 自带的只有 5.1）用 powershell.exe；都查不了就 reject。 */
+export async function javaProcesses({ timeoutMs = 8000, shells = ['pwsh', 'powershell.exe'] } = {}) {
+  let last;
+  for (const shell of shells) {
+    try { return await listWith(shell, timeoutMs); } catch (e) { last = e; }
+  }
+  throw last || new Error('无法查询进程列表');
+}
+
+function listWith(shell, timeoutMs) {
   return new Promise((resolve, reject) => {
-    execFile('pwsh', ['-NoProfile', '-NonInteractive', '-Command', PS_LIST], { timeout: timeoutMs, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+    execFile(shell, ['-NoProfile', '-NonInteractive', '-Command', PS_LIST], { timeout: timeoutMs, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, stdout) => {
       if (err) return reject(new Error('无法查询进程列表'));
       const text = String(stdout ?? '').trim();
       if (!text) return resolve([]);

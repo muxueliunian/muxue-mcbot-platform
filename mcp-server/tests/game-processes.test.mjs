@@ -52,8 +52,14 @@ test('提示文字：世界、加载中（进程）、查不了、服务器各�
   assert.equal(runMessage('off'), '');
 });
 
-test('真实进程查询能跑通（pwsh 输出能解析成数组）', async () => {
+test('真实进程查询能跑通（pwsh 输出能解析成数组）', { skip: process.platform !== 'win32' }, async () => {
   const list = await javaProcesses();
   assert.ok(Array.isArray(list));
   for (const p of list) assert.equal(typeof p.commandLine, 'string');
+});
+
+test('没装 pwsh 时改用 Windows 自带的 powershell.exe；都不能用时 reject', { skip: process.platform !== 'win32' }, async () => {
+  const list = await javaProcesses({ shells: ['mcbot-no-such-shell', 'powershell.exe'] });
+  assert.ok(Array.isArray(list));
+  await assert.rejects(javaProcesses({ shells: ['mcbot-no-such-shell'] }));
 });

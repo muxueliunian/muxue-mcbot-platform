@@ -25,6 +25,12 @@ final class ModAdaptersTest {
     private static boolean hintRefusedFrozen(String id,String text){
         try { McbotApi.registerHint(id,text);return false; } catch(IllegalStateException frozen) { return true; }
     }
+    private record FakeSeat(String id,boolean answer,boolean throwing) implements SeatAdapter {
+        public boolean installed() {return true;}
+        public boolean seat(BlockState state) {if(throwing)throw new IllegalStateException("broken");return answer;}
+        public boolean occupied(net.minecraft.server.level.ServerLevel level,net.minecraft.core.BlockPos position) {return false;}
+        public boolean seatEntity(net.minecraft.world.entity.Entity entity) {return answer;}
+    }
     private record FakeContainer(String id,boolean installed) implements ContainerAdapter {
         public boolean block(BlockState state){return false;}
         public boolean menu(AbstractContainerMenu menu){return false;}
@@ -165,8 +171,17 @@ final class ModAdaptersTest {
         boolean nullText=false;
         try { McbotApi.registerHint("null:hint",null); } catch(NullPointerException missing) { nullText=true; }
         check(nullText,"null text refused");
+        // Seats: same id rules; dispatch by the adapter that says yes; one that throws is no match
+        McbotApi.registerSeat(new FakeSeat("testmod:seat",true,false));
+        boolean seatDuplicate=false;
+        try { McbotApi.registerSeat(new FakeSeat("testmod:seat",true,false)); } catch(IllegalArgumentException duplicate) { seatDuplicate=true; }
+        check(seatDuplicate,"a seat id cannot be registered twice");
         McbotApi.Registered registered=McbotApi.freeze();
         check(registered.containers().size()==1&&registered.interactions().size()==1,"freeze returns what add-ons registered");
+        check(registered.seats().size()==1&&new McbotApi.Registered(List.of(),List.of(),List.of(),List.of(),List.of(),List.of(),List.of()).seats().isEmpty(),"freeze returns the registered seats; the older shapes have none");
+        SeatAdapter yes=new FakeSeat("a:yes",true,false),brokenSeat=new FakeSeat("b:broken",true,true);
+        check(ModAdapters.seat(List.of(new FakeSeat("a:no",false,false),yes),null)==yes&&ModAdapters.seat(List.of(brokenSeat,yes),null)==yes&&ModAdapters.seat(List.of(brokenSeat),null)==null&&ModAdapters.seat(List.of(),null)==null,"seat dispatch: first adapter that says yes; one that throws is skipped; none gives null");
+        check(!ModAdapters.seatEntity(List.of(yes),null),"no entity is never a seat entity");
         check(registered.hints().equals(List.of(new McbotApi.Hint("testmod:hint","Open the crate with open-container. Then take items."),
             new McbotApi.Hint("ghost:hint","describes a mod that is not installed"),new McbotApi.Hint("edge:hint","b".repeat(McbotApi.HINT_MAX)))),
             "hints are kept in order with control and format characters turned into single spaces");

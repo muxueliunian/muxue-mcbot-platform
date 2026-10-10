@@ -57,6 +57,10 @@ final class PotRulesTest {
         check(!PotRules.takeOutConsistent(done, done), "pot still full is not a success");
         check(PotRules.STIR.heldDamageAllowed() && !PotRules.ADD_OIL.heldDamageAllowed() && PotRules.ADD_OIL.properties().contains("has_oil"), "fixed envelopes");
         check(McbotKaleidoscopeCookery.HINT.length()<=com.mcbot.servercontrol.api.McbotApi.HINT_MAX&&McbotKaleidoscopeCookery.HINT.chars().noneMatch(Character::isISOControl),"usage hint fits the core limit as plain text");
+        check(SeatRules.seatBlock("kaleidoscope_cookery:chair_oak", SeatRules.CHAIR_CLASS) && SeatRules.seatBlock("kaleidoscope_cookery:cook_stool_birch", SeatRules.STOOL_CLASS), "chairs and cook stools are seats");
+        check(!SeatRules.seatBlock("kaleidoscope_cookery:pot", PotAccess.BLOCK_CLASS) && !SeatRules.seatBlock("minecraft:oak_stairs", "net.minecraft.world.level.block.StairBlock"), "pots and vanilla stairs are not seats");
+        check(!SeatRules.seatBlock("othermod:chair", SeatRules.CHAIR_CLASS) && !SeatRules.seatBlock("kaleidoscope_cookery:chair_oak", SeatRules.CHAIR_CLASS + "Sub") && !SeatRules.seatBlock(null, SeatRules.CHAIR_CLASS), "another namespace or an unverified class is no seat");
+        check(SeatRules.seatEntity(SeatRules.SIT_ENTITY_CLASS) && !SeatRules.seatEntity("net.minecraft.world.entity.vehicle.Boat"), "only the verified SitEntity is a seat entity");
         System.out.println("PotRulesTest: " + checks + " checks passed (pot rules on summaries; no Minecraft launch)");
     }
 }

@@ -18,6 +18,7 @@ public final class McbotKaleidoscopeCookery {
 
     public McbotKaleidoscopeCookery() {
         PotInteractions.all().forEach(McbotApi::registerInteraction);
+        McbotApi.registerSeat(SeatAccess.INSTANCE);
         McbotApi.registerHint("kaleidoscope_cookery:hint", HINT);
     }
 }

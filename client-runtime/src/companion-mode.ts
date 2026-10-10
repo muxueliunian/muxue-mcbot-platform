@@ -32,6 +32,8 @@ export interface CompanionState {
   guardEnabled?: boolean;
   /** Set while the follow/wait steps aside for a tool or reflex (state stays paused): the name of what is using the body. It is picked up again by itself. */
   suspendedFor?: string;
+  /** The body sat down (sit): the follow/wait is over and the standing guard duty, if any, stays. Gone from the next state after stand-up or a new follow/wait. */
+  seated?: boolean;
 }
 /** Held while a tool or reflex uses the body; release lets the follow/wait pick up again once nothing else is running, hold keeps it paused for good (until resume). */
 export interface YieldLease { release(): Promise<void>; hold(): void }
@@ -757,6 +759,37 @@ export class CompanionMode {
       this.publish({ state: 'stopped', reason: message });
     } finally { this.finishChange(owner); }
     return this.snapshot();
+  }
+  /**
+   * The body sat on a seat (sit succeeded): the follow/wait is over, as when the player asks to sit, but protection is a
+   * standing duty and stays (the server stands the body up for a fight and does not sit it back down). What is left of the
+   * posture is the guard if one is held, else nothing; a later wait/follow is a new request. Nothing here moves the body.
+   */
+  async seatedDown(): Promise<CompanionState> {
+    if (this.changing || this.stopping || this.stopUnconfirmed) throw new BodyError('BUSY', '陪伴模式正在切换或停止尚未确认，请等待');
+    const message = `已坐下，跟随／等待结束${this.dutyMode() && this.duty ? '，保护保留' : ''}；站起来后要再跟随需要新的 follow。`;
+    if (this.intent) {
+      if (['following', 'waiting'].includes(this.value.state)) await this.stop(message);
+      else {
+        const owner = this.beginChange();
+        try {
+          ++this.epoch; this.intent = undefined; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
+          this.terminal = undefined; this.pickup = undefined; this.mining = undefined;
+          if (this.childActive) { this.gather.cancel(); this.childActive = false; }
+          this.release();
+          this.publish({ state: 'stopped', reason: message });
+        } finally { this.finishChange(owner); }
+      }
+      this.recordPosture(!(this.dutyMode() && this.duty));
+    }
+    this.publish({ ...this.value, seated: true });
+    return this.snapshot();
+  }
+  /** The body is standing again (stand-up, or the guard got it up): only the sitting mark goes; nothing is resumed. */
+  stoodUp(): void {
+    if (!this.value.seated) return;
+    const { seated: _gone, ...rest } = this.value;
+    this.publish(rest);
   }
   /** Stop what other work left on the body (a cancelled task), keeping a follow that is stepping aside. A follow that is running has nothing else to stop. */
   async stopWork(): Promise<{ stopped: true }> {

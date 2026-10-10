@@ -76,7 +76,7 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
   const returnedSeqs = new Set<number>();
   const currentChat = (chat: Observation['chat']) => options.chatFloor === undefined ? chat : chat.filter(line => line.seq > options.chatFloor!);
   /** Tools that use the body. A running follow/wait steps aside for them (state paused, suspendedFor = the tool) and picks up again by itself once nothing is running. */
-  const bodyTools = new Set(['prepare-item', 'eat-food', 'pillar-up', 'pillar-down', 'sleep-in-bed', 'wake-up', 'emote', 'craft-item', 'smelt-item', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'use-bucket', 'machine-items', 'breed-animals', 'hunt', 'build',
+  const bodyTools = new Set(['prepare-item', 'eat-food', 'pillar-up', 'pillar-down', 'sleep-in-bed', 'wake-up', 'sit', 'stand-up', 'emote', 'craft-item', 'smelt-item', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'use-bucket', 'machine-items', 'breed-animals', 'hunt', 'build',
     'travel-to', 'go-to-place', 'approach-container', 'container-list', 'container-withdraw', 'give-item', 'fetch-and-give', 'collect-items', 'gather-resources', 'use-item', 'equip-item', 'interact-block',
     'look-at', 'move-to-position', 'follow-player', 'approach-player', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item']);
   const withCompanionStepAside = async (name: string, run: () => Promise<unknown>): Promise<unknown> => {
@@ -161,7 +161,11 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       if (args.mining && !body.hello.capabilities.includes('companion-mining')) throw new BodyError('UNSUPPORTED', '身体未声明持续陪挖保护，未降级为普通跟随');
       tasks.assertIdle(); return companion.request(args as CompanionRequest);
     });
-    register('get-companion-mode', 'Read the current persistent companion mode without starting, resuming or stopping any action.', {}, async () => companion.read());
+    register('get-companion-mode', 'Read the current persistent companion mode without starting, resuming or stopping any action.', {}, async () => {
+      // A fight may have got the body up since sit; the server observation is the authority on sitting.
+      if (companion.snapshot().seated && serverObserved) { try { if ((await body.observe()).sitting === false) companion.stoodUp(); } catch { /* the stale mark only costs a wrong hint */ } }
+      return companion.read();
+    });
   }
   if (serverObserved && body.lookAround && body.hello.capabilities.includes('look-around')) register('look-around', `Read-only summary of loaded surroundings up to 32 blocks (8 below/above): players, creatures (hostile first), dropped items, and notable blocks with an open face (ores, logs, containers, beds, workstations, doors, crops, water/lava surfaces, spawners, portals), each with count and the nearest one's distance, compass direction, height difference and line of sight. Also biome, time phase, weather, open sky and light. Buried blocks are not reported. Use discover-resources/discover-containers for actionable targets.${equipment ? ' Each player, and the nearest of each creature kind, carries equipment (held and worn items, same format as get-status).' : ''}`, {
     radius: z.number().int().min(8).max(32).default(32),
@@ -222,6 +226,29 @@ export function createMcpServer(rawBody: Body, events: EventJournal, options: { 
       return operationResult(await body.act('sleep-in-bed', args));
     });
     register('wake-up', 'Get out of bed now. Succeeds when already awake.', {}, async () => operationResult(await body.act('wake-up', {})));
+  }
+  if (serverObserved && body.hello.capabilities.includes('sit')) {
+    // The sit is over when the body is observed riding a seat; then the follow/wait ends (protection stays) whichever way the result arrives.
+    if (companion) events.onOperation(operation => {
+      // seatedDown refuses (BUSY) while the companion is mid-change, e.g. the follow picking up again after stepping aside; wait it out rather than leave the follow running under a seated body.
+      if (operation.name === 'sit' && operation.status === 'succeeded') void (async () => {
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try { await companion.seatedDown(); return; }
+          catch (error) { if (!(error instanceof BodyError && error.code === 'BUSY')) return; await new Promise(resolve => setTimeout(resolve, 100)); }
+        }
+      })();
+      if (operation.name === 'stand-up' && operation.status === 'succeeded') companion.stoodUp();
+    });
+    register('sit', 'Walk to a free chair or stool within 8 blocks (or the block at x,y,z) and sit on it, like a player right-clicking it; the body rides the seat. Only seats an installed seat add-on knows count (for example Kaleidoscope Cookery chairs and cook stools); stairs and slabs never do, and with no such add-on you get NO_SEAT. Fails with SEAT_OCCUPIED, NO_SEAT, NO_PATH, OUT_OF_REACH or SIT_REFUSED. Success is confirmed only when the body is really riding the seat. Sitting ends a follow/wait (companion-mode shows seated); protection stays on, and a hostile creature close by gets you up to fight, and you stay standing afterwards. While seated only chatting, looking, emotes, inventory and eating work: every action that moves the body is refused with SEATED until stand-up. get-status shows sitting. running requires polling get-operation.', {
+      x: z.number().int().optional(), y: z.number().int().optional(), z: z.number().int().optional(), timeoutMs,
+    }, async args => {
+      if ([args.x, args.y, args.z].some(value => value === undefined) && [args.x, args.y, args.z].some(value => value !== undefined)) throw new BodyError('INVALID_ARGUMENT', 'x、y、z 要么都给，要么都不给');
+      tasks.assertIdle(); gather.assertIdle(); survival?.assertIdle();
+      return operationResult(await body.act('sit', args));
+    });
+  }
+  if (serverObserved && body.hello.capabilities.includes('stand-up')) {
+    register('stand-up', 'Get up from the seat now. Succeeds when already standing. After this, follow/wait is not resumed by itself: call companion-mode follow again if the player wants you with them.', {}, async () => operationResult(await body.act('stand-up', {})));
   }
   if (serverObserved && body.hello.capabilities.includes('emote')) {
     const gestures = body.hello.emotes?.builtin ?? [];

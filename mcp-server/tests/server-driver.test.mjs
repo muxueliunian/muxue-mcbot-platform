@@ -82,12 +82,12 @@ test('ServerBody 参数、提示与工具不继承旧进服/记忆路径',()=>{
   for(const tool of ['discover-containers','container-list','container-withdraw','give-item','fetch-and-give']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['approach-container','approach-player']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['companion-mode','get-companion-mode']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
-  for(const tool of ['discover-resources','gather-resources','collect-items','look-around','pillar-up','pillar-down','sleep-in-bed','wake-up','craft-item','smelt-item','travel-to','remember-place','list-places','forget-place','go-to-place','workstation-options','produce-item','modify-item','tend-crops','breed-animals','hunt','use-bucket']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
+  for(const tool of ['discover-resources','gather-resources','collect-items','look-around','pillar-up','pillar-down','sleep-in-bed','wake-up','sit','stand-up','craft-item','smelt-item','travel-to','remember-place','list-places','forget-place','go-to-place','workstation-options','produce-item','modify-item','tend-crops','breed-animals','hunt','use-bucket']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['get-survival-state','assess-tool','prepare-item','eat-food','set-reflexes','defend-self']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   assert.equal(CODEX_SERVER_TOOLS.includes('interact-block'),true);
   for(const tool of ['emote','equip-item','use-item']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
   for(const tool of ['build','list-blueprints','save-blueprint','machine-items']) assert.equal(CODEX_SERVER_TOOLS.includes(tool),true,tool);
-  assert.equal(CODEX_SERVER_TOOLS.length,66);
+  assert.equal(CODEX_SERVER_TOOLS.length,68);
 });
 
 test('持续陪伴只为受阻通知唤醒，普通状态变化不产生空闲回合',()=>{

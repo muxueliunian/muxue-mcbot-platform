@@ -24,7 +24,9 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.*;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import static com.mcbot.servercontrol.Protocol.*;
 
@@ -75,7 +77,11 @@ final class GuardCombat {
         float attack(Foe foe);
         boolean hasBow();
         boolean armBow();
-        /** Clear line of fire: the foe is visible and no player, pet or villager is near the arrow's path. */
+        /**
+         * An arrow can reach the foe: flown tick by tick (it arcs and drops), it meets the foe before any block, and no
+         * player, pet or villager is near its path. Tries the middle of the foe, then higher up (a foe behind a block
+         * edge may show only its head), and aims at the first that works.
+         */
         boolean clearShot(Foe foe);
         /** Ticks the bow has been drawn, or -1. */
         int drawing();
@@ -98,11 +104,21 @@ final class GuardCombat {
     private long engagedAt,lastHitAt;
     private int hits,kills,shots,retreats;
     private double damage;
+    /**
+     * Why the bow does not shoot, for the guard state and the server log: bow draws begun, why the last fight ended
+     * (lastEnd) and why the last draw was lowered before the arrow left (lastDrop). Nothing here decides anything.
+     */
+    private int draws,fightDraws,fightShots;
+    private String lastEnd,lastDrop;
+    private long loggedAt=Long.MIN_VALUE/2;
+    private static final org.slf4j.Logger LOGGER=com.mojang.logging.LogUtils.getLogger();
     GuardCombat(View view,Options options){this(view,options,new GuardExecution(()->true));}
     private GuardCombat(View view,Options options,GuardExecution execution){this.view=view;this.options=options;this.execution=execution;}
     String state(){return state;}
     JsonObject json() {
-        JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"options",options.json());
+        JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"draws",draws,"options",options.json());
+        if(lastEnd!=null)result.addProperty("lastEnd",lastEnd);
+        if(lastDrop!=null)result.addProperty("lastDrop",lastDrop);
         if(target!=null){result.addProperty("target",target.type());result.addProperty("targetId",target.id());}
         if(unarmed!=null)result.addProperty("unarmed",unarmed);
         return result;
@@ -130,34 +146,34 @@ final class GuardCombat {
         Foe boom=foes.stream().filter(f->f.explosionPreparing()&&f.distance()<BOOM_SAFE).min(Comparator.comparingDouble(Foe::distance)).orElse(null);
         if(boom!=null||retreating) {
             Foe from=boom!=null?boom:nearest;
-            if(from==null||from.distance()>12){settle();return false;}
+            if(from==null||from.distance()>12){settle("FOE_FAR");return false;}
             backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",permission);
             return true;
         }
         Foe chosen=choose(foes);
-        if(chosen==null){settle();return false;}
+        if(chosen==null){settle("NO_FOE");return false;}
         if(target==null||target.identity()!=chosen.identity())engagedAt=now;
         target=chosen;
         // A fight that lands nothing for a long time (the foe hides behind a wall, keeps out of reach) is let go.
-        if(now-engagedAt>STALE_FIGHT_MS&&now-Math.max(lastHitAt,engagedAt)>STALE_FIGHT_MS){noPath.put(chosen.identity(),now);settle();return false;}
+        if(now-engagedAt>STALE_FIGHT_MS&&now-Math.max(lastHitAt,engagedAt)>STALE_FIGHT_MS){noPath.put(chosen.identity(),now);settle("STALE");return false;}
         boolean melee=chosen.distance()<=MELEE_RANGE&&view.inReach(chosen);
         int drawn=view.drawing();
         if(!melee&&shouldShoot(chosen,drawn>=0)&&view.armBow()) {
             requireDrive(permission);view.stopMoving();view.lowerShield();
             if(!view.clearShot(chosen)) {
                 // Hold the draw while someone stands in the way; give up only after a long wait.
-                if(drawn>=0&&drawn<MAX_DRAW)view.draw(chosen);else view.cancelDraw();
+                if(drawn>=0&&drawn<MAX_DRAW)view.draw(chosen);else drop("NO_CLEAR_SHOT");
                 requireDrive(permission);state="aiming";return true;
             }
-            if(drawn<0)view.draw(chosen);
+            if(drawn<0){view.draw(chosen);draws++;}
             else if(drawn>=FULL_DRAW){view.release(chosen);shots++;lastHitFoe=chosen;lastHitAt=now;}
             else view.draw(chosen);
             requireDrive(permission);state="shooting";return true;
         }
-        requireDrive(permission);view.cancelDraw();
+        requireDrive(permission);drop(melee?"MELEE":!chosen.visible()?"NOT_VISIBLE":chosen.distance()<=MELEE_RANGE?"CLOSE":"NOT_BOW_TARGET");
         if(melee) {
             view.stopMoving();
-            if(!view.armMelee()){unarmed="NO_FREE_HAND";noPath.put(chosen.identity(),now);settle();return false;}
+            if(!view.armMelee()){unarmed="NO_FREE_HAND";noPath.put(chosen.identity(),now);settle("NO_FREE_HAND");return false;}
             unarmed=null;
             requireDrive(permission);
             if(view.cooledDown()) {
@@ -167,10 +183,10 @@ final class GuardCombat {
             } else if(options.shield()&&chosen.targetingSelf()&&view.armShield()){requireDrive(permission);view.raiseShield(chosen);}
             requireDrive(permission);state="fighting";return true;
         }
-        if(chosen.flying()){settle();return false;} // nothing to walk to; wait for it to swoop into reach
+        if(chosen.flying()){settle("FLYING");return false;} // nothing to walk to; wait for it to swoop into reach
         view.lowerShield();
         try {view.approach(chosen,companion,options.leash());}
-        catch(Protocol.Error blocked){noPath.put(chosen.identity(),now);view.stopMoving();settle();return false;}
+        catch(Protocol.Error blocked){noPath.put(chosen.identity(),now);view.stopMoving();settle("NO_PATH");return false;}
         requireDrive(permission);state="approaching";return true;
     }
     private boolean shouldShoot(Foe foe,boolean drawing) {
@@ -187,7 +203,7 @@ final class GuardCombat {
         return able.stream().min(Comparator.comparing((Foe f)->!f.targetingCompanion()).thenComparing(f->!f.targetingSelf()).thenComparingDouble(Foe::companionDistance)).orElse(null);
     }
     private void backOff(Foe from,Vec3 companion,String next,java.util.function.BooleanSupplier permission) {
-        view.cancelDraw();target=null;
+        drop(next.toUpperCase(java.util.Locale.ROOT));target=null;
         if(options.shield()&&view.armShield()){requireDrive(permission);view.raiseShield(from);}
         requireDrive(permission);
         try {view.retreat(retreatPoint(view.position(),from.position(),companion,options.leash()),companion,options.leash());}
@@ -204,9 +220,30 @@ final class GuardCombat {
         Vec3 leashed=point.subtract(flatCompanion);
         return leashed.horizontalDistance()<=leash-1?point:flatCompanion.add(new Vec3(leashed.x,0,leashed.z).normalize().scale(leash-1));
     }
-    private void settle(){view.cancelDraw();view.lowerShield();target=null;state="idle";}
-    void stop(){execution.interrupt();try{view.cancelDraw();view.lowerShield();}finally{view.stopMoving();target=null;state="idle";}}
+    private void settle(String why){drop(why);view.lowerShield();target=null;state="idle";ended(why);}
+    void stop(){execution.interrupt();try{drop("INTERRUPTED");view.lowerShield();}finally{view.stopMoving();target=null;state="idle";ended("INTERRUPTED");}}
+    /** Lower a drawn bow, remembering why. */
+    private void drop(String why){if(view.drawing()>=0)lastDrop=why;view.cancelDraw();}
+    /** A fight is over: one log line (at most every 10 s) when the bow was drawn and no arrow left. */
+    private void ended(String why) {
+        lastEnd=why;
+        if(draws>fightDraws&&shots==fightShots) {
+            long now=view.now();
+            if(now-loggedAt>=10_000){loggedAt=now;LOGGER.info("MCBOT guard: drew the bow {} times without loosing an arrow; the fight ended: {}; last draw lowered: {}",draws-fightDraws,why,lastDrop);}
+        }
+        fightDraws=draws;fightShots=shots;
+    }
 
+    /** Heights on a foe the bow may aim at, as fractions of its height: the middle first, then the chest, then the head. */
+    static final double[] AIM_HEIGHTS={0.5,0.75,0.92};
+    /** A full-power arrow's positions, tick by tick, from `from` along yaw/pitch (vanilla: move, then 0.99 drag and 0.05 gravity). */
+    static List<Vec3> arrowPath(Vec3 from,float yaw,float pitch,int ticks) {
+        double y=Math.toRadians(yaw),p=Math.toRadians(pitch);
+        Vec3 velocity=new Vec3(-Math.sin(y)*Math.cos(p),-Math.sin(p),Math.cos(y)*Math.cos(p)).scale(3);
+        List<Vec3> path=new ArrayList<>();path.add(from);Vec3 at=from;
+        for(int t=0;t<ticks;t++){at=at.add(velocity);path.add(at);velocity=new Vec3(velocity.x*0.99,velocity.y*0.99-0.05,velocity.z*0.99);}
+        return path;
+    }
     /** Full-power arrow pitch (Minecraft sign: negative looks up) that crosses `horizontal` blocks at `dy` above the launch point, or NaN. */
     static double arrowPitch(double horizontal,double dy) {
         double lo=Math.toRadians(-45),hi=Math.toRadians(45);
@@ -404,24 +441,57 @@ final class GuardCombat {
                 int slot=best(GuardCombat::bow,(a,b)->0);
                 return slot>=0&&hold(slot)&&!body.getProjectile(body.getMainHandItem()).isEmpty();
             }
+            /** Height on the foe the bow aims at (see AIM_HEIGHTS), chosen by the last clearShot. */
+            double aimHeight=0.5;
             public boolean clearShot(Foe foe) {
                 LivingEntity e=living(foe);
-                if(!body.hasLineOfSight(e))return false;
-                Vec3 from=body.getEyePosition(),to=e.getBoundingBox().getCenter();
-                Vec3 past=to.add(to.subtract(from).normalize().scale(4)); // an arrow that misses keeps flying
-                for(Entity other:body.serverLevel().getEntities(body,new AABB(from,past).inflate(2)))
-                    if(other!=e&&protectedEntity(other)&&segmentDistance(other.getBoundingBox().getCenter(),from,past)<other.getBbWidth()/2+1.2)return false;
-                return true;
+                for(double height:AIM_HEIGHTS)if(arrowReaches(e,height)){aimHeight=height;return true;}
+                return false;
+            }
+            /** Where vanilla looses the arrow from. */
+            Vec3 launch(){return body.getEyePosition().subtract(0,0.1,0);}
+            /** A point at `height` of the foe, led by its horizontal motion over the flight. */
+            Vec3 aimPoint(LivingEntity e,double height) {
+                Vec3 from=launch();AABB box=e.getBoundingBox();
+                Vec3 point=new Vec3((box.minX+box.maxX)/2,box.minY+box.getYsize()*height,(box.minZ+box.maxZ)/2);
+                double ticks=Math.sqrt(Math.pow(point.x-from.x,2)+Math.pow(point.z-from.z,2))/2.8;
+                return point.add(e.getDeltaMovement().x*ticks,0,e.getDeltaMovement().z*ticks);
+            }
+            /** Yaw and pitch that bring a full-power arrow to `point`, or null when it is out of range. */
+            float[] solution(Vec3 point) {
+                Vec3 from=launch();double dx=point.x-from.x,dz=point.z-from.z;
+                double pitch=arrowPitch(Math.sqrt(dx*dx+dz*dz),point.y-from.y);
+                return Double.isNaN(pitch)?null:new float[]{(float)Math.toDegrees(Math.atan2(-dx,dz)),(float)pitch};
+            }
+            /** Fly the arrow aimed at `height`: it must meet the foe before a block, and pass no protected entity, nor a little beyond in case it misses. */
+            boolean arrowReaches(LivingEntity e,double height) {
+                float[] aim=solution(aimPoint(e,height));
+                if(aim==null)return false;
+                List<Vec3> path=arrowPath(launch(),aim[0],aim[1],100);
+                AABB foe=e.getBoundingBox().inflate(0.3);
+                int reached=-1;
+                for(int i=1;i<path.size();i++) {
+                    Vec3 a=path.get(i-1),b=path.get(i);
+                    if(reached<0) {
+                        Optional<Vec3> meets=foe.clip(a,b);
+                        HitResult block=body.serverLevel().clip(new ClipContext(a,b,ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,body));
+                        boolean blocked=block.getType()!=HitResult.Type.MISS;
+                        if(meets.isPresent()&&(!blocked||a.distanceToSqr(meets.get())<=a.distanceToSqr(block.getLocation())))reached=i;
+                        else if(blocked)return false;
+                    }
+                    for(Entity other:body.serverLevel().getEntities(body,new AABB(a,b).inflate(2),o->o!=e&&protectedEntity(o))) {
+                        AABB near=other.getBoundingBox().inflate(1.0);
+                        if(near.contains(a)||near.clip(a,b).isPresent())return false;
+                    }
+                    if(reached>=0&&i>=reached+2)return true;
+                }
+                return reached>=0;
             }
             public int drawing(){return body.isUsingItem()&&body.getUseItem().getItem() instanceof BowItem?body.getTicksUsingItem():-1;}
             void aim(LivingEntity e) {
-                Vec3 eye=body.getEyePosition().subtract(0,0.1,0),centre=e.getBoundingBox().getCenter();
-                double ticks=Math.sqrt(Math.pow(centre.x-eye.x,2)+Math.pow(centre.z-eye.z,2))/2.8;
-                Vec3 lead=centre.add(e.getDeltaMovement().x*ticks,0,e.getDeltaMovement().z*ticks);
-                double dx=lead.x-eye.x,dz=lead.z-eye.z,horizontal=Math.sqrt(dx*dx+dz*dz);
-                double pitch=arrowPitch(horizontal,lead.y-eye.y);
-                float yaw=(float)Math.toDegrees(Math.atan2(-dx,dz));
-                body.setYRot(yaw);body.setYHeadRot(yaw);body.setXRot((float)(Double.isNaN(pitch)?-45:pitch));
+                float[] solved=solution(aimPoint(e,aimHeight));
+                if(solved==null){look(e.getEyePosition());body.setXRot(-45);return;}
+                body.setYRot(solved[0]);body.setYHeadRot(solved[0]);body.setXRot(solved[1]);
             }
             public void draw(Foe foe) {
                 aim(living(foe));

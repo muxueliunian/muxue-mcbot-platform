@@ -19,7 +19,9 @@ export interface GuardState { state: string; target?: string; targetId?: string;
   /** Guard duty only: who is protected, whether the duty can fight for them right now and why not. */
   player?: string; covering?: boolean; reason?: string;
   /** NO_FREE_HAND: a foe was given up because no verified weapon was there and the hand could not be emptied. */
-  unarmed?: string }
+  unarmed?: string;
+  /** Diagnosis only (guard duty): see GuardDutyState. */
+  draws?: number; lastEnd?: string; lastDrop?: string; lastBreak?: string }
 export interface CompanionState {
   state: 'idle' | 'following' | 'waiting' | 'paused' | 'blocked' | 'stopped';
   intent?: 'follow' | 'wait'; player?: string; distance?: number; operationId?: string;
@@ -33,6 +35,12 @@ export interface CompanionState {
 }
 /** Held while a tool or reflex uses the body; release lets the follow/wait pick up again once nothing else is running, hold keeps it paused for good (until resume). */
 export interface YieldLease { release(): Promise<void>; hold(): void }
+/**
+ * What the player asked the body to keep doing (follow, wait, protect), kept outside the process so a host that
+ * reconnects after a death or a closed game can tell the agent. Only an explicit end clears it (companion-mode stop,
+ * stop-action, the host on a player's stop); losing the body does not, nor does anything of the old follow restart by itself.
+ */
+export interface Posture { action: 'follow' | 'wait' | 'guard'; player?: string; guard: boolean }
 export interface CompanionRequest { action: 'follow' | 'wait' | 'pause' | 'resume' | 'stop' | 'guard'; player?: string; distance?: number; wander?: boolean; guard?: GuardOptions | boolean; pickup?: PickupOptions; mining?: MiningOptions; say?: string }
 /** Control itself is gone or cannot be trusted: the body is closed. */
 const controlLost = new Set(['WRONG_INSTANCE', 'STALE_CONTROL', 'LEASE_LOST', 'LEASE_EXPIRED', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'STOP_UNCONFIRMED', 'HOST_LOST', 'CLOSED']);
@@ -79,6 +87,11 @@ export class CompanionMode {
   private readonly leases = new Set<symbol>();
   /** True while finite work outside the body's own bookkeeping (container, gather, survival tasks) is running; set by the MCP layer. */
   busyProbe?: () => boolean;
+  /** Told each new standing posture, and null when one is explicitly ended (see Posture). */
+  onPosture?: (posture: Posture | null) => void;
+  private postureSaid?: string;
+  /** While an explicit end is under way, what is left of the posture on the way out (the guard after the follow) is not a new one. */
+  private endingPosture = 0;
   constructor(private readonly body: Body, private readonly events: EventJournal, gather?: GatherTasks, private readonly now = Date.now) { this.gather = gather ?? new GatherTasks(body, events, now); }
   snapshot(): CompanionState { return structuredClone({ ...this.value, ...(this.dutyMode() ? this.dutyView() : {}), ...(this.pickup ? { pickup: this.pickupState() } : {}), ...(this.mining ? { mining: this.miningState() } : {}) }); }
   /** The body keeps protection as its own standing duty (guard-duty) instead of inside the follow. */
@@ -86,7 +99,7 @@ export class CompanionMode {
   private dutyView(): Pick<CompanionState, 'guardEnabled' | 'guard'> {
     if (!this.duty) return { guardEnabled: false, guard: undefined };
     const live = this.dutyState;
-    return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}), ...(live.unarmed ? { unarmed: live.unarmed } : {}) }
+    return { guardEnabled: true, guard: live ? { state: live.state, ...(live.target ? { target: live.target } : {}), ...(live.targetId ? { targetId: live.targetId } : {}), hits: live.hits, kills: live.kills, shots: live.shots, retreats: live.retreats, damage: live.damage, player: live.player, covering: live.covering, ...(live.reason ? { reason: live.reason } : {}), ...(live.unarmed ? { unarmed: live.unarmed } : {}), ...(live.draws !== undefined ? { draws: live.draws } : {}), ...(live.lastEnd ? { lastEnd: live.lastEnd } : {}), ...(live.lastDrop ? { lastDrop: live.lastDrop } : {}), ...(live.lastBreak ? { lastBreak: live.lastBreak } : {}) }
       : { state: 'idle', hits: 0, kills: 0, shots: 0, retreats: 0, damage: 0, player: this.duty.player } };
   }
   private clearDutyState(): void {
@@ -158,8 +171,26 @@ export class CompanionMode {
     if (this.changing !== owner) return;
     this.changing = undefined; this.observationRevision++;
   }
+  /** The standing posture now; undefined when neither a follow/wait nor a guard duty is held (body lost, or never asked). */
+  private posture(): Posture | undefined {
+    const guard = this.dutyMode() ? !!this.duty : !!this.intent?.guard;
+    if (this.intent) return { action: this.intent.action, ...(this.intent.player ? { player: this.intent.player } : {}), guard };
+    if (this.dutyMode() && this.duty) return { action: 'guard', player: this.duty.player, guard: true };
+    return undefined;
+  }
+  /** A held posture is recorded when it changes; losing it is not (a death must not erase what the player asked), only an explicit end. */
+  private recordPosture(ended = false): void {
+    if (!ended && this.endingPosture) return;
+    const posture = ended ? null : this.posture();
+    if (posture === undefined || !this.onPosture) return;
+    const said = JSON.stringify(posture);
+    if (said === this.postureSaid) return;
+    this.postureSaid = said;
+    try { this.onPosture(posture); } catch { /* a lost record only costs the reconnect hint */ }
+  }
   private publish(value: CompanionState, notify = true): void {
     this.value = value;
+    this.recordPosture();
     if (!['blocked', 'stopped'].includes(value.state)) this.terminal = undefined;
     if (notify) this.events.add('companion_state', JSON.stringify(value), value.operationId);
   }
@@ -367,6 +398,7 @@ export class CompanionMode {
     if (request.guard === false) {
       await this.say(epoch, request.say); this.check(epoch); this.checkDuty(revision);
       await this.setDuty(undefined, undefined, undefined, revision);
+      if (!this.intent) this.recordPosture(true);
       this.publish({ ...this.value, ...this.dutyView() }); return this.snapshot();
     }
     const player = request.player ?? (this.intent?.action === 'follow' ? this.intent.player : this.duty?.player);
@@ -381,7 +413,7 @@ export class CompanionMode {
   }
   /** An off fences in-flight setup too; absence of a local acknowledgement is not absence of a server duty. */
   async dropGuard(): Promise<void> {
-    if (this.dutyMode()) { await this.setDuty(); this.publish({ ...this.value, ...this.dutyView() }); }
+    if (this.dutyMode()) { await this.setDuty(); if (!this.intent) this.recordPosture(true); this.publish({ ...this.value, ...this.dutyView() }); }
   }
   private observeDuty(state: Observation): void {
     if (!this.duty) return;
@@ -608,6 +640,7 @@ export class CompanionMode {
   stop(reason?: string, options: StopOptions = {}): Promise<{ stopped: true }> {
     if (this.stopping) return options.clearGuard ? this.stopping.then(() => this.stop(reason, options)) : this.stopping;
     const dutyRevision = options.clearGuard ? ++this.dutyRevision : undefined;
+    if (options.clearGuard) { this.endingPosture++; this.recordPosture(true); }
     ++this.epoch; this.intent = undefined; this.suspendedFor = undefined; this.awaitingPlayer = false; this.leases.clear();
     const owner = this.beginChange();
     const token = this.token, miningState = this.mining ? { ...this.miningState(), active: false, disabledReason: 'STOPPED' } : undefined;
@@ -624,7 +657,7 @@ export class CompanionMode {
         if (dutyRevision === this.dutyRevision) this.clearDutyState();
         this.gather.stopped(); this.stopUnconfirmed = false; this.release(token); return result;
       } catch (error) { this.stopUnconfirmed = true; throw error; }
-    })().finally(() => { if (this.stopping === stopping) this.stopping = undefined; this.finishChange(owner); });
+    })().finally(() => { if (options.clearGuard) this.endingPosture--; if (this.stopping === stopping) this.stopping = undefined; this.finishChange(owner); });
     this.stopping = stopping;
     return stopping;
   }
@@ -695,6 +728,11 @@ export class CompanionMode {
   }
   /** companion-mode stop: the follow/wait is over; whatever else is running keeps going. */
   private async endCompanion(say?: string): Promise<CompanionState> {
+    this.endingPosture++;
+    try { this.recordPosture(true); return await this.endCompanionNow(say); }
+    finally { this.endingPosture--; }
+  }
+  private async endCompanionNow(say?: string): Promise<CompanionState> {
     const revision = ++this.dutyRevision, epoch = this.epoch;
     const guarded = this.dutyMode() && !!this.duty;
     const message = `跟随／等待已结束（companion-mode stop）${guarded ? '，保护也关了' : ''}；正在做的其他任务不受影响。要再跟随需要新的 follow。`;

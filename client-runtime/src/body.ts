@@ -109,6 +109,8 @@ export interface GuardDutyState {
   state: string; target?: string; targetId?: string; hits: number; kills: number; shots: number; retreats: number; damage: number;
   /** NO_FREE_HAND: the last foe was given up because no verified weapon was there and the hand could not be emptied (hotbar and main inventory full). */
   unarmed?: string;
+  /** Diagnosis only: bow draws begun, why the last fight ended, why the last draw was lowered before loosing, why the duty last broke off a fight. */
+  draws?: number; lastEnd?: string; lastDrop?: string; lastBreak?: string;
 }
 export type GuardDutyRequest = { player: string; expectedEntityId: string; options?: GuardOptions } | { off: true };
 export interface ActionArguments {

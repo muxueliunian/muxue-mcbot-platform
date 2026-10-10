@@ -39,10 +39,18 @@ public final class NativeRespawn {
         }
     }
 
+    /**
+     * Still the body vanilla can respawn: in its level, or dead and taken out of it. Vanilla removes a dead player from
+     * its level (KILLED) a second after death but keeps it in the player list until PERFORM_RESPAWN replaces it.
+     */
+    static boolean present(ServerPlayer player) {
+        return !player.isRemoved()||player.getRemovalReason()==net.minecraft.world.entity.Entity.RemovalReason.KILLED&&!player.isAlive();
+    }
+
     static BodyPlayer perform(BodyPlayer previous) {
         if(previous==null||previous.getHealth()>0||previous.isAlive()) throw error("INVALID_ARGUMENT","Respawn requires a dead body");
         if(!(previous.connection instanceof VirtualGameListener listener)) throw error("WRONG_PLAYER","Body no longer has its virtual listener");
-        if(previous.isRemoved()||!listener.getConnection().isConnected()) throw error("WORLD_CHANGED","Dead body connection was removed; reload its saved state explicitly");
+        if(!present(previous)||!listener.getConnection().isConnected()) throw error("WORLD_CHANGED","Dead body connection was removed; reload its saved state explicitly");
         previous.stopInput();
         listener.clearPendingMotion();
         // Vanilla chooses bed/anchor/world spawn, restores inventory under gamerules,

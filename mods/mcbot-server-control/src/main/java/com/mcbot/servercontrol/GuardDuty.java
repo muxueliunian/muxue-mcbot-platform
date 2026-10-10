@@ -58,6 +58,8 @@ final class GuardDuty {
     private final View view;
     private final Combat combat;
     private boolean covering,fighting,driving,stopped;
+    /** Why the duty last took the body back in the middle of a fight (TOO_FAR, BUSY, PLAYER_AWAY, NO_CONTROL); diagnosis only. */
+    private String lastBreak;
     private long executionRevision;
     private String reason;
     private long fightStart,busyMs,backSince;
@@ -73,7 +75,7 @@ final class GuardDuty {
     boolean tick(boolean interruptible,boolean idle) {
         if(stopped)return false;
         long accepted=executionRevision;
-        if(!view.mayDrive()){release();covering=false;reason="NO_CONTROL";return false;}
+        if(!view.mayDrive()){if(fighting)lastBreak="NO_CONTROL";release();covering=false;reason="NO_CONTROL";return false;}
         Vec3 companion=view.companion();
         if(companion==null)return uncovered("PLAYER_AWAY");
         if(view.position().distanceTo(companion)>ENGAGE_RANGE)return uncovered("TOO_FAR");
@@ -101,6 +103,7 @@ final class GuardDuty {
         return false;
     }
     private boolean uncovered(String why) {
+        if(fighting)lastBreak=why;
         release();covering=false;reason=why;return false;
     }
     /** Hand the body back now: an ongoing fight or walk back ends (its time still counts toward busyMs). */
@@ -112,6 +115,15 @@ final class GuardDuty {
     }
     private void endBack(){back=null;driving=false;view.stopWalking();}
     /** The body was stopped (any stop): drop the fight and the walk back, keep the duty. */
+    /**
+     * Whether nothing else holds the body for this tick: no survival action (eating, defending), no synchronous native
+     * write, not asleep, no open menu, and no item in use, unless the fight itself is using it. A bow is drawn over twenty
+     * ticks and a shield held up for as long as needed: counting the fight's own draw as "busy" took the body back the
+     * tick after every draw, so no arrow ever left (2026-10-11 playtest: the bow "flickered").
+     */
+    static boolean bodyFree(boolean survivalBusy,boolean nativeWrite,boolean sleeping,boolean usingItem,boolean fightDriving,boolean menuOpen) {
+        return !survivalBusy&&!nativeWrite&&!sleeping&&!menuOpen&&(!usingItem||fightDriving);
+    }
     void interrupt(){executionRevision++;boolean wasFighting=fighting;try{release();}finally{if(!wasFighting)combat.stop();}}
     /** Turned off or the lease ended. */
     void stop(){stopped=true;interrupt();}
@@ -123,7 +135,7 @@ final class GuardDuty {
     JsonObject json() {
         JsonObject result=combat.json();
         result.addProperty("enabled",true);result.addProperty("player",player);result.addProperty("entityId",uuid.toString());
-        result.addProperty("covering",covering);if(reason!=null)result.addProperty("reason",reason);
+        result.addProperty("covering",covering);if(reason!=null)result.addProperty("reason",reason);if(lastBreak!=null)result.addProperty("lastBreak",lastBreak);
         result.addProperty("returning",back!=null);result.addProperty("busyMs",busyMs());
         return result;
     }

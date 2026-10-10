@@ -42,12 +42,20 @@ async function kill(){
   const other=await wire('claim',{instanceId:dead.instanceId,worldId:connection.worldId,username:connection.username,controllerId:randomUUID()});
   check('claim alone cannot revive dead role',!other.ok&&other.error?.code==='DEAD_BODY',{code:other.error?.code});
   await body.close();body=undefined;
-  return{old,dead};
+  // Past vanilla's death animation (20 ticks) the dead player is removed from its level (KILLED) but stays listed:
+  // the respawn must still happen in place, without the body logging out and back in.
+  await delay(3000);
+  const death=(await rpc('hello')).lastDeath;
+  check('hello reports how and where the body died',typeof death?.message==='string'&&death.message.length>0&&Number.isFinite(death.position?.x),death);
+  const logAt=(await readFile(resolve(serverDir,'logs/latest.log'),'utf8')).length;
+  return{old,dead,logAt};
 }
 async function respawn(label,killed){
   const before=await fixtureState();
   const result=await ServerBody.respawn({connection,worldId:connection.worldId,username:connection.username,expectedSessionId:killed.dead.sessionId});
   evidence.respawns.push({label,result});
+  const logged=(await readFile(resolve(serverDir,'logs/latest.log'),'utf8')).slice(killed.logAt);
+  check(`${label}: respawned in place a few seconds after death, no logout and login`,!/MCBOT server body removed|Claude left the game|Claude joined the game/.test(logged),{logged:logged.slice(0,2000)});
   check(`${label}: native result and new scope`,result.respawned&&result.connected&&result.sessionId!==killed.dead.sessionId&&!('leaseId'in result));
   const replay=await wire('respawn',{instanceId:killed.dead.instanceId,worldId:connection.worldId,username:connection.username,sessionId:killed.dead.sessionId});
   check(`${label}: old respawn request cannot repeat`,!replay.ok&&replay.error?.code==='WORLD_CHANGED',{code:replay.error?.code});

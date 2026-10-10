@@ -421,9 +421,9 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 
 状态：①②已实现，离线测试通过，待隔离服和真实游戏实测；③只有设计。
 
-保护时骷髅、流浪者、沼骸等拉弓瞄准 Bot 或玩家，或有弹射物飞向 Bot，Bot 转向它、举副手的盾挡这一箭；射完放下，照常去打（近战冲上去，或用弓射）。不靠生物名单，分三层：
+保护时骷髅、流浪者、沼骸等拉弓瞄准 Bot，或有弹射物飞向 Bot，Bot 转向它、举副手的盾挡这一箭；射完放下，照常去打（近战冲上去，或用弓射）。不靠生物名单，分三层：
 
-- **① 原版判据（`Foe.charging`，`GuardCombat.windingUp`）**：怪自己的目标（`Mob.getTarget()`，不含“最近被打过”）是 Bot 或被保护的玩家，并且手里的东西在蓄力——正在使用的物品是弓、弩、三叉戟（物品类是`ProjectileWeaponItem`，或使用动画是 BOW／CROSSBOW／SPEAR，模组武器只要沿用这些就算），或者手上拿着已装填的弩（`CrossbowItem.isCharged`，弩装填完举着瞄准的那段）。不看生物名，也不要求怪实现`RangedAttackMob`／`CrossbowAttackMob`。还要看得见 Bot（`visible`），隔着墙拉弓不算。进入`foes()`的条件没改（玩家身边`radius`格内，或打玩家／Bot 的怪，打 Bot 的要在 8 格内），所以离玩家远、离 Bot 又超过 8 格的瞄准者靠②。
+- **① 原版判据（`Foe.charging`，`GuardCombat.windingUp`）**：怪自己的目标（`Mob.getTarget()`，不含“最近被打过”）是 Bot，并且手里的东西在蓄力——正在使用的物品是弓、弩、三叉戟（物品类是`ProjectileWeaponItem`，或使用动画是 BOW／CROSSBOW／SPEAR，模组武器只要沿用这些就算），或者手上拿着已装填的弩（`CrossbowItem.isCharged`，弩装填完举着瞄准的那段）。不看生物名，也不要求怪实现`RangedAttackMob`／`CrossbowAttackMob`。还要看得见 Bot（`visible`），隔着墙拉弓不算。进入`foes()`的条件没改（玩家身边`radius`格内，或打玩家／Bot 的怪，打 Bot 的要在 8 格内），所以离玩家远、离 Bot 又超过 8 格的瞄准者靠②。
 - **② 来袭弹射物兜底（`GuardCombat.View.incoming`、`ticksToHit`）**：每个游戏刻查 Bot 身边`BOW_MAX`（24）格内的`Projectile`，按当前速度逐 tick 推算（箭按原版每 tick 先移动再乘 0.99 阻力、减 0.05 重力，其他直线），`SHIELD_LEAD`（10）tick 内会不会进入 Bot 的碰撞箱（外扩 0.3，和射箭的判断同一个边距）；已经在碰撞箱里的（插在身上、擦过）不算。下面这些不算（`GuardCombat.blockable`）：Bot 自己射的（带`mcbot_body_projectile`标签或主人是玩家）、玩家射的、主人是宠物或不是怪物的傀儡等友方（起了名字的怪物仍算敌人）、药水（溅射无视盾）、穿透箭（原版`isDamageSourceBlocked`挡不了）。“来得及”：会在`SHIELD_DELAY`（5，盾举起这么多 tick 才挡得住）tick 之后到才举；盾已经举着的就不看这个。幽灵火球、烈焰人火球、潜影贝子弹等没有“拉弓”动作的，只能靠这一层。
 - **③ 附属模组登记（设计，没有写代码）**：见下。
 
@@ -437,7 +437,7 @@ R4增量：容器多步骤任务要求Body同时提供acquireTask/releaseTask。
 
 **③ 附属模组登记（设计，未实现）**：原版判据和弹射物兜底处理不了的两类，将来由附属模组登记，核心里不放名单：
 
-1. “这种怪在蓄力”：蓄力不是使用物品的怪（法师读条、自定义的蓄力标志）。附属提供只读判断`怪 → 是／否／不知道`，核心把“是”当作`charging`；目标是不是 Bot 或玩家仍由核心看`Mob.getTarget()`，附属不能自己声明谁是目标。
+1. “这种怪在蓄力”：蓄力不是使用物品的怪（法师读条、自定义的蓄力标志）。附属提供只读判断`怪 → 是／否／不知道`，核心把“是”当作`charging`；目标是不是 Bot 仍由核心看`Mob.getTarget()`，附属不能自己声明谁是目标。
 2. “这种弹射物盾挡不了”：魔法、穿盾的弹射物。附属提供只读判断`弹射物 → 盾能挡／挡不了／不知道`；“挡不了”的不进`Incoming`，Bot 不会白白站着挨打；“能挡”可补回核心默认认为挡不了的。
 
 形式：`McbotApi`加一个`registerRangedThreat`，规则和其他适配一样——id 与别的适配共用命名空间、服务器启动后冻结（`Registered`多一项，旧构造器补空列表）、`installed()`要检查被适配模组的确切版本（`versionsMatch`）、方法抛异常当作“不知道”、先登记的优先、答“不知道”回到上面两层、`hello.adapters`列出、`registerHint`可附用法说明、WebUI 插件页的「给 AI 用」开关同样管它（见[Mod 适配](mod_adapters.md)）。这次不写代码的理由：现在没有哪个附属模组需要它，登记接口要进公开的`McbotApi`（加了就得兼容），等第一个要适配的模组（有蓄力怪或穿盾弹射物）出现，按它的实际行为定形状比现在猜稳。

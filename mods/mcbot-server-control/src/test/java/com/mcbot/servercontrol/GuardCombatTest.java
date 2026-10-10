@@ -57,9 +57,9 @@ final class GuardCombatTest {
     static GuardCombat.Foe foe(Object id,String type,double distance,double companionDistance,boolean targetingCompanion,boolean ranged,boolean creeper,boolean boom) {
         return new GuardCombat.Foe(id,id.toString(),type,new Vec3(distance,64,0),distance,companionDistance,targetingCompanion,false,ranged,creeper,boom,false,true);
     }
-    /** A skeleton-like foe at `distance` from the body; `charging`: it has a bow drawn (or a crossbow loaded) at the companion or the body. */
+    /** A skeleton whose own target is the body (charging: drawing at it). One drawing at the player is not charging: see Foe. */
     static GuardCombat.Foe archer(Object id,double distance,boolean charging) {
-        return new GuardCombat.Foe(id,id.toString(),"minecraft:skeleton",new Vec3(distance,64,0),distance,distance-2,true,false,true,false,false,false,true,-1,0,charging);
+        return new GuardCombat.Foe(id,id.toString(),"minecraft:skeleton",new Vec3(distance,64,0),distance,distance-2,false,true,true,false,false,false,true,-1,0,charging);
     }
     static GuardCombat guard(FakeView view){return new GuardCombat(view,GuardCombat.Options.parse(JsonParser.parseString("true")));}
     static final Vec3 COMPANION=new Vec3(-2,64,0);

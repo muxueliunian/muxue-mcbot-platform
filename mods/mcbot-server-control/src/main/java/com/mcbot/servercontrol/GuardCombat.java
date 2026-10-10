@@ -39,7 +39,7 @@ import static com.mcbot.servercontrol.Protocol.*;
 /**
  * Companion guard, ticked by a running follow: fight hostiles that come near the companion player instead of
  * only hitting back. Melee in reach, a bow at range (never through a player or a pet), a raised shield while
- * waiting for the swing or backing off, facing a bow drawn at it or the player (or a projectile on its way) with the
+ * waiting for the swing or backing off, facing a bow drawn at it (or a projectile on its way) with the
  * shield up, and a retreat toward the player when health runs low. It runs (sprints) to a
  * foe and away from one, so a skeleton backing off cannot keep it at bow range. It never chases
  * beyond the leash around the player; when nothing needs fighting the follow carries on as before.
@@ -86,8 +86,8 @@ final class GuardCombat {
                int fuse,double blast,boolean charging) {
         /**
          * fuse: ticks until a swelling creeper explodes (-1 unknown); blast: how far its explosion hurts, in blocks (0 unknown);
-         * charging: a bow (or trident) in use, or a crossbow held loaded, with the body or the companion as its target
-         * (the mob's own target, not "recently hurt by").
+         * charging: a bow (or trident) in use, or a crossbow held loaded, with the body as its target (the mob's own target,
+         * not "recently hurt by"). One aimed at the player is not: the body's shield cannot cover them, so it goes for the foe.
          */
         Foe(Object identity,String id,String type,Vec3 position,double distance,double companionDistance,
             boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible,
@@ -169,7 +169,7 @@ final class GuardCombat {
     private int shields;
     private boolean shielded;
     private String lastShield;
-    /** What the shield is up against while it is held for a ranged threat (RANGED: a bow drawn or a crossbow loaded at us, PROJECTILE: something in flight), else null; and when a threat was last seen. */
+    /** What the shield is up against while it is held for a ranged threat (RANGED: a bow drawn or a crossbow loaded at the body, PROJECTILE: something in flight), else null; and when a threat was last seen. */
     private String holdWhy;
     private long threatAt=Long.MIN_VALUE/2;
     /** The lit creeper the body found no way to run from (its retreat was refused): shield instead of trying again. */
@@ -230,7 +230,7 @@ final class GuardCombat {
             backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",boom==null||retreating,permission);
             return true;
         }
-        // After the creeper (a blast is worse than an arrow), before choosing whom to fight: a bow drawn or a loaded crossbow at the body or the player, or a projectile about to arrive.
+        // After the creeper (a blast is worse than an arrow), before choosing whom to fight: a bow drawn or a loaded crossbow at the body, or a projectile about to arrive.
         if(shieldAgainstRanged(foes,now,permission)){state="shielding";return true;}
         Foe chosen=choose(foes);
         if(chosen==null){settle("NO_FOE");return false;}
@@ -315,7 +315,7 @@ final class GuardCombat {
     private void raised(){if(!shielded){shielded=true;shields++;}}
     private void lower(){view.lowerShield();shielded=false;holdWhy=null;}
     /**
-     * A bow drawn (or a trident, or a loaded crossbow) at the body or the player, or a projectile that reaches the body in
+     * A bow drawn (or a trident, or a loaded crossbow) at the body, or a projectile that reaches the body in
      * time to be blocked: stand still, put the bow down and face it with the shield up, then keep it up for SHIELD_HOLD_MS after
      * the last sighting. Not with a foe already in reach: the swing comes first (and the melee branch shields between swings).
      * No shield, or shield:false: nothing here, the fight goes on as before, with the reason in lastShield.
@@ -585,8 +585,9 @@ final class GuardCombat {
                     String type=BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
                     boolean ranged=entity instanceof RangedAttackMob||entity instanceof Blaze||entity instanceof Ghast||entity instanceof Shulker;
                     boolean flying=entity instanceof FlyingMob||entity instanceof Blaze||entity instanceof Vex;
-                    // Winding up a shot with the body or the player as its own target: judged from what it holds and uses, not from what it is called.
-                    boolean charging=mob!=null&&(mob.getTarget()==player||mob.getTarget()==body)&&windingUp(entity);
+                    // Winding up a shot with the body as its own target: judged from what it holds and uses, not from what it is called.
+                    // Aimed at the player instead, standing behind a shield protects nobody: the body goes for the foe as before.
+                    boolean charging=mob!=null&&mob.getTarget()==body&&windingUp(entity);
                     int fuse=-1;double blast=0;
                     if(entity instanceof Creeper creeper) {
                         // Vanilla Creeper: explodes when `swell` reaches maxSwell (30); getSwelling(1) is swell/(maxSwell-2). The blast hurts out to twice its radius (3, doubled when charged).

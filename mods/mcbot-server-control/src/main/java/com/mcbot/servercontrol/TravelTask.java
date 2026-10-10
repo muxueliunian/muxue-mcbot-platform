@@ -25,7 +25,7 @@ import static com.mcbot.servercontrol.Protocol.*;
  * a leg is tried straight toward the destination, turned left and right, then shorter. MAX_FAILURES legs in a row
  * without getting closer than ever before fail the walk. Damage stops it, as any walk.
  */
-final class TravelTask {
+final class TravelTask implements GuardDuty.Pausable {
     static final int LEG=28,MAX_FAILURES=12,MAX_SWIM_LEG=16;
     // Wide turns walk along a cliff or back out of a dead end (a cave mouth under the hill) to find a way round.
     private static final double[] TURNS={0,35,-35,70,-70,100,-100,135,-135,0,50,-50};
@@ -34,7 +34,8 @@ final class TravelTask {
     private final ControlSession session;
     private final double x,z,tolerance;
     private final Double y;
-    private final long deadline;
+    private long deadline;
+    private final GuardDuty.Grace grace;
     private final Vec3 start;
     private NativeNavigation navigation;
     private Vec3 leg;
@@ -64,7 +65,8 @@ final class TravelTask {
         y=args.has("y")?bounded(args,"y",0,-2048,2048):null;
         tolerance=bounded(args,"tolerance",2,1,8);
         if(horizontal(player.position())>2000)throw error("OUT_OF_REACH","travel-to is limited to 2000 blocks");
-        deadline=now()+(long)bounded(args,"timeoutMs",300_000,5_000,900_000);start=player.position();closest=horizontal(start);
+        long timeout=(long)bounded(args,"timeoutMs",300_000,5_000,900_000);
+        deadline=now()+timeout;grace=new GuardDuty.Grace(timeout);start=player.position();closest=horizontal(start);
     }
     private static long now(){return System.nanoTime()/1_000_000;}
     private double horizontal(Vec3 feet){return Math.hypot(x-feet.x,z-feet.z);}
@@ -242,5 +244,8 @@ final class TravelTask {
         if(++failures>MAX_FAILURES)throw error("NO_PATH","No way found toward the destination ("+why+")"
             +(shortOf!=null?String.format("; the walkable ground around comes only within %.0f blocks of it",shortOf):""));
     }
+    /** Walking a leg on the ground; not while swimming across water. */
+    @Override public boolean interruptible(){return swim==null&&player.onGround()&&!player.isInWater();}
+    @Override public void resumeAfterGuard(long fightMs){if(navigation!=null){navigation.reset();navigation.rebaseHealth();}deadline+=grace.grant(fightMs);}
     void stop(){if(navigation!=null)navigation.stop();navigation=null;swim=null;player.stopInput();}
 }

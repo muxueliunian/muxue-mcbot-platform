@@ -28,7 +28,7 @@ export const CODEX_SERVER_TOOLS = Object.freeze([
   'get-survival-state', 'assess-tool', 'prepare-item', 'eat-food', 'set-reflexes', 'defend-self',
   'interact-block', 'sleep-in-bed', 'wake-up',
   'craft-item', 'smelt-item', 'travel-to', 'remember-place', 'list-places', 'forget-place', 'go-to-place',
-  'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals', 'use-bucket', 'build', 'list-blueprints', 'save-blueprint', 'machine-items',
+  'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals', 'hunt', 'use-bucket', 'build', 'list-blueprints', 'save-blueprint', 'machine-items',
   'emote', 'equip-item', 'use-item',
 ]);
 

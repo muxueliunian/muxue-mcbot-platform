@@ -98,7 +98,7 @@ interface ServerOptions {
   plugins?: PluginPolicy;
 }
 export interface RespawnResult { respawned: true; connected: true; instanceId: string; sessionId: string; controlGeneration: number }
-const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'equip-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up', 'sleep-in-bed', 'wake-up', 'craft-item', 'smelt-item', 'travel-to', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals', 'use-bucket', 'machine-items', 'emote', 'set-appearance', 'build'];
+const implementedActions: ActionName[] = ['send-chat', 'look-at', 'move-to-position', 'follow-player', 'follow-companion', 'approach-container', 'approach-player', 'approach-resource', 'pickup-item', 'dig-block', 'place-block', 'open-container', 'click-slot', 'close-container', 'select-slot', 'drop-item', 'swap-inventory', 'eat-item', 'equip-item', 'defend-entity', 'retreat-from-entity', 'use-item-on-block', 'use-item', 'pillar-up', 'sleep-in-bed', 'wake-up', 'craft-item', 'smelt-item', 'travel-to', 'workstation-options', 'produce-item', 'modify-item', 'tend-crops', 'breed-animals', 'hunt', 'use-bucket', 'machine-items', 'emote', 'set-appearance', 'build'];
 const recoverable = new Set(['BUSY', 'INVALID_ARGUMENT', 'OUT_OF_REACH', 'UNSUPPORTED', 'UNLOADED', 'STALE_BLOCK', 'BLOCK_CHANGED', 'WRONG_CONTAINER', 'ITEM_CHANGED', 'UNKNOWN_OPERATION', 'OPERATION_CONFLICT', 'OPERATION_LIMIT', 'CONTAINER_CHANGED', 'REVISION_CHANGED', 'PROTECTED', 'CANCELLED', 'OBSTRUCTED', 'STALE_TARGET', 'BLOCKED', 'NO_PATH', 'PATH_BUDGET', 'TARGET_MOVED', 'NO_LINE_OF_SIGHT', 'PLAYER_NOT_VISIBLE', 'COMPANION_OUT_OF_RANGE', 'STALE_COMPANION', 'COMPANION_PROTECTED', 'COMPANION_MINING_CONFLICT', 'GAME_PAUSED']);
 /** One explicit server lease. No implicit claim, mutation retry or generation synchronization. */
 export class ServerBody implements Body {
@@ -153,7 +153,7 @@ export class ServerBody implements Body {
   private async connect(): Promise<void> {
     // The single plugin filter: everything below (and every tool registered from this.hello) sees the filtered hello.
     const hello = applyPluginPolicy(await this.readHello(), this.options.plugins);
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -260,9 +260,19 @@ export class ServerBody implements Body {
       this.assertActive();
       if (!observed.connected || observed.instanceId !== this.lease!.instanceId || observed.sessionId !== this.lease!.sessionId || observed.worldId !== this.options.worldId || observed.username !== this.options.username) throw new BodyError('WORLD_CHANGED', '角色或世界会话已改变，必须显式重新接管');
       if (revision === this.revision) this.checkGeneration(observed.controlGeneration);
+      this.countFights(observed.guard?.busyMs);
       return observed;
     } catch (error) { throw this.invalidate(error); }
   }
+  // busyMs belongs to one duty and starts again at 0 when a new one is set; fightMs adds them up.
+  private fights = 0;
+  private dutyBusy = 0;
+  private countFights(busyMs: number | undefined): void {
+    if (busyMs === undefined) { this.dutyBusy = 0; return; }
+    this.fights += busyMs >= this.dutyBusy ? busyMs - this.dutyBusy : busyMs;
+    this.dutyBusy = busyMs;
+  }
+  fightMs(): number { return this.fights; }
   private guardRevision = 0;
   async setGuard(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }> {
     this.assertActive();
@@ -435,6 +445,7 @@ export class ServerBody implements Body {
       'emote': z.object({ name: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), source: z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/).optional(), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), seconds: z.number().min(1).max(30).optional() }).strict(),
       'set-appearance': z.object({ source: z.string().regex(/^[a-z0-9_.-]+:[a-z0-9_/.-]+$/), choice: z.string().min(1).max(128) }).strict(),
       'build': z.object({ blocks: z.array(z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int(), state: z.string().min(1).max(256), rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional() }).strict()).min(1).max(4096), replace: z.enum(['none', 'soft', 'all']).optional(), dryRun: z.boolean().optional(), timeoutMs: z.number().int().min(10000).max(600000).optional() }).strict(),
+      'hunt': z.object({ type: identifier, count: z.number().int().min(1).max(16).optional(), survey: z.boolean().optional(), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), center: z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() }).strict().optional(), radius: z.number().int().min(1).max(16).optional(), lowHealth: z.number().min(2).max(18).optional(), timeoutMs: z.number().int().min(5000).max(180000).optional() }).strict().refine(args => !(args.player && args.center)),
       'breed-animals': z.object({ animal: identifier, survey: z.boolean().optional(), player: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), center: z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() }).strict().optional(), radius: z.number().int().min(1).max(16).optional(), food: identifier.optional(), pairs: z.number().int().min(1).max(8).optional(), timeoutMs: z.number().int().min(5000).max(300000).optional() }).strict().refine(args => !(args.player && args.center)),
       'drop-item': z.object({ ...guardedStack, expectedMaxStackSize: maxStackSize, count: z.number().int().min(1).max(64), recipient: z.string().regex(/^[A-Za-z0-9_]{1,16}$/).optional(), expectedEntityId: z.string().uuid().optional() }).refine(args => (args.recipient === undefined) === (args.expectedEntityId === undefined)),
     };

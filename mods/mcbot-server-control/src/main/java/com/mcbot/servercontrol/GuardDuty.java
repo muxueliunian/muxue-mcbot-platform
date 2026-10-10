@@ -28,6 +28,24 @@ final class GuardDuty {
         boolean walkBack(Vec3 spot);
         void stopWalking();
     }
+    /**
+     * A running task the duty may take the body from for a fight (docs/companion_state_design.md 5.2): only at moments
+     * when walking away and coming back is safe. While the duty fights the task is not ticked; afterwards it plans its
+     * way again from where the body stands and gets the fight's length added to its time limit.
+     */
+    interface Pausable {
+        /** True when the body may be taken for a fight right now (walking on the ground, nothing half done). */
+        boolean interruptible();
+        /** The fight that took `fightMs` is over: forget the route, count damage from now on, extend the time limit. */
+        void resumeAfterGuard(long fightMs);
+    }
+    /** Time a task's limit is pushed back by for fights: at most its own limit in all, so a task runs at most twice as long. */
+    static final class Grace {
+        private final long limit;
+        private long used;
+        Grace(long limit){this.limit=Math.max(0,limit);}
+        long grant(long fightMs){long granted=Math.max(0,Math.min(fightMs,limit-used));used+=granted;return granted;}
+    }
     /** What the duty needs from the fight: the {@link GuardCombat} methods, so tests can stand in for it. */
     interface Combat {
         boolean tick(Vec3 companion);

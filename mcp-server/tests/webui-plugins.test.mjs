@@ -64,6 +64,8 @@ function fixture() {
 test('读 jar：只取 [[mods]] 段的 mod id 和版本，${file.jarVersion} 用 MANIFEST 的版本，存储和压缩的条目都能读', () => {
   const toml = '[[mods]]\nmodId="sophisticatedbackpacks"\nversion="${file.jarVersion}"\n[[dependencies.sophisticatedbackpacks]]\nmodId="sophisticatedcore"\nversion="[1,)"\n[[mods]]\nmodId="second"\nversion=\'2.0\'\n';
   assert.deepEqual(modsInToml(toml, 'Manifest-Version: 1.0\r\nImplementation-Version: 3.25.77\r\n'), [{ modId: 'sophisticatedbackpacks', version: '3.25.77' }, { modId: 'second', version: '2.0' }]);
+  // Iron Furnaces 4.3.2 puts a comment after the table header.
+  assert.deepEqual(modsInToml('[[mods]] #mandatory\r\nmodId="ironfurnaces" #mandatory\r\nversion="4.3.2" #mandatory\r\n[[dependencies.ironfurnaces]] #optional\r\nmodId="neoforge"\r\n'), [{ modId: 'ironfurnaces', version: '4.3.2' }]);
   const dir = tmp();
   try {
     put(path.join(dir, 'a.jar'), zip({ 'x.txt': 'stored', 'META-INF/neoforge.mods.toml': 'deep' }));

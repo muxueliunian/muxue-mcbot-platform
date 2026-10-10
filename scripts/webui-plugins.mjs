@@ -62,7 +62,8 @@ export function modsInToml(toml, manifest = '') {
   let cur = null;
   for (const line of String(toml).split(/\r?\n/)) {
     const t = line.trim();
-    if (t.startsWith('[')) { cur = t === '[[mods]]' ? {} : null; if (cur) out.push(cur); continue; }
+    // A table header may carry a comment: Iron Furnaces writes `[[mods]] #mandatory`.
+    if (t.startsWith('[')) { cur = t.replace(/\s*#.*$/, '') === '[[mods]]' ? {} : null; if (cur) out.push(cur); continue; }
     const m = cur && /^(modId|version)\s*=\s*["']([^"']*)["']/.exec(t);
     if (m) cur[m[1]] = m[2];
   }

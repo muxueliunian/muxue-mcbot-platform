@@ -41,7 +41,7 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * (water within 4 blocks) into farmland with a hoe, sown in the same pass when plant is given. survey:true only counts
  * and touches nothing.
  */
-final class FarmTask {
+final class FarmTask implements GuardDuty.Pausable {
     enum Kind { CROP, WART, COCOA, BERRY, GOURD, CANE }
     record Crop(BlockPos pos,Kind kind,BlockState state) {}
     /** Put `seed` on `soil`'s `face` so that `pos` becomes `block` (replanting a harvested crop or planting empty farmland). */
@@ -58,7 +58,8 @@ final class FarmTask {
     private final Item plantItem;
     private int boneMeal;
     private final Predicate<BlockState> filter;
-    private final long deadline;
+    private long deadline;
+    private final GuardDuty.Grace grace;
     private final Map<String,Integer> before;
     private final int previousSlot;
     private final Set<UUID> preexisting=new HashSet<>(),skippedDrops=new HashSet<>();
@@ -91,7 +92,8 @@ final class FarmTask {
         boneMeal=(int)integer(args,"boneMeal",0,0,64);
         till=(int)integer(args,"till",0,0,64);
         filter=filter(args);
-        deadline=now()+(long)bounded(args,"timeoutMs",180_000,5_000,600_000);
+        long timeout=(long)bounded(args,"timeoutMs",180_000,5_000,600_000);
+        deadline=now()+timeout;grace=new GuardDuty.Grace(timeout);
         before=ItemDescriptions.counts(player.getInventory());previousSlot=player.getInventory().selected;
         if(center.distanceTo(player.position())>32)throw error("OUT_OF_REACH","The field must be within 32 blocks");
         if(plantItem!=null&&!(plantItem instanceof BlockItem))throw error("INVALID_ARGUMENT",id(plantItem)+" cannot be planted");
@@ -397,6 +399,9 @@ final class FarmTask {
         stopWalking();
     }
     private void stopWalking(){if(navigation!=null)navigation.stop();navigation=null;walkingTo=null;}
+    /** Walking between crops; not while breaking, planting or using bone meal. */
+    @Override public boolean interruptible(){return navigation!=null&&digging==null&&player.onGround();}
+    @Override public void resumeAfterGuard(long fightMs){stopWalking();player.stopInput();deadline+=grace.grant(fightMs);}
 
     // ---------- doing ----------
     private void action(ServerboundPlayerActionPacket.Action action,BlockPos pos,Direction face){player.connection.handlePlayerAction(new ServerboundPlayerActionPacket(action,pos,face,++sequence));}

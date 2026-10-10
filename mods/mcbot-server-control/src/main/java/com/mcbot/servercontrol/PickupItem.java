@@ -11,7 +11,7 @@ import net.minecraft.world.phys.*;
 import static com.mcbot.servercontrol.Protocol.*;
 
 /** Bounded approach to one real dropped entity. Vanilla collision does the pickup, the Post event confirms it. */
-final class PickupItem {
+final class PickupItem implements GuardDuty.Pausable {
     interface View {
         boolean mayDrive();void refresh();Vec3 feet();float health();
         Object identity();JsonObject stack();Vec3 target();boolean available();boolean eligible();
@@ -20,6 +20,8 @@ final class PickupItem {
         default boolean nativeNavigation(){return false;}
         default void navigate(){throw new UnsupportedOperationException();}
         default void cancelNavigation(){}
+        /** Someone else drove the body: plan again from here, count damage from now. */
+        default void resetNavigation(){}
         default JsonObject navigationDetails(){return null;}
         default void validateCompanion() {}
         default boolean routeAllowed(Vec3 feet) {return true;}
@@ -32,8 +34,9 @@ final class PickupItem {
     private final Object identity;
     private final String entityId;
     private final JsonObject expected;
-    private final long deadline;
-    private final float health;
+    private long deadline;
+    private float health;
+    private final GuardDuty.Grace grace;
     private final Vec3 initialTarget;
     private long progressTime;
     private Vec3 progressPosition;
@@ -51,7 +54,8 @@ final class PickupItem {
         if(operation.args.has("expectedMaxStackSize")){
             int maximum=SurvivalActions.integer(operation.args,"expectedMaxStackSize");if(maximum<1)throw error("INVALID_ARGUMENT","expectedMaxStackSize must be positive");expected.addProperty("maxStackSize",maximum);
         }
-        deadline=clock.getAsLong()+(long)bounded(operation.args,"timeoutMs",15_000,500,30_000);
+        long timeout=(long)bounded(operation.args,"timeoutMs",15_000,500,30_000);
+        deadline=clock.getAsLong()+timeout;grace=new GuardDuty.Grace(timeout);
         identity=view.identity();health=view.health();initialTarget=view.target();progressPosition=view.feet();progressTime=clock.getAsLong();
     }
     /** sink: the carried storage that took the items instead of the inventory, or null. */
@@ -112,6 +116,12 @@ final class PickupItem {
         if(code==null&&!stolen)result.addProperty("remainingCount",expected.get("count").getAsInt()-picked);
         if(view.navigationDetails()!=null)result.add("navigation",view.navigationDetails());if(pickedStack!=null)result.add("stack",pickedStack.deepCopy());if(storedIn!=null)result.addProperty("storedIn",storedIn);if(code!=null)result.addProperty("code",code);return result;
     }
+    /** Walking to the drop: always. Afterwards the drop must still be within reach rules (eight blocks, not moved). */
+    @Override public boolean interruptible(){return !stopped;}
+    @Override public void resumeAfterGuard(long fightMs){
+        route=null;index=0;health=view.health();progressPosition=view.feet();progressTime=clock.getAsLong();
+        view.resetNavigation();deadline+=grace.grant(fightMs);
+    }
     void fail(String code,String message){operation.finish("failed",code+": "+message,result(code));stop();}
     void stop(){stopped=true;route=null;view.cancelNavigation();view.stop();}
     static PickupItem create(ControlSession.Operation operation,BodyPlayer body,ControlSession session,SurvivalActions survival,ResourceTargets resources) {
@@ -143,6 +153,7 @@ final class PickupItem {
                 catch(Protocol.Error failure){if(mining!=null&&failure.code.equals("OUT_OF_REACH"))throw error("COMPANION_OUT_OF_RANGE","Ore pickup left the live companion radius");throw failure;}
             }
             public void cancelNavigation(){navigation.stop();}
+            public void resetNavigation(){navigation.reset();navigation.rebaseHealth();}
             public JsonObject navigationDetails(){return navigation.diagnostics();}
             public Vec3 feet(){return body.position();}public float health(){return body.getHealth();}
             public Object identity(){return item==null?null:body.serverLevel().getEntity(uuid);}

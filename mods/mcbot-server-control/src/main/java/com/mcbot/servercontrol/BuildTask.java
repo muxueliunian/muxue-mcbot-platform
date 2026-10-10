@@ -44,7 +44,7 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * (never inside a block still to be placed) and does not climb: what cannot be reached from any floor is reported.
  * Materials come from the inventory (plain stacks); missing ones fail the build before anything changes.
  */
-final class BuildTask {
+final class BuildTask implements GuardDuty.Pausable {
     record Target(BlockPos pos,BlockState state,List<Property<?>> checked,Item item,BlockPos extra,boolean late) {
         boolean air(){return state.isAir();}
     }
@@ -58,7 +58,8 @@ final class BuildTask {
     private final ControlSession.Operation operation;
     private final BodyPlayer player;
     private final ControlSession session;
-    private final long deadline;
+    private long deadline;
+    private final GuardDuty.Grace grace;
     private final String replace;
     private final Map<String,Integer> before;
     private final List<Target> targets=new ArrayList<>();
@@ -88,7 +89,8 @@ final class BuildTask {
         JsonObject args=operation.args;
         replace=args.has("replace")?string(args,"replace"):"soft";
         if(!Set.of("none","soft","all").contains(replace))throw error("INVALID_ARGUMENT","replace must be none, soft or all");
-        deadline=now()+(long)bounded(args,"timeoutMs",240_000,10_000,600_000);
+        long timeout=(long)bounded(args,"timeoutMs",240_000,10_000,600_000);
+        deadline=now()+timeout;grace=new GuardDuty.Grace(timeout);
         before=ItemDescriptions.counts(player.getInventory());health=player.getHealth();
         parse(args);
         for(Target t:targets){targetCells.add(t.pos());if(t.extra()!=null)targetCells.add(t.extra());}
@@ -726,6 +728,13 @@ final class BuildTask {
         places.removeIf(t->{if(t.pos().equals(p)||p.equals(t.extra())){skip(t.pos(),t.state(),"the block in the way could not be dug");done(t);return true;}return false;});
     }
     private void stopWalking(){if(navigation!=null)navigation.stop();navigation=null;walkingTo=null;spot=null;}
+    /**
+     * Only on the ground floor with nothing half done: not digging, no scaffold standing or left behind (up on a roof),
+     * not on the way back to one, not wrapping up after the time limit. Up there it finishes and comes down first.
+     */
+    @Override public boolean interruptible(){return mode==Mode.GROUND&&digging==null&&scaffold.isEmpty()&&leftColumns.isEmpty()&&!goBack&&!wrappingUp&&player.onGround();}
+    /** The walk starts over from where the fight left the body; damage from the fight is not counted. */
+    @Override public void resumeAfterGuard(long fightMs){stopWalking();player.stopInput();health=player.getHealth();deadline+=grace.grant(fightMs);}
 
     // ---------- doing ----------
     private void select(int slot){if(player.getInventory().selected!=slot)player.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket(slot));}

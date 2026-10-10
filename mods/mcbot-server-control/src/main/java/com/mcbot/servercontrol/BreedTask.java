@@ -26,7 +26,7 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * and only whole pairs are fed. Tamable animals and horses are left out (taming and owners are their own rules).
  * survey:true only counts.
  */
-final class BreedTask {
+final class BreedTask implements GuardDuty.Pausable {
     static final int MAX_RADIUS=16,WALK_MS=12_000,BABY_WAIT_MS=8_000;
     private final ControlSession.Operation operation;
     private final BodyPlayer player;
@@ -35,7 +35,8 @@ final class BreedTask {
     private final int radius,pairs;
     private final EntityType<?> type;
     private final Item food;
-    private final long deadline;
+    private long deadline;
+    private final GuardDuty.Grace grace;
     private final Map<String,Integer> before;
     private final int previousSlot;
     private final Set<UUID> babiesBefore=new HashSet<>(),skipped=new HashSet<>();
@@ -55,7 +56,8 @@ final class BreedTask {
         food=args.has("food")?item(string(args,"food")):null;
         radius=(int)bounded(args,"radius",12,1,MAX_RADIUS);
         pairs=(int)bounded(args,"pairs",4,1,8);
-        deadline=now()+(long)bounded(args,"timeoutMs",120_000,5_000,300_000);
+        long timeout=(long)bounded(args,"timeoutMs",120_000,5_000,300_000);
+        deadline=now()+timeout;grace=new GuardDuty.Grace(timeout);
         before=ItemDescriptions.counts(player.getInventory());previousSlot=player.getInventory().selected;
         if(center.distanceTo(player.position())>32)throw error("OUT_OF_REACH","The animals must be within 32 blocks");
     }
@@ -159,6 +161,9 @@ final class BreedTask {
     private boolean hasFood(){return using!=null&&total(player.getInventory(),using)>0;}
     private List<Animal> babies(){return animals().stream().filter(a->a.isBaby()&&!babiesBefore.contains(a.getUUID())).toList();}
     private void stopWalking(){if(navigation!=null)navigation.stop();navigation=null;}
+    /** Walking up to an animal; not while feeding it. */
+    @Override public boolean interruptible(){return navigation!=null&&player.onGround();}
+    @Override public void resumeAfterGuard(long fightMs){stopWalking();player.stopInput();deadline+=grace.grant(fightMs);}
     private JsonObject withChange(JsonObject result){result.add("inventoryChange",delta(before,ItemDescriptions.counts(player.getInventory())));return result;}
     JsonObject progress() {
         JsonObject result=obj("animal",BuiltInRegistries.ENTITY_TYPE.getKey(type).toString(),"fed",fed.size(),"babies",babies().size());

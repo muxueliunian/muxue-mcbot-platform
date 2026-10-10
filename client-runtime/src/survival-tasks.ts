@@ -154,7 +154,8 @@ export class SurvivalTasks {
       const slot = request.slot ?? choice?.slot;
       if (slot === undefined) throw new BodyError(choice?.reason ?? 'NO_SAFE_FOOD', choice?.reason === 'ONLY_PRECIOUS_FOOD' ? '只有贵重食物（金苹果类），血量未到紧急线，需玩家同意或指定槽位才吃' : '没有适合当前缺口且获准自动使用的食物');
       const food = this.food(state, slot), selectedValue = this.value(this.stack(state, slot)); task.progress.foodBefore = state.food;
-      if (state.food >= 20) throw new BodyError('FULL', '饥饿值已满，未开始进食');
+      // Golden apples can be eaten full, as in vanilla: their worth is the effects.
+      if (state.food >= 20 && !isPrecious(food)) throw new BodyError('FULL', '饥饿值已满，未开始进食');
       // An eat task explicitly owns replacing the selected slot when all hotbar slots are occupied.
       const target = request.targetSlot ?? (slot <= 8 ? slot : state.inventory!.find(item => validSlot(item.slot, 8) && empty(item))?.slot ?? state.selectedSlot);
       if (request.timeoutMs === undefined) task.deadline = Math.min(task.deadline, this.now() + Math.min(120000, Math.max(10000, food.eatDurationTicks * 50 + 5000)));

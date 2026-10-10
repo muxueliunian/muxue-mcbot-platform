@@ -808,3 +808,19 @@ test('a late timeout stop confirmation cannot retire a task started after a newe
   assert.throws(() => f.body.acquireTask('old-finally-cannot-release'), { code: 'BUSY' });
   nextGate.resolve(); assert.equal((await next).status, 'succeeded');
 });
+
+test('guard fights push the container task limit back on bodies with guard-duty-tasks', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const capable of [true, false]) {
+    const f = fixture(); let clock = 0, fights = 0, reads = 0;
+    if (capable) f.body.hello.capabilities.push('guard-duty-tasks');
+    f.body.fightMs = () => fights;
+    f.body.stop = async () => ({ stopped: true });
+    const tasks = new ContainerTasks(f.body, () => clock, undefined, { timeoutMs: 100 });
+    // 90 ms in, the guard has fought for 60 ms; the task goes on to 150 ms, past its own 100 ms.
+    f.body.beforeObserve = async () => { reads++; if (reads === 1) { clock += 90; t.mock.timers.tick(90); fights = 60; } else if (reads === 2) { clock += 60; t.mock.timers.tick(60); } };
+    const result = await tasks.run('give-item', { item: 'minecraft:diamond', count: 1, player: 'Alex' });
+    if (capable) assert.equal(result.status, 'succeeded', 'the fight time was added to the limit');
+    else assert.equal(result.result.code, 'TASK_TIMEOUT', 'without the capability the limit stays');
+  }
+});

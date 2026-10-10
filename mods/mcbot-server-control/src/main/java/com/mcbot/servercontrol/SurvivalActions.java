@@ -691,7 +691,8 @@ final class SurvivalActions {
         expectedItem(args,"expectedItem","expectedCount","expectedComponents",stack);
         FoodSafety.Profile profile=FoodSafety.assess(stack,player);
         if(!profile.safe())throw error("UNSUPPORTED","Food has unverified or protected consumption semantics: "+profile.reason());
-        if(!player.canEat(false))throw error("FORBIDDEN","Body is not hungry; no native food use was sent");
+        // Golden apples can be eaten full, as in vanilla (canAlwaysEat).
+        if(!player.canEat(profile.food().canAlwaysEat()))throw error("FORBIDDEN","Body is not hungry; no native food use was sent");
         JsonObject before=stackValue(stack),returned=profile.food().usingConvertsTo().map(this::stackValue).orElse(null);
         long eatDeadline=now()+(long)bounded(args,"timeoutMs",Math.max(15_000,profile.food().eatDurationTicks()*50L+2_000),500,120_000);
         NativeFoodUse use=new NativeFoodUse(operation,new NativeFoodUse.View() {

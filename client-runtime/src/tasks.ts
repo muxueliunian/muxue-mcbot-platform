@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { fightGrace, type FightGrace } from './fight-grace.js';
 import { BodyError, type Body, type Observation, type Operation, type ActionName, type ActionArguments, type Container, type ItemStack, type NearbyBlocks } from './body.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
@@ -7,7 +8,8 @@ type Target = { context: Context; expires: number; block: NearbyBlocks['candidat
 type Request = { containerRef?: string; item?: string; count?: number; stacks?: number; player?: string; slot?: number; say?: string };
 type TaskName = 'container-list' | 'container-withdraw' | 'give-item' | 'fetch-and-give';
 type StopHandle = { epoch: number; taskId?: string };
-type Limit = { deadline: number; expired: Promise<never>; timer: ReturnType<typeof setTimeout> };
+/** fail rejects `expired`; grace moves deadline (and the timer) back by guard fights, see stretch. */
+type Limit = { deadline: number; expired: Promise<never>; timer: ReturnType<typeof setTimeout>; fail: () => void; grace?: FightGrace };
 type TaskOwner = { id: string; epoch: number; cancelled: boolean; limit: Limit };
 type Progress = { requestedCount: number; maxStackSize?: number; withdrawnCount: number; heldCount?: number; droppedCount: number; slot?: number; carriedCount?: number; lastConfirmedHeldCount?: number; lastConfirmedCarriedCount?: number; counts?: string; pickup: 'unconfirmed'; player?: string; item?: string; items?: unknown[]; stage: string; code?: string; cleanup?: string; containerProtection?: 'instance-bound' | 'state-only' };
 /** A bounded task runner. Authoritative snapshots and target tokens stay inside the task boundary. */
@@ -63,20 +65,29 @@ export class ContainerTasks {
     return this.body.act('approach-container', { targetToken: target.block.targetToken, timeoutMs });
   }
   private context(state: Context): Context { return { instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration }; }
-  private limit(timeoutMs: number, message: string): Limit {
+  private limit(timeoutMs: number, message: string, fights = true): Limit {
     const deadline = this.now() + timeoutMs;
-    let timer!: ReturnType<typeof setTimeout>;
-    const expired = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new BodyError('TASK_TIMEOUT', message)), timeoutMs); });
+    let fail!: () => void;
+    const expired = new Promise<never>((_resolve, reject) => { fail = () => reject(new BodyError('TASK_TIMEOUT', message)); });
     // The timer can fire while stop is pending, without an outstanding request race.
     void expired.catch(() => {});
-    return { deadline, expired, timer };
+    return { deadline, expired, fail, timer: setTimeout(fail, timeoutMs), grace: fights ? fightGrace(this.body, timeoutMs) : undefined };
+  }
+  /** Time the guard duty spent fighting since the last look is added to the limit (at most the limit again). */
+  private stretch(limit: Limit): void {
+    const extra = limit.grace?.take() ?? 0;
+    if (!extra) return;
+    limit.deadline += extra; clearTimeout(limit.timer);
+    limit.timer = setTimeout(limit.fail, Math.max(0, limit.deadline - this.now()));
   }
   private check(epoch: number): void {
     if (epoch !== this.epoch) throw new BodyError('CANCELLED', '任务已叫停，后续步骤未执行');
+    if (this.active?.epoch === epoch) this.stretch(this.active.limit);
     if (this.active?.epoch === epoch && this.now() >= this.active.limit.deadline) throw new BodyError('TASK_TIMEOUT', '容器任务达到总等待期限，后续步骤未执行');
   }
   private async wait<T>(epoch: number, request: () => Promise<T>, actionLimit?: Limit): Promise<T> {
     this.check(epoch);
+    if (actionLimit) this.stretch(actionLimit);
     if (actionLimit && this.now() >= actionLimit.deadline) throw new BodyError('TASK_TIMEOUT', '动作超过任务等待时限，后续步骤未执行');
     const taskLimit = this.active?.epoch === epoch ? this.active.limit : undefined;
     // Late responses are consumed by the race, but never enter task progress or start another action.
@@ -86,7 +97,7 @@ export class ContainerTasks {
     // An external stop may have retired this owner and started another task already.
     if (epoch !== this.epoch || this.active?.id !== id) throw new BodyError('CANCELLED', '任务已由外部停止，后续步骤未执行');
     const stopping = this.cancel();
-    const limit = this.limit(this.limits.stopTimeoutMs ?? 5000, '停止确认超过等待期限');
+    const limit = this.limit(this.limits.stopTimeoutMs ?? 5000, '停止确认超过等待期限', false);
     try {
       const result = await Promise.race([this.body.stop(), limit.expired]);
       if (result.stopped !== true) throw new BodyError('STOP_UNCONFIRMED', '身体停止未确认');

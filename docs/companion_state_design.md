@@ -4,7 +4,7 @@
 
 状态：第 6 节的三个问题用户 10-10 已定。第一步分两块做：
 - **第一块（10-10，离线完成）**：服务端常驻保护（`GuardDuty`、协议方法 `guard`、观察里的 `guard`），空闲、原地等待、跟随时都能保护，等待中打完走回原位；运行端改用它（跟随让开、等待都不关保护，`companion-mode stop`／`stop-action` 关）。协议见 [server_body_protocol.md](server_body_protocol.md#常驻保护8m-第一步第一块2026-10-10)。离线：Java `GuardDutyTest` 17 项、`ControlSessionTest` 和 `FollowCompanionTest` 补的检查，运行端 `companion-guard-duty.test.mjs` 5 项；没有隔离服实测、没有真实模型试玩。
-- **第二块（未做）**：5.2 表里的任务打断（建筑、种地、走路、长途走、工作站走路段……）和期限顺延；在那之前，做这些任务时保护等它们做完（`reason:BUSY`），只有近身自卫。
+- **第二块（10-10，离线＋隔离服完成）**：5.2 表里的任务打断和期限顺延，能力`guard-duty-tasks`，协议见 [server_body_protocol.md](server_body_protocol.md#保护打断任务8m-第一步第二块2026-10-10)。和 5.2 表的出入：`emote`手势不打断（几秒就完，打断反而要多处理一个被取消的操作）；`approach-player`不打断（玩家一动它就失败）；走向床可打断。没有改“打架开始前在路上挨打就 `BLOCKED`”的规则，打完后才把受伤基线重置。隔离服`server-guard-duty-smoke`8 项通过（等待、地面建筑、垫脚柱上不打、玩家太远），没有真实模型试玩；合成界面开着时只有离线检查。
 
 ## 1. 现状：状态分在三层
 

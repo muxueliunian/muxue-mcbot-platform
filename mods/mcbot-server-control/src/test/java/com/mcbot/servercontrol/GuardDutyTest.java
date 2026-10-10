@@ -34,7 +34,23 @@ final class GuardDutyTest {
         coverage();
         handOver();
         interruptedTick();
+        taskPause();
         System.out.println("GuardDutyTest: "+checks+" checks passed");
+    }
+    /** A running task: the duty waits while it cannot stand aside, fights when it can, never walks back, and the fight time is what extends the task. */
+    private static void taskPause() {
+        GuardDuty.Grace grace=new GuardDuty.Grace(1000);
+        check(grace.grant(400)==400&&grace.grant(500)==500&&grace.grant(300)==100&&grace.grant(50)==0,"fights extend a task by at most its own time limit");
+        check(new GuardDuty.Grace(1000).grant(-5)==0,"no negative extension");
+        FakeView view=new FakeView();FakeCombat combat=new FakeCombat(view);GuardDuty duty=duty(view,combat);
+        combat.foe=true;
+        check(!duty.tick(false,false)&&combat.ticks==0,"a task that cannot stand aside keeps the body: the fight is not even looked at");
+        check(duty.json().get("covering").getAsBoolean()==false&&"BUSY".equals(duty.json().get("reason").getAsString()),"observation says why it does not cover");
+        check(duty.tick(true,false)&&duty.fighting()&&duty.driving(),"an interruptible task gives the body to the fight");
+        view.time+=3000;check(duty.tick(true,false),"still fighting");
+        combat.foe=false;view.time+=500;
+        check(!duty.tick(true,false)&&!duty.driving()&&view.walks==0,"after the fight the body goes back to the task, not to a spot");
+        check(duty.busyMs()==3500,"the fight time the task is extended by: "+duty.busyMs());
     }
     private static void idleFight() {
         FakeView view=new FakeView();FakeCombat combat=new FakeCombat(view);GuardDuty duty=duty(view,combat);

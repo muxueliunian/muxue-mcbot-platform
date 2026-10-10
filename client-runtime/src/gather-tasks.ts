@@ -5,6 +5,7 @@ import type { EventJournal } from './events.js';
 import { selectFood, type SurvivalTasks } from './survival-tasks.js';
 import { pillarBlockCount, pillarDown, pillarUp, type PillarBlock, type PillarHost, type PillarPurpose } from './pillar.js';
 import type { SurvivalPolicy } from './survival-reflexes.js';
+import { fightGrace, type FightGrace } from './fight-grace.js';
 
 type Context = Pick<Observation, 'instanceId' | 'sessionId' | 'worldId' | 'dimension' | 'controlGeneration'>;
 type Request = { resourceRef?: string; item: string; count?: number; stacks?: number; wholeTree?: boolean; radius?: number; say?: string; maxSteps?: number; timeoutMs?: number };
@@ -17,7 +18,7 @@ const miningOwner = (owner?: Borrowed): owner is BorrowedMining => !!owner && 'k
 const MINING_DROP_MARGIN = 1.5;
 type Reference = { context: Context; expires: number; scan: NearbyResources; radius: number; wholeTree: boolean };
 type Progress = { stage: string; item: string; requestedCount?: number; requestedStacks?: number; targetCount?: number; maxStackSize?: number; pickedUpCount?: number; lastConfirmedPickedUpCount?: number; overage: number; minedBlocks: number; steps: number; maxSteps: number; pickup: 'native-confirmed' | 'partial-or-unknown'; quantity: 'newly-picked'; totalNativePickedUpCount: number; unexpectedPickedUpCount: number; items: Array<{ item: string; count: number; maxStackSize?: number }>; code?: string; variantComponents?: ItemValue['components']; limitation?: string; pickupMovementRaces?: number; lastPickupMovementCode?: string; lastPickupMovementSummary?: string; storedIn?: Record<string, number>; pillarPlaced?: number; pillarRecovered?: number; unreachable?: number; leavesShaken?: number; leavesDecayed?: number; stuckHigh?: number; stuckInLeaves?: number; trees?: number; wholeTree?: boolean; leavesCleared?: number; climb?: 'step' | 'corner' | 'spiral'; spiralSteps?: number; spiralStop?: string };
-type Active = { least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number; trees?: Map<string, number>; focusTree?: number; pillarDebt?: number; footing?: Set<string>; pickedMark?: number };
+type Active = { grace?: FightGrace; least?: number; id: string; taskToken: string; borrowed?: Borrowed; oldGround?: Set<string>; name: Name; epoch: number; context: Context; center: Position; radius: number; deadline: number; cursor: number; allowed: Set<string>; collectedEntities: Map<string, number>; variant?: ItemValue; request: Request; progress: Progress; cancelled?: boolean; stopPending?: boolean; top?: number; trees?: Map<string, number>; focusTree?: number; pillarDebt?: number; footing?: Set<string>; pickedMark?: number };
 const contextOf = (state: Context): Context => ({ instanceId: state.instanceId, sessionId: state.sessionId, worldId: state.worldId, dimension: state.dimension, controlGeneration: state.controlGeneration });
 const unknownCodes = new Set(['UNKNOWN', 'PICKUP_GAP', 'PICKUP_UNKNOWN', 'WORLD_CHANGED', 'LEASE_LOST', 'STALE_CONTROL', 'TRANSPORT_LOST', 'INVALID_RESPONSE', 'LEASE_EXPIRED', 'TASK_TIMEOUT', 'STOP_UNCONFIRMED']);
 type Candidate = NearbyResources['candidates'][number];
@@ -104,6 +105,7 @@ export class GatherTasks {
   private check(task: Active): void {
     task.borrowed?.check();
     if (task.epoch !== this.epoch || task.cancelled) throw new BodyError('CANCELLED', '采集已叫停，未执行后续步骤');
+    task.deadline += task.grace?.take() ?? 0;
     if (this.now() >= task.deadline) throw new BodyError('TASK_TIMEOUT', '任务执行预算已到；未追加数量或候选');
   }
   private validate(request: Request, fractionalRadius = false): void {
@@ -226,6 +228,8 @@ export class GatherTasks {
     try {
       // Reserve synchronously even while the initial read or chat acknowledgement is in flight.
       task = { id, taskToken: borrowed?.taskToken ?? id, borrowed, name, epoch, context: {}, center: { x: 0, y: 0, z: 0 }, radius: request.radius ?? 4, deadline: this.now() + (request.timeoutMs ?? (request.wholeTree ? Math.min(600000, Math.max(120000, (request.count ?? 0) * 4000)) : 60000)), cursor: 0, allowed: new Set(), collectedEntities: new Map(), request, progress } as Active;
+      // Fights of the guard duty push the limit back (not for companion mining, which keeps the follow's own deadline).
+      if (!miningOwner(borrowed)) task.grace = fightGrace(this.body, task.deadline - this.now());
       if (miningOwner(borrowed)) { task.deadline = Math.min(task.deadline, borrowed.deadline); delete progress.requestedCount; delete progress.targetCount; progress.limitation = '单块原生破坏与本子任务新拾取分开确认；物品掉落归属未确认，不预测产量。'; }
       this.active = task;
       const state = await this.body.observe(); this.check(task);

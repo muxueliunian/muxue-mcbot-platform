@@ -28,7 +28,7 @@ import static com.mcbot.servercontrol.NativeWorkstation.*;
  * Without a crafting grid nearby a 3x3 recipe may place a crafting table from the inventory, making one from planks
  * (or a log) in the own 2x2 grid first when there is none.
  */
-final class WorkstationTask {
+final class WorkstationTask implements GuardDuty.Pausable {
     private record Station(BlockPos pos,WorkstationAdapter adapter) {}
     private final ControlSession.Operation operation;
     private final BodyPlayer player;
@@ -40,6 +40,8 @@ final class WorkstationTask {
     private NativeNavigation navigation;
     private Station station;
     private long deadline;
+    private final long started=now();
+    private GuardDuty.Grace grace;
     // crafting
     private Item wanted;
     private int count;
@@ -309,6 +311,13 @@ final class WorkstationTask {
         if(Vec3.atCenterOf(station.pos()).distanceTo(player.position())>32)throw error("OUT_OF_REACH","Workstation is more than 32 blocks away");
     }
     boolean waiting(){return furnace!=null;}
+    /** Walking to the table or furnace; once a menu is open (crafting, or waiting at the furnace) it finishes first. */
+    @Override public boolean interruptible(){return navigation!=null&&furnace==null&&player.onGround();}
+    @Override public void resumeAfterGuard(long fightMs){
+        if(navigation!=null){navigation.reset();navigation.rebaseHealth();}
+        if(grace==null)grace=new GuardDuty.Grace(deadline-started);
+        deadline+=grace.grant(fightMs);
+    }
     void tick() {
         if(!session.mayDrive(operation)){stop();return;}
         if(!operation.status.equals("running"))return;

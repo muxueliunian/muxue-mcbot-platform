@@ -142,6 +142,7 @@ export interface ActionArguments {
   'machine-items': Position & { mode: 'list' | 'insert' | 'extract'; side?: 'up' | 'down' | 'north' | 'south' | 'east' | 'west'; item?: string; count?: number; slot?: number; expectedBlock?: string };
   'emote': { name: string; source?: string; player?: string; seconds?: number };
   'set-appearance': { source: string; choice: string };
+  'hunt': { type: string; count?: number; survey?: boolean; player?: string; center?: Position; radius?: number; lowHealth?: number; timeoutMs?: number };
   'breed-animals': { animal: string; survey?: boolean; player?: string; center?: Position; radius?: number; food?: string; pairs?: number; timeoutMs?: number };
 }
 export type ActionName = keyof ActionArguments;
@@ -169,6 +170,8 @@ export interface Body {
   machineStatus?(position: Position): Promise<MachineStatus>;
   /** Turn the standing guard duty on, change it, or off (capability guard-duty). Not an operation; a stop keeps it. */
   setGuard?(request: GuardDutyRequest): Promise<GuardDutyState | { enabled: false }>;
+  /** ServerBody: total milliseconds guard duties held the body for fights so far, as of the last observation (only grows). */
+  fightMs?(): number;
   acquireTask?(taskToken: string): void;
   releaseTask?(taskToken: string): void;
   operation(operationId: string): Promise<Operation>;

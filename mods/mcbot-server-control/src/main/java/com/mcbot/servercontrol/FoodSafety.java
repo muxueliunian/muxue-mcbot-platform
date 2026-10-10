@@ -17,7 +17,8 @@ final class FoodSafety {
         // Plantable food (carrot, potato, sweet berries) is an ItemNameBlockItem; eaten from the hand it is plain Item food.
         Class<?> kind=stack.getItem().getClass();
         String reason=reason(BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft"),kind==Item.class||kind==ItemNameBlockItem.class,
-            food.nutrition(),food.saturation(),food.eatDurationTicks(),!food.effects().isEmpty());
+            // Golden apples: their effects (regeneration, absorption, resistance, fire resistance) only help; still precious below.
+            food.nutrition(),food.saturation(),food.eatDurationTicks(),!food.effects().isEmpty()&&!precious(stack));
         if(reason==null&&food.usingConvertsTo().isPresent()) {
             ItemStack result=food.usingConvertsTo().get();
             if(!result.is(Items.BOWL)||result.getCount()!=1) reason="UNVERIFIED_RETURN_ITEM";

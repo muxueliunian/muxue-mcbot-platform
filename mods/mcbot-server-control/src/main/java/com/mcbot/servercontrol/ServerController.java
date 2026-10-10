@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 import static com.mcbot.servercontrol.Protocol.*;
 
 final class ServerController implements ControlSession.Game {
-    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks");
+    static final List<String> CAPABILITIES=List.of("send-chat","look-at","move-to-position","follow-player","follow-companion","dig-block","place-block","open-container","click-slot","close-container","select-slot","drop-item","nearby-blocks","nearby-resources","approach-container","approach-player","approach-resource","pickup-item","companion-pickup","companion-mining","companion-guard","swap-inventory","eat-item","equip-item","survival-state","assess-tool","defend-entity","retreat-from-entity","navigation-3d","look-around","pillar-up","sleep-in-bed","wake-up","craft-item","smelt-item","travel-to","workstation-options","produce-item","modify-item","tend-crops","breed-animals","hunt","use-bucket","emote","set-appearance","build","machine-items","machine-status","guard-duty-fenced","guard-duty-tasks","gift-receipts","entity-equipment");
     private final MinecraftServer server;
     private final ServerConfig config;
     final ControlSession session;
@@ -204,12 +204,17 @@ final class ServerController implements ControlSession.Game {
     @Override public JsonObject observe(JsonObject params) {
         JsonArray inventory=new JsonArray(),entities=new JsonArray();
         for(int i=0;i<player.getInventory().getContainerSize();i++) inventory.add(survival.observedStack(i,player.getInventory().getItem(i)));
+        List<EquipmentView.Entry> equipped=new ArrayList<>();
         for(Entity entity:player.serverLevel().getEntities(player,player.getBoundingBox().inflate(32))) {
             if(entity.distanceToSqr(player)>32*32) continue;
-            entities.add(obj("id",entity.getUUID().toString(),"type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),"name",entity instanceof Player p?p.getGameProfile().getName():entity.getName().getString(),"position",position(entity.position())));
-            if(entity instanceof Player p)entities.get(entities.size()-1).getAsJsonObject().addProperty("sleeping",p.isSleeping());
+            JsonObject seen=obj("id",entity.getUUID().toString(),"type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),"name",entity instanceof Player p?p.getGameProfile().getName():entity.getName().getString(),"position",position(entity.position()));
+            if(entity instanceof Player p)seen.addProperty("sleeping",p.isSleeping());
+            if(entity instanceof net.minecraft.world.entity.LivingEntity living)ItemDescriptions.collectEquipment(living,seen,entity.distanceToSqr(player),equipped);
+            entities.add(seen);
             if(entities.size()>=64) break;
         }
+        // What nearby players and creatures hold and wear (entity-equipment), nearest first and bounded.
+        EquipmentView.attach(equipped);
         JsonObject result=obj("connected",true,"username",config.username(),"dimension",player.serverLevel().dimension().location().toString(),"health",player.getHealth(),"food",player.getFoodData().getFoodLevel(),"position",position(player.position()),"yaw",player.getYRot(),"pitch",player.getXRot(),"inventory",inventory,"selectedSlot",player.getInventory().selected,"entities",entities,"chat",chat,"chatCursor",chatSequence,"container",survival.container(),"source","server-observed");
         result.addProperty("sleeping",player.isSleeping());
         result.add("time",obj("dayTime",player.serverLevel().getDayTime()%24000,"canSleep",player.level().dimensionType().natural()&&!player.level().isDay()));
@@ -354,7 +359,7 @@ final class ServerController implements ControlSession.Game {
             if(pickup!=null&&pickup.targets(entity))pickup.fail("PICKUP_UNKNOWN","Another mod moved the drop into storage that no installed adapter accounts for");
             return;
         }
-        pickups.record(entity.getUUID().toString(),position(entity.position()),original,survival.stackValue(now),session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString(),sink);
+        pickups.record(entity.getUUID().toString(),position(entity.position()),original,survival.stackValue(now),session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString(),sink,thrownBy(entity));
         if(pickup!=null)pickup.picked(entity,true,portion,count,sink);
     }
     void receivePickup(ItemEntityPickupEvent.Post event) {
@@ -364,9 +369,16 @@ final class ServerController implements ControlSession.Game {
         try {
             JsonObject original=survival.stackValue(event.getOriginalStack()),remaining=survival.stackValue(event.getCurrentStack());
             int count=PickupLedger.pickedUpCount(original,remaining);JsonObject portion=original.deepCopy();portion.addProperty("count",count);
-            if(event.getPlayer()==player)pickups.record(entity.getUUID().toString(),position(entity.position()),original,remaining,session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString(),null);
+            if(event.getPlayer()==player)pickups.record(entity.getUUID().toString(),position(entity.position()),original,remaining,session.sessionId(),session.generation(),player.serverLevel().dimension().location().toString(),null,thrownBy(entity));
             if(pickup!=null)pickup.picked(entity,event.getPlayer()==player,portion,count,null);
         }catch(RuntimeException unknown){if(event.getPlayer()==player)pickups.unknown();if(pickup!=null)pickup.fail("PICKUP_UNKNOWN","Native pickup stack could not be attributed completely");}
+    }
+    /** The player who threw this item, for the receipt (gift-receipts); a failed lookup only loses the name, never the receipt. */
+    private String thrownBy(ItemEntity entity) {
+        try {
+            Entity thrower=entity.getOwner();
+            return PickupLedger.thrownBy(thrower==null?null:thrower.getUUID(),thrower instanceof Player p?p.getGameProfile().getName():null,thrower instanceof Player,player.getUUID());
+        }catch(RuntimeException failure){return null;}
     }
     @Override public JsonObject watch() { return obj("chat",chat,"chatCursor",chatSequence); }
     @Override public long chatCursor() { return chatSequence; }
@@ -489,7 +501,7 @@ final class ServerController implements ControlSession.Game {
         }
         requireWalkable(); active=operation;navigation=new NativeNavigation(player,session,operation);actionDeadline=now()+timeout;actionGrace=new GuardDuty.Grace(timeout);
     }
-    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty-fenced","guard-duty-tasks").contains(name);}
+    static boolean atomicAction(String name){return (CAPABILITIES.contains(name)||ItemInteractions.capabilities().contains(name))&&!Set.of("nearby-blocks","nearby-resources","companion-pickup","companion-mining","companion-guard","survival-state","assess-tool","navigation-3d","look-around","machine-status","guard-duty-fenced","guard-duty-tasks","gift-receipts","entity-equipment").contains(name);}
     @Override public boolean nativeWriteInProgress(){return SurvivalActions.nativeWriteInProgress(player);}
     void beforePhysics(BodyPlayer body) {
         if(body!=player) { body.stopInput(); return; }

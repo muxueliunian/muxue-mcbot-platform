@@ -4,6 +4,8 @@ import com.google.gson.*;
 import java.util.*;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.alchemy.PotionContents;
@@ -39,10 +41,33 @@ final class ItemDescriptions {
         return parts.isEmpty()?id:id+"["+String.join(",",parts)+"]";
     }
     private static void enchantments(ItemEnchantments enchantments,String label,List<String> parts) {
-        if(enchantments==null||enchantments.isEmpty())return;
+        List<String> list=enchantmentList(enchantments);
+        if(!list.isEmpty())parts.add(label+"="+String.join("+",list));
+    }
+    /** "id level" for each enchantment, sorted. */
+    private static List<String> enchantmentList(ItemEnchantments enchantments) {
+        if(enchantments==null||enchantments.isEmpty())return List.of();
         List<String> list=new ArrayList<>();
         for(var entry:enchantments.entrySet())list.add(entry.getKey().unwrapKey().map(k->k.location().toString()).orElse("?")+" "+entry.getIntValue());
-        Collections.sort(list);parts.add(label+"="+String.join("+",list));
+        Collections.sort(list);return list;
+    }
+    /** What a living entity holds and wears ({@link EquipmentView}), or null when every slot is empty. */
+    static JsonObject equipment(LivingEntity entity) {
+        Map<String,EquipmentView.Item> slots=new HashMap<>();
+        for(EquipmentSlot slot:EquipmentSlot.values()) {
+            ItemStack stack=entity.getItemBySlot(slot);
+            if(stack.isEmpty())continue;
+            boolean worn=stack.isDamageableItem();
+            slots.put(slot.getName(),new EquipmentView.Item(NativeWorkstation.id(stack),stack.getCount(),enchantmentList(stack.get(DataComponents.ENCHANTMENTS)),
+                stack.has(DataComponents.CUSTOM_NAME)?stack.getHoverName().getString():null,worn?stack.getDamageValue():0,worn?stack.getMaxDamage():0));
+        }
+        return EquipmentView.equipment(slots);
+    }
+    /** An observation entry for {@link EquipmentView#attach}: nothing for an entity without gear, a null equipment when reading failed. */
+    static void collectEquipment(LivingEntity entity,JsonObject target,double distance,List<EquipmentView.Entry> entries) {
+        JsonObject gear;
+        try{gear=equipment(entity);}catch(RuntimeException failure){entries.add(new EquipmentView.Entry(target,distance,null));return;}
+        if(gear!=null)entries.add(new EquipmentView.Entry(target,distance,gear));
     }
     /** A stack for a receipt: key, count and, for gear, durability left. */
     static JsonObject describe(ItemStack stack) {

@@ -139,8 +139,10 @@ final class LookAround {
             else if(entity instanceof LivingEntity)living.computeIfAbsent(BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),key->new ArrayList<>()).add(entity);
         }
         people.sort(Comparator.comparingDouble(p->p.distanceTo(body)));
+        List<EquipmentView.Entry> equipped=new ArrayList<>();
         for(Player person:people.subList(0,Math.min(people.size(),MAX_PLAYERS))) {
             JsonObject at=where(body,person.position());at.addProperty("name",person.getGameProfile().getName());at.addProperty("visible",body.hasLineOfSight(person));
+            ItemDescriptions.collectEquipment(person,at,person.distanceTo(body),equipped);
             players.add(at);
         }
         List<Map.Entry<String,List<Entity>>> kinds=new ArrayList<>(living.entrySet());
@@ -148,8 +150,12 @@ final class LookAround {
         kinds.sort(Comparator.comparing((Map.Entry<String,List<Entity>> k)->!(k.getValue().getFirst() instanceof Enemy)).thenComparingDouble(k->k.getValue().getFirst().distanceTo(body)));
         for(var kind:kinds.subList(0,Math.min(kinds.size(),MAX_CREATURES))) {
             Entity first=kind.getValue().getFirst();JsonObject nearest=where(body,first.position());nearest.addProperty("visible",body.hasLineOfSight(first));
-            creatures.add(obj("type",kind.getKey(),"count",kind.getValue().size(),"hostile",first instanceof Enemy,"nearest",nearest));
+            JsonObject creature=obj("type",kind.getKey(),"count",kind.getValue().size(),"hostile",first instanceof Enemy,"nearest",nearest);
+            // The nearest one's gear, shown like a player's (obj copies, so the copy inside the entry gets it).
+            if(first instanceof LivingEntity alive)ItemDescriptions.collectEquipment(alive,creature.getAsJsonObject("nearest"),first.distanceTo(body),equipped);
+            creatures.add(creature);
         }
+        EquipmentView.attach(equipped);
         List<Map.Entry<String,List<Entity>>> stacks=new ArrayList<>(dropped.entrySet());
         for(var stack:stacks)stack.getValue().sort(Comparator.comparingDouble(e->e.distanceTo(body)));
         stacks.sort(Comparator.comparingDouble(s->s.getValue().getFirst().distanceTo(body)));

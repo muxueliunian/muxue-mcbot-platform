@@ -18,7 +18,12 @@ const validComponents = (value: { componentsComplete?: boolean; components?: unk
 const stack = z.object(observedStackShape).refine(validComponents, 'Incomplete components require an explicit unavailable marker, never an invented empty object');
 const itemValue = z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize });
 const stateIdentity = { instanceId: identifier, sessionId: identifier, worldId: identifier, dimension: identifier, controlGeneration: generation };
-const threatSchema = z.object({ entityId: z.string().uuid(), type: identifier.nullable(), classification: z.enum(['hostile', 'attacking_self', 'neutral', 'friendly', 'player', 'unknown']), hostilitySource: z.enum(['vanilla_hostile_allowlist', 'native_target_self', 'native_recent_attacker', 'none', 'unknown']), targetingSelf: z.boolean().nullable(), distance: z.number().finite().nonnegative().nullable(), lineOfSight: z.boolean().nullable(), alive: z.boolean().nullable(), explosionPreparing: z.boolean().nullable(), defenseEligible: z.boolean(), defenseReason: z.string().nullable(), factsAvailable: z.boolean().optional() }).refine(threat => threat.factsAvailable !== false || threat.classification === 'unknown' && threat.hostilitySource === 'unknown' && threat.defenseEligible === false, 'Unavailable threat facts cannot declare an eligible hostile');
+// entity-equipment: bounded by the server (EquipmentView); a malformed value only drops the field, never the observation.
+const equippedItem = z.object({ id: z.string().min(1).max(64), count: z.number().int().positive(), enchantments: z.array(z.string().max(64)).max(4).optional(), enchantmentsMore: z.number().int().positive().optional(), name: z.string().max(64).optional(), durability: z.string().max(32).optional() });
+const equipmentSchema = z.object({ mainhand: equippedItem.optional(), offhand: equippedItem.optional(), head: equippedItem.optional(), chest: equippedItem.optional(), legs: equippedItem.optional(), feet: equippedItem.optional(), body: equippedItem.optional() });
+const tolerant = <T extends z.ZodTypeAny>(schema: T) => z.unknown().transform((value): z.output<T> | undefined => { const parsed = schema.safeParse(value); return parsed.success ? parsed.data : undefined; });
+const equipmentFields = { equipment: tolerant(equipmentSchema), equipmentOmitted: tolerant(z.boolean()) };
+const threatSchema = z.object({ entityId: z.string().uuid(), type: identifier.nullable(), classification: z.enum(['hostile', 'attacking_self', 'neutral', 'friendly', 'player', 'unknown']), hostilitySource: z.enum(['vanilla_hostile_allowlist', 'native_target_self', 'native_recent_attacker', 'none', 'unknown']), targetingSelf: z.boolean().nullable(), distance: z.number().finite().nonnegative().nullable(), lineOfSight: z.boolean().nullable(), alive: z.boolean().nullable(), explosionPreparing: z.boolean().nullable(), defenseEligible: z.boolean(), defenseReason: z.string().nullable(), factsAvailable: z.boolean().optional(), ...equipmentFields }).refine(threat => threat.factsAvailable !== false || threat.classification === 'unknown' && threat.hostilitySource === 'unknown' && threat.defenseEligible === false, 'Unavailable threat facts cannot declare an eligible hostile');
 const survivalSchema = z.object({ ...stateIdentity, operationBudget: operationBudget.optional(), serverTick: generation, observedAt: z.number().finite(), health: z.number().finite(), maxHealth: z.number().positive(), food: z.number().finite(), saturation: z.number().finite(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack).optional(),
   dangers: z.object({ onFire: z.boolean(), inLava: z.boolean(), inWater: z.boolean(), air: z.number().finite(), maxAir: z.number().finite(), fallDistance: z.number().finite().nonnegative(), lowHealth: z.boolean(), retreatRecommended: z.boolean() }).optional(),
   threats: z.object({ radius: z.number().finite().positive().max(32), complete: z.boolean(), nearby: z.array(threatSchema).max(64), serverTick: generation }).optional(),
@@ -44,7 +49,7 @@ const observationSchema = z.object({
   operationBudget: operationBudget.optional(),
   sessionId: identifier, worldId: identifier, connected: z.boolean(), username: identifier, dimension: z.string(),
   health: z.number(), food: z.number(), position, yaw: z.number(), pitch: z.number(), selectedSlot: z.number().int().min(0).max(8), inventory: z.array(stack),
-  entities: z.array(z.object({ id: z.string(), type: z.string(), name: z.string(), position, sleeping: z.boolean().optional() })),
+  entities: z.array(z.object({ id: z.string(), type: z.string(), name: z.string(), position, sleeping: z.boolean().optional(), ...equipmentFields })),
   chat: z.array(z.object({ seq: z.number().int(), time: z.number(), username: z.string().optional(), message: z.string() })),
   chatCursor: z.number().int(), container: z.object({ id: identifier, type: z.string(), revision: generation, slots: z.array(stack), carried: z.object({ id: z.string(), count: z.number().int().nonnegative(), components, maxStackSize }) }).nullable(),
   block: z.object({ position, state: z.enum(['loaded', 'unloaded']), id: z.string().optional(), properties: z.record(z.unknown()).optional() }).optional(),
@@ -52,7 +57,7 @@ const observationSchema = z.object({
   sleeping: z.boolean().optional(), time: z.object({ dayTime: z.number().int().min(0).max(23999), canSleep: z.boolean() }).optional(),
   weather: z.object({ natural: z.boolean(), sky: z.boolean(), raining: z.boolean(), thundering: z.boolean() }).optional(),
   groundItems: z.array(z.object({ entityId: z.string().uuid(), position, stack: itemValue, onGround: z.boolean().optional(), visible: z.boolean().nullable().optional(), visibility: z.enum(['visible', 'occluded', 'unknown']) })).max(32).optional(), groundItemsTruncated: z.boolean().optional(),
-  pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier, storedIn: identifier.optional() })).max(256).optional(),
+  pickupCursor: generation.optional(), pickupOldestCursor: generation.optional(), pickupReceipts: z.array(z.object({ seq: generation, entityId: z.string().uuid(), position, stack: itemValue, pickedUpCount: z.number().int().positive(), sessionId: identifier, controlGeneration: generation, dimension: identifier, storedIn: identifier.optional(), thrownBy: tolerant(z.string().min(1).max(32)) })).max(256).optional(),
   guard: z.lazy(() => guardDutySchema).optional(),
 });
 const guardDutySchema = z.object({
@@ -153,7 +158,7 @@ export class ServerBody implements Body {
   private async connect(): Promise<void> {
     // The single plugin filter: everything below (and every tool registered from this.hello) sees the filtered hello.
     const hello = applyPluginPolicy(await this.readHello(), this.options.plugins);
-    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks'].includes(name));
+    const capabilities = hello.capabilities.filter(name => implementedActions.includes(name as ActionName) || ['nearby-blocks', 'nearby-resources', 'look-around', 'companion-pickup', 'companion-mining', 'companion-guard', 'survival-state', 'assess-tool', 'navigation-3d', 'machine-status', 'guard-duty-fenced', 'guard-duty-tasks', 'gift-receipts', 'entity-equipment'].includes(name));
     // Interaction actions are only usable together with the IDs the server actually registered.
     const interactions = [...new Set(hello.interactions ?? [])];
     this.hello = { ...hello, interactions, capabilities: interactions.length ? capabilities : capabilities.filter(name => name !== 'use-item-on-block' && name !== 'use-item') };
@@ -294,7 +299,7 @@ export class ServerBody implements Body {
     this.taskOwner = taskToken;
   }
   releaseTask(taskToken: string): void { if (this.taskOwner === taskToken) this.taskOwner = undefined; }
-  private async survivalRead<T extends { instanceId: string; sessionId: string; worldId: string; controlGeneration: number }>(method: string, args: Record<string, unknown>, schema: z.ZodType<T>): Promise<T> {
+  private async survivalRead<T extends { instanceId: string; sessionId: string; worldId: string; controlGeneration: number }>(method: string, args: Record<string, unknown>, schema: z.ZodType<T, z.ZodTypeDef, unknown>): Promise<T> {
     this.assertActive();
     if (!this.hello.capabilities.includes(method)) throw new BodyError('UNSUPPORTED', `身体不支持 ${method}`);
     const revision = this.revision;

@@ -53,7 +53,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // 需要叫醒 agent 的事件；reflex（自动进食/反击）、presence（上下线说明）等只在下次一起带上
 export const WAKE_TYPES = new Set(['chat', 'whisper', 'hurt', 'low_health', 'death', 'player_joined', 'player_left',
-  'time', 'bedtime', 'spawn', 'danger', 'follow', 'player_death', 'advancement', 'player_sleep', 'woke', 'teleport', 'task', 'companion', 'survival', 'guard', 'scene', 'machine']);
+  'time', 'bedtime', 'spawn', 'danger', 'follow', 'player_death', 'advancement', 'player_sleep', 'woke', 'teleport', 'task', 'companion', 'survival', 'guard', 'scene', 'machine', 'gift']);
 const BATCH_DELAY_MS = 1500;
 const SERVER_CHAT_QUIET_MS = 120;
 const SERVER_CHAT_MAX_MS = 350;
@@ -615,6 +615,7 @@ export function startupPrompt(args, memoryOn, phase = 'startup') {
 - 建筑用 build：先和玩家说好盖什么、盖在哪、朝哪边，用 blocks／shapes 或 list-blueprints 里的蓝图（origin 和 rotation）。先 dryRun 看材料，缺的照实告诉玩家，或从箱子取、合成；背包里留些泥土或木板，够不着时垫高用，盖完会收回。挡路的草花和朝向不对的同种方块会自动处理；要拆掉别的方块（replace:all）先问玩家。INCOMPLETE 或 TIMEOUT 就按回执说明情况，再调一次会接着盖。
 - 地点：玩家说“这里是家／记住这里”用 remember-place（player 填玩家）；去记过的地方用 go-to-place，远处坐标用 travel-to，走的时候跟随自动让开，到了有事件通知，之后自动接上（玩家不在附近就等他回来）。收到 bedtime（天黑且在家附近）时先跟玩家说一声，再 sleep-in-bed。
 - 保护：follow 默认保护玩家（范围和用不用弓、盾在 WebUI 里设），程序自己打靠近玩家的怪、血少了往玩家那边撤，不用你发攻击工具。保护一直开着，跟随让开、原地等也不会关；离玩家 16 格内、跟随或站着时程序会去打，原地等时打完回原位；正在走路、砍树、在地面盖房子、种地时会先停下去打，打完自己接着做（时限顺延）；挖方块、吃东西、开着箱子或工作台、在垫脚柱或屋顶上时先做完手上这一下再去，这期间只自卫；没跟随时玩家说“保护我”就用 companion-mode guard 带 player。收到 guard 事件可以简短说一句（不用每次都说），不要因此停止或重发跟随。玩家说别打了才用 companion-mode guard 带 guard:false。
+- 收到 gift（玩家丢给你的东西，你已经捡起来了）时，在游戏里简短回应：道谢或确认收到，需要时再用 list-inventory 查背包。
 - 穿护甲、鞘翅用 equip-item（item 填物品 ID），身上原来那件会换回背包。模组物品怎么用看对应工具说明末尾的插件说明。
 - 表情：打招呼、答应、拒绝、被要求跳舞时可以用 emote（挥手、点头、摇头……；有附加动画时按 emote 的说明填 source），配合说话用，别每句都做。收到 scene（日落、下雨）想说就随口说一句，不用每次都说。
 - survival 危险事件只说明附近情况变了，不代表已经打过；会不会还手看事件末尾的「自卫」说明，真打了会另有 task 事件。没打过就别说"处理掉了"。

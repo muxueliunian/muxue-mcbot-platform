@@ -53,7 +53,7 @@ final class ThreatSense {
         List<LivingEntity> candidates;
         try {candidates=player.serverLevel().getEntitiesOfClass(LivingEntity.class,player.getBoundingBox().inflate(8),e->e!=player);}
         catch(RuntimeException failure){return obj("radius",8,"complete",false,"nearby",new JsonArray(),"serverTick",player.getServer().getTickCount(),"reason","NATIVE_THREAT_SCAN_UNAVAILABLE");}
-        JsonArray nearby=new JsonArray();List<JsonObject> facts=new ArrayList<>();boolean complete=true;
+        JsonArray nearby=new JsonArray();List<JsonObject> facts=new ArrayList<>();List<EquipmentView.Entry> equipped=new ArrayList<>();boolean complete=true;
         int minX=BlockPos.containing(player.getX()-8,player.getY(),player.getZ()-8).getX()>>4,maxX=BlockPos.containing(player.getX()+8,player.getY(),player.getZ()+8).getX()>>4;
         int minZ=BlockPos.containing(player.getX()-8,player.getY(),player.getZ()-8).getZ()>>4,maxZ=BlockPos.containing(player.getX()+8,player.getY(),player.getZ()+8).getZ()>>4;
         for(int x=minX;x<=maxX;x++)for(int z=minZ;z<=maxZ;z++)if(!player.serverLevel().hasChunkAt(new BlockPos(x<<4,player.getBlockY(),z<<4)))complete=false;
@@ -63,13 +63,21 @@ final class ThreatSense {
                 identity=entity.getUUID().toString();double distance=entity.distanceToSqr(player);
                 if(!Double.isFinite(distance)||distance<0)throw error("NATIVE_FACTS_UNAVAILABLE","Native entity distance is not finite");
                 if(distance>64||!entity.isAlive())continue;
-                Verdict v=assess(player,entity);facts.add(obj("entityId",identity,"type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),"classification",v.classification(),"hostilitySource",v.source(),"targetingSelf",v.targetingSelf(),"distance",Math.sqrt(distance),"lineOfSight",player.hasLineOfSight(entity),"alive",true,"explosionPreparing",explosionPreparing(entity),"defenseEligible",v.eligible(),"defenseReason",v.reason(),"factsAvailable",true));
+                Verdict v=assess(player,entity);JsonObject fact=obj("entityId",identity,"type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),"classification",v.classification(),"hostilitySource",v.source(),"targetingSelf",v.targetingSelf(),"distance",Math.sqrt(distance),"lineOfSight",player.hasLineOfSight(entity),"alive",true,"explosionPreparing",explosionPreparing(entity),"defenseEligible",v.eligible(),"defenseReason",v.reason(),"factsAvailable",true);
+                if(showsEquipment(v.classification()))ItemDescriptions.collectEquipment(entity,fact,Math.sqrt(distance),equipped);
+                facts.add(fact);
             } catch(RuntimeException failure) {complete=false;if(identity!=null)facts.add(unavailable(identity));}
         }
         facts.sort(Comparator.comparingDouble(value->value.get("distance").isJsonNull()?Double.POSITIVE_INFINITY:value.get("distance").getAsDouble()));
-        if(facts.size()>24)complete=false;for(JsonObject fact:facts.subList(0,Math.min(24,facts.size())))nearby.add(fact);
+        if(facts.size()>24)complete=false;
+        Set<JsonObject> listed=Collections.newSetFromMap(new IdentityHashMap<>());
+        for(JsonObject fact:facts.subList(0,Math.min(24,facts.size()))){nearby.add(fact);listed.add(fact);}
+        // Gear of the listed threats ("an iron-armoured zombie", "a skeleton with a bow"), nearest first and bounded.
+        EquipmentView.attach(equipped.stream().filter(entry->listed.contains(entry.target())).toList());
         return obj("radius",8,"complete",complete,"nearby",nearby,"serverTick",player.getServer().getTickCount());
     }
+    /** Threats whose gear matters for judging danger: hostile, attacking the body, or of unknown hostility. */
+    static boolean showsEquipment(String classification) {return Set.of("hostile","attacking_self","unknown").contains(classification);}
     static JsonObject unavailable(String identity) {
         return obj("entityId",identity,"type",null,"classification","unknown","hostilitySource","unknown","targetingSelf",null,"distance",null,"lineOfSight",null,"alive",null,"explosionPreparing",null,"defenseEligible",false,"defenseReason","NATIVE_FACTS_UNAVAILABLE","factsAvailable",false);
     }

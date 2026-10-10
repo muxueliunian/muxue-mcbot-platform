@@ -1,4 +1,4 @@
-import type { Container, ItemStack, Observation, Operation } from './body.js';
+import type { Container, Equipment, EquippedItem, ItemStack, Observation, Operation } from './body.js';
 
 /** Model projections never replace the authoritative snapshots used by action guards. */
 function stackSummary(stack: ItemStack | Container['carried']) {
@@ -81,4 +81,15 @@ export function summarizeOperation(operation: Operation) {
     ...(operation.operationBudget ? { operationBudget: { ...operation.operationBudget } } : {}),
     name: operation.name, status: operation.status, summary: operation.summary,
     ...(result ? { result: compact, detailsAvailable: true } : {}) };
+}
+/**
+ * A short reading of what an entity holds and wears (entity-equipment), for event text: "穿 iron_helmet、iron_chestplate，拿 bow".
+ * Vanilla ids lose their namespace; enchanted items are marked. Empty when there is nothing to say.
+ */
+export function gearLabel(equipment?: Equipment, omitted?: boolean): string {
+  if (!equipment) return omitted ? '装备未列出' : '';
+  const name = (item: EquippedItem) => `${item.id.replace(/^minecraft:/, '')}${item.enchantments?.length ? '（附魔）' : ''}`;
+  const pick = (slots: Array<keyof Equipment>) => slots.flatMap(slot => equipment[slot] ? [name(equipment[slot]!)] : []);
+  const worn = pick(['head', 'chest', 'legs', 'feet']), held = pick(['mainhand', 'offhand']), body = pick(['body']);
+  return [worn.length ? `穿 ${worn.join('、')}` : '', held.length ? `拿 ${held.join('、')}` : '', body.length ? `披 ${body.join('、')}` : ''].filter(Boolean).join('，');
 }

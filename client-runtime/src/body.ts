@@ -8,7 +8,7 @@ export interface ItemStack extends ItemValue { slot: number; source?: 'container
 export interface GroundItem { entityId: string; position: Position; stack: ItemValue; onGround?: boolean; visible?: boolean | null; visibility: 'visible' | 'occluded' | 'unknown' }
 export interface CompanionGuard { player: string; expectedEntityId: string; maxDistance: number }
 export interface ResourceScanOptions { blockIds: string[]; radius: number; maxResults: number; center?: Position; wholeTree?: boolean; trees?: number; companionMiningGuard?: CompanionGuard }
-export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string; /** A carried mod storage (e.g. a backpack) took the items instead of the inventory. */ storedIn?: string }
+export interface PickupReceipt { seq: number; entityId: string; position: Position; stack: ItemValue; pickedUpCount: number; sessionId: string; controlGeneration: number; dimension: string; /** A carried mod storage (e.g. a backpack) took the items instead of the inventory. */ storedIn?: string; /** gift-receipts: the player (not the body) who threw the item. */ thrownBy?: string }
 /** What a resource block is, by block tags (modded ones too). */
 export type ResourceKind = 'log' | 'ore' | 'stone';
 /** One item the block drops on this server (its loot table), whether it needs or forbids silk touch, and the least count per block. */
@@ -24,12 +24,19 @@ export interface NearbyBlocks {
   candidates: Array<{ position: Position; id: string; properties: Components; targetToken?: string; distance: number; visibility: 'visible' | 'occluded' | 'unknown'; visible?: boolean | null }>;
   truncated?: boolean; budget?: unknown;
 }
-export interface Entity { id: string; type: string; name: string; position: Position; sleeping?: boolean }
+/** One held or worn stack (entity-equipment): enchantments as "id level", custom name, durability "left/max" once worn. */
+export interface EquippedItem { id: string; count: number; enchantments?: string[]; enchantmentsMore?: number; name?: string; durability?: string }
+/** Non-empty slots only; body is horse or wolf armour. */
+export type Equipment = Partial<Record<'mainhand' | 'offhand' | 'head' | 'chest' | 'legs' | 'feet' | 'body', EquippedItem>>;
+/** equipment is absent when nothing is held or worn; equipmentOmitted marks gear left out by the size limits. */
+export interface Entity { id: string; type: string; name: string; position: Position; sleeping?: boolean; equipment?: Equipment; equipmentOmitted?: boolean }
 export interface FoodCandidate { slot: number; id: string; count: number; nutrition: number; saturationModifier: number; eatDurationTicks: number; safe: boolean; /** Valuable but safe food (golden apples): eat only when the player agrees or in an emergency. */ precious?: boolean; reason?: string }
 export interface Threat {
   entityId: string; type: string | null; classification: 'hostile' | 'attacking_self' | 'neutral' | 'friendly' | 'player' | 'unknown';
   hostilitySource: 'vanilla_hostile_allowlist' | 'native_target_self' | 'native_recent_attacker' | 'none' | 'unknown';
   targetingSelf: boolean | null; distance: number | null; lineOfSight: boolean | null; alive: boolean | null; explosionPreparing: boolean | null; defenseEligible: boolean; defenseReason: string | null; factsAvailable?: boolean;
+  /** entity-equipment: what a hostile or unknown threat holds and wears. */
+  equipment?: Equipment; equipmentOmitted?: boolean;
 }
 export interface SurvivalDangers { onFire: boolean; inLava: boolean; inWater: boolean; air: number; maxAir: number; fallDistance: number; lowHealth: boolean; retreatRecommended: boolean }
 export interface SurvivalState {

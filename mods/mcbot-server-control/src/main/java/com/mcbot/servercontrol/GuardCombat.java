@@ -22,6 +22,9 @@ import net.minecraft.world.entity.monster.*;
 import net.minecraft.world.entity.npc.Npc;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.AbstractArrow;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.ThrownPotion;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.*;
 import net.minecraft.util.Mth;
@@ -36,7 +39,8 @@ import static com.mcbot.servercontrol.Protocol.*;
 /**
  * Companion guard, ticked by a running follow: fight hostiles that come near the companion player instead of
  * only hitting back. Melee in reach, a bow at range (never through a player or a pet), a raised shield while
- * waiting for the swing or backing off, and a retreat toward the player when health runs low. It runs (sprints) to a
+ * waiting for the swing or backing off, facing a bow drawn at it or the player (or a projectile on its way) with the
+ * shield up, and a retreat toward the player when health runs low. It runs (sprints) to a
  * foe and away from one, so a skeleton backing off cannot keep it at bow range. It never chases
  * beyond the leash around the player; when nothing needs fighting the follow carries on as before.
  */
@@ -44,8 +48,19 @@ final class GuardCombat {
     static final double MELEE_RANGE=3.2,BOW_MIN=4,BOW_CHASE=8,BOW_MAX=24,BOOM_SAFE=5,RETREAT_SPAN=5;
     /** Running away from a lit creeper: blocks per tick the body can count on (sprinting is about 0.28, minus start-up and turns) and the blocks to spare beyond the blast. */
     static final double RUN_SPEED=0.2,RUN_MARGIN=1;
-    /** Ticks before a creeper goes off when the body, still inside its blast, stops running and shields: a raised shield blocks only after 5 ticks. */
-    static final int SHIELD_LEAD=10;
+    /** Ticks a raised shield needs before it blocks: vanilla LivingEntity.isBlocking() wants the shield in use for 5 ticks. */
+    static final int SHIELD_DELAY=5;
+    /**
+     * How far ahead a shield has to go up: twice the delay. Read where a lit creeper is judged (lastMoment: ticks before it
+     * goes off, when the body stops running and shields) and where a projectile is (shieldAgainstRanged: ticks before it arrives).
+     */
+    static final int SHIELD_LEAD=2*SHIELD_DELAY;
+    /** One server tick in milliseconds, the unit of View.now(). */
+    static final long TICK_MS=50;
+    /** How long the shield stays up once nothing is aimed at the body any more: long enough for a raise to ever block, which also rides over a bow drawn and lowered again. */
+    static final long SHIELD_HOLD_MS=SHIELD_DELAY*TICK_MS;
+    /** Vanilla's margin around a target's box when an arrow's flight is tested against it, and the drag and gravity it flies under (per tick, after the move). */
+    static final double HIT_MARGIN=0.3,ARROW_DRAG=0.99,ARROW_GRAVITY=0.05;
     /** Moving to where an arrow can reach: the ring of spots tried, the walk and search timings, and how often one fight may do it. */
     static final double SPOT_ARRIVE=1.2,SPOT_EDGE=1.5;
     static final long SPOT_COOLDOWN_MS=1000,SPOT_WALK_MS=6000;
@@ -68,13 +83,24 @@ final class GuardCombat {
     /** One living thing worth fighting, with the native facts the decisions need. */
     record Foe(Object identity,String id,String type,Vec3 position,double distance,double companionDistance,
                boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible,
-               int fuse,double blast) {
-        /** fuse: ticks until a swelling creeper explodes (-1 unknown); blast: how far its explosion hurts, in blocks (0 unknown). */
+               int fuse,double blast,boolean charging) {
+        /**
+         * fuse: ticks until a swelling creeper explodes (-1 unknown); blast: how far its explosion hurts, in blocks (0 unknown);
+         * charging: a bow (or trident) in use, or a crossbow held loaded, with the body or the companion as its target
+         * (the mob's own target, not "recently hurt by").
+         */
+        Foe(Object identity,String id,String type,Vec3 position,double distance,double companionDistance,
+            boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible,
+            int fuse,double blast) {
+            this(identity,id,type,position,distance,companionDistance,targetingCompanion,targetingSelf,ranged,creeper,explosionPreparing,flying,visible,fuse,blast,false);
+        }
         Foe(Object identity,String id,String type,Vec3 position,double distance,double companionDistance,
             boolean targetingCompanion,boolean targetingSelf,boolean ranged,boolean creeper,boolean explosionPreparing,boolean flying,boolean visible) {
-            this(identity,id,type,position,distance,companionDistance,targetingCompanion,targetingSelf,ranged,creeper,explosionPreparing,flying,visible,-1,0);
+            this(identity,id,type,position,distance,companionDistance,targetingCompanion,targetingSelf,ranged,creeper,explosionPreparing,flying,visible,-1,0,false);
         }
     }
+    /** A projectile a shield can stop that will enter the body's box: where it is now and in how many ticks (1 is the next move). */
+    record Incoming(Object identity,Vec3 position,int ticks) {}
     interface View {
         long now();
         Vec3 position();
@@ -115,7 +141,11 @@ final class GuardCombat {
         void cancelDraw();
         boolean armShield();
         void raiseShield(Foe foe);
+        /** Face `point` with the shield up (a projectile has no foe to look at). */
+        void raiseShieldAt(Vec3 point);
         void lowerShield();
+        /** Projectiles that will enter the body's box within `ticks` ticks and that a shield can stop (not the body's own, a player's or a friend's), soonest first. */
+        List<Incoming> incoming(int ticks);
     }
     private final View view;
     private final GuardExecution execution;
@@ -139,6 +169,9 @@ final class GuardCombat {
     private int shields;
     private boolean shielded;
     private String lastShield;
+    /** What the shield is up against while it is held for a ranged threat (RANGED: a bow drawn or a crossbow loaded at us, PROJECTILE: something in flight), else null; and when a threat was last seen. */
+    private String holdWhy;
+    private long threatAt=Long.MIN_VALUE/2;
     /** The lit creeper the body found no way to run from (its retreat was refused): shield instead of trying again. */
     private Object cornered;
     /** Where the body is walking to for a shot, since when, the earliest next search, tries this fight, spots that had no way, and how the last try ended; the count is diagnosis. */
@@ -155,6 +188,7 @@ final class GuardCombat {
     JsonObject json() {
         JsonObject result=obj("state",state,"hits",hits,"damage",damage,"shots",shots,"kills",kills,"retreats",retreats,"draws",draws,"shields",shields,"repositions",repositions,"options",options.json());
         if(lastShield!=null)result.addProperty("lastShield",lastShield);
+        if(holdWhy!=null)result.addProperty("blocking",holdWhy);
         if(lastReposition!=null)result.addProperty("lastReposition",lastReposition);
         if(lastEnd!=null)result.addProperty("lastEnd",lastEnd);
         if(lastDrop!=null)result.addProperty("lastDrop",lastDrop);
@@ -194,6 +228,8 @@ final class GuardCombat {
             backOff(from,companion,boom!=null&&!retreating?"evading":"retreating",boom==null||retreating,permission);
             return true;
         }
+        // After the creeper (a blast is worse than an arrow), before choosing whom to fight: a bow drawn or a loaded crossbow at the body or the player, or a projectile about to arrive.
+        if(shieldAgainstRanged(foes,now,permission)){state="shielding";return true;}
         Foe chosen=choose(foes);
         if(chosen==null){settle("NO_FOE");return false;}
         if(target==null||target.identity()!=chosen.identity()){engagedAt=now;spot=null;badSpots.clear();fightSpots=0;}
@@ -228,7 +264,7 @@ final class GuardCombat {
                 lower();
                 float dealt=view.attack(chosen);
                 if(dealt>0){hits++;damage+=dealt;lastHitFoe=chosen;lastHitAt=now;}
-            } else if(options.shield()&&chosen.targetingSelf()&&view.armShield()){requireDrive(permission);raise(chosen);}
+            } else if(options.shield()&&(chosen.targetingSelf()||chosen.charging())&&view.armShield()){requireDrive(permission);raise(chosen);}
             else lower();
             requireDrive(permission);state="fighting";return true;
         }
@@ -273,8 +309,32 @@ final class GuardCombat {
     }
     private void settle(String why){drop(why);lower();target=null;spot=null;state="idle";ended(why);}
     void stop(){execution.interrupt();try{drop("INTERRUPTED");lower();}finally{view.stopMoving();target=null;spot=null;state="idle";ended("INTERRUPTED");}}
-    private void raise(Foe from){view.raiseShield(from);if(!shielded){shielded=true;shields++;}}
-    private void lower(){view.lowerShield();shielded=false;}
+    private void raise(Foe from){view.raiseShield(from);raised();holdWhy=null;}
+    private void raised(){if(!shielded){shielded=true;shields++;}}
+    private void lower(){view.lowerShield();shielded=false;holdWhy=null;}
+    /**
+     * A bow drawn (or a trident, or a loaded crossbow) at the body or the player, or a projectile that reaches the body in
+     * time to be blocked: stand still, put the bow down and face it with the shield up, then keep it up for SHIELD_HOLD_MS after
+     * the last sighting. Not with a foe already in reach: the swing comes first (and the melee branch shields between swings).
+     * No shield, or shield:false: nothing here, the fight goes on as before, with the reason in lastShield.
+     */
+    private boolean shieldAgainstRanged(List<Foe> foes,long now,java.util.function.BooleanSupplier permission) {
+        boolean engaged=foes.stream().anyMatch(f->f.distance()<=MELEE_RANGE&&view.inReach(f));
+        Foe aimer=engaged?null:foes.stream().filter(f->f.charging()&&f.visible()).min(Comparator.comparingDouble(Foe::distance)).orElse(null);
+        if(!options.shield()){if(aimer!=null)lastShield="OFF";return false;}
+        // A raise only helps if it is up by the time the projectile arrives; one already up is kept.
+        Incoming shot=engaged?null:view.incoming(SHIELD_LEAD).stream().filter(i->shielded||i.ticks()>=SHIELD_DELAY).findFirst().orElse(null);
+        boolean threat=aimer!=null||shot!=null;
+        if(threat)threatAt=now;
+        else if(engaged||holdWhy==null||!shielded||now-threatAt>=SHIELD_HOLD_MS)return false;
+        if(threat&&!view.armShield()){lastShield="NO_SHIELD";return false;}
+        requireDrive(permission);
+        drop("SHIELD");view.stopMoving();
+        if(shot!=null){view.raiseShieldAt(shot.position());raised();holdWhy="PROJECTILE";}
+        else if(aimer!=null){view.raiseShield(aimer);raised();holdWhy="RANGED";}
+        if(threat)lastShield=null;
+        return true;
+    }
     /**
      * Face the foe with the shield up and stay put (an explosion hurts less from behind a shield, and only when the blast
      * comes from the front). The bow is put down first: a drawn bow and a raised shield are the same use of a hand.
@@ -369,7 +429,7 @@ final class GuardCombat {
         double y=Math.toRadians(yaw),p=Math.toRadians(pitch);
         Vec3 velocity=new Vec3(-Math.sin(y)*Math.cos(p),-Math.sin(p),Math.cos(y)*Math.cos(p)).scale(3);
         List<Vec3> path=new ArrayList<>();path.add(from);Vec3 at=from;
-        for(int t=0;t<ticks;t++){at=at.add(velocity);path.add(at);velocity=new Vec3(velocity.x*0.99,velocity.y*0.99-0.05,velocity.z*0.99);}
+        for(int t=0;t<ticks;t++){at=at.add(velocity);path.add(at);velocity=new Vec3(velocity.x*ARROW_DRAG,velocity.y*ARROW_DRAG-ARROW_GRAVITY,velocity.z*ARROW_DRAG);}
         return path;
     }
     /** Full-power arrow pitch (Minecraft sign: negative looks up) that crosses `horizontal` blocks at `dy` above the launch point, or NaN. */
@@ -384,7 +444,7 @@ final class GuardCombat {
         double vx=3*Math.cos(angle),vy=3*Math.sin(angle),x=0,y=0;
         for(int t=0;t<100&&vx>0.01;t++){
             if(x+vx>=horizontal)return y+vy*(horizontal-x)/vx;
-            x+=vx;y+=vy;vx*=0.99;vy=vy*0.99-0.05;
+            x+=vx;y+=vy;vx*=ARROW_DRAG;vy=vy*ARROW_DRAG-ARROW_GRAVITY;
         }
         return Double.NaN;
     }
@@ -393,6 +453,43 @@ final class GuardCombat {
         Vec3 ab=b.subtract(a);double length=ab.lengthSqr();
         double t=length<1e-9?0:Math.max(0,Math.min(1,point.subtract(a).dot(ab)/length));
         return point.distanceTo(a.add(ab.scale(t)));
+    }
+    /**
+     * Ticks until something at `from`, moving `velocity` per tick, enters `box` widened by HIT_MARGIN: 1 when its next move
+     * does, -1 when it is already inside (stuck or passing: nothing to block) or does not within `horizon` ticks. After each
+     * move the velocity is scaled by `drag` and loses `gravity` (1 and 0 for a straight flight, ARROW_DRAG and ARROW_GRAVITY for an arrow).
+     */
+    static int ticksToHit(Vec3 from,Vec3 velocity,double drag,double gravity,AABB box,int horizon) {
+        AABB hit=box.inflate(HIT_MARGIN);
+        Vec3 at=from;
+        if(hit.contains(at))return -1;
+        for(int t=1;t<=horizon;t++) {
+            Vec3 next=at.add(velocity);
+            if(hit.clip(at,next).isPresent())return t;
+            at=next;velocity=new Vec3(velocity.x*drag,velocity.y*drag-gravity,velocity.z*drag);
+        }
+        return -1;
+    }
+    /** Winding up a shot at someone: a bow, trident or crossbow in use (by item class or by the use animation, so a modded weapon built on them counts), or a crossbow held loaded. */
+    static boolean windingUp(LivingEntity entity) {
+        ItemStack used=entity.getUseItem();
+        if(entity.isUsingItem()&&(used.getItem() instanceof ProjectileWeaponItem||used.getUseAnimation()==UseAnim.BOW||used.getUseAnimation()==UseAnim.SPEAR||used.getUseAnimation()==UseAnim.CROSSBOW))return true;
+        for(InteractionHand hand:InteractionHand.values()) {
+            ItemStack held=entity.getItemInHand(hand);
+            if(held.getItem() instanceof CrossbowItem&&CrossbowItem.isCharged(held))return true;
+        }
+        return false;
+    }
+    /**
+     * Whether a shield can stop this projectile: not one the body or a player loosed (or anything friendly: a pet, a golem,
+     * but a named monster still counts as an enemy), not one the body's own tag marks, not a potion (its splash ignores the
+     * shield) and not a piercing arrow (vanilla's isDamageSourceBlocked lets those through).
+     */
+    static boolean blockable(Projectile shot) {
+        Entity owner=shot.getOwner();
+        if(owner instanceof Player||owner!=null&&!(owner instanceof Enemy)&&protectedEntity(owner))return false;
+        if(shot.getTags().contains(BODY_PROJECTILE_TAG)||shot instanceof ThrownPotion)return false;
+        return !(shot instanceof AbstractArrow arrow&&arrow.getPierceLevel()>0);
     }
 
     /** Tag put on every projectile the body looses; it outlives the body, so an arrow in flight after a logout stays harmless to players and pets. */
@@ -486,6 +583,8 @@ final class GuardCombat {
                     String type=BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
                     boolean ranged=entity instanceof RangedAttackMob||entity instanceof Blaze||entity instanceof Ghast||entity instanceof Shulker;
                     boolean flying=entity instanceof FlyingMob||entity instanceof Blaze||entity instanceof Vex;
+                    // Winding up a shot with the body or the player as its own target: judged from what it holds and uses, not from what it is called.
+                    boolean charging=mob!=null&&(mob.getTarget()==player||mob.getTarget()==body)&&windingUp(entity);
                     int fuse=-1;double blast=0;
                     if(entity instanceof Creeper creeper) {
                         // Vanilla Creeper: explodes when `swell` reaches maxSwell (30); getSwelling(1) is swell/(maxSwell-2). The blast hurts out to twice its radius (3, doubled when charged).
@@ -494,7 +593,7 @@ final class GuardCombat {
                         blast=2.0*CreeperFacts.read(CreeperFacts.RADIUS,creeper,3)*(creeper.isPowered()?2:1);
                     }
                     result.add(new Foe(entity,entity.getUUID().toString(),type,entity.position(),distance,companionDistance,targetingCompanion,targetingSelf,
-                        ranged,entity instanceof Creeper,ThreatSense.explosionPreparing(entity),flying,body.hasLineOfSight(entity),fuse,blast));
+                        ranged,entity instanceof Creeper,ThreatSense.explosionPreparing(entity),flying,body.hasLineOfSight(entity),fuse,blast,charging));
                 }
                 return result;
             }
@@ -610,7 +709,7 @@ final class GuardCombat {
                 float[] aim=solution(from,aimPoint(from,e,height));
                 if(aim==null)return false;
                 List<Vec3> path=arrowPath(from,aim[0],aim[1],100);
-                AABB foe=e.getBoundingBox().inflate(0.3);
+                AABB foe=e.getBoundingBox().inflate(HIT_MARGIN);
                 int reached=-1;
                 for(int i=1;i<path.size();i++) {
                     Vec3 a=path.get(i-1),b=path.get(i);
@@ -685,14 +784,28 @@ final class GuardCombat {
                 NativeWorkstation.click(body,body.inventoryMenu,menu,Inventory.SLOT_OFFHAND,ClickType.SWAP);
                 return shield(body.getOffhandItem());
             }
-            public void raiseShield(Foe foe) {
-                look(living(foe).getEyePosition());
+            public void raiseShield(Foe foe){raiseShieldAt(living(foe).getEyePosition());}
+            public void raiseShieldAt(Vec3 point) {
+                look(point);
                 if(!(body.isUsingItem()&&body.getUsedItemHand()==InteractionHand.OFF_HAND)){
                     if(body.isUsingItem())body.stopUsingItem();
                     body.connection.handleUseItem(new ServerboundUseItemPacket(InteractionHand.OFF_HAND,++sequence,body.getYRot(),body.getXRot()));
                 }
             }
             public void lowerShield(){if(body.isUsingItem()&&body.getUsedItemHand()==InteractionHand.OFF_HAND)body.stopUsingItem();}
+            public List<Incoming> incoming(int ticks) {
+                AABB box=body.getBoundingBox();
+                List<Incoming> result=new ArrayList<>();
+                // Within bow range of the body (BOW_MAX, as for foes); anything farther is found again as it comes closer.
+                for(Projectile shot:body.serverLevel().getEntitiesOfClass(Projectile.class,box.inflate(BOW_MAX),p->p.isAlive()&&!p.isRemoved()&&blockable(p))) {
+                    // Only an arrow's drop is modelled (its drag and gravity are the ones the bow's own aim uses); anything else flies straight over this short a stretch.
+                    boolean arrow=shot instanceof AbstractArrow&&!shot.isNoGravity();
+                    int hit=ticksToHit(shot.position(),shot.getDeltaMovement(),arrow?ARROW_DRAG:1,arrow?ARROW_GRAVITY:0,box,ticks);
+                    if(hit>=0)result.add(new Incoming(shot,shot.position(),hit));
+                }
+                result.sort(Comparator.comparingInt(Incoming::ticks));
+                return result;
+            }
             void look(Vec3 point) {
                 Vec3 delta=point.subtract(body.getEyePosition());float yaw=(float)Math.toDegrees(Math.atan2(-delta.x,delta.z));
                 body.setYRot(yaw);body.setYHeadRot(yaw);body.setXRot((float)-Math.toDegrees(Math.atan2(delta.y,delta.horizontalDistance())));
